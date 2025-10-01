@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dotfile-manager"
+version = "0.1.0"
+description = "A TUI application for managing dotfiles"
+authors = [
+    {name = "User", email = "user@example.com"},
+]
+dependencies = [
+    "textual>=0.41.0",
+    "rich>=13.0.0",
+]
+requires-python = ">=3.8"
+
+[project.scripts]
+dotfile-manager = "dotfile_manager:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["dotfile_manager.py"]

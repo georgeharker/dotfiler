@@ -1,0 +1,846 @@
+#!/usr/bin/env python3
+"""
+Dotfile Manager - A TUI for managing dotfiles with textual
+"""
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+from typing import List, Set, Optional
+
+from textual import on
+from textual.app import App, ComposeResult
+from textual.binding import Binding
+from textual.containers import Container, Horizontal, Vertical
+from textual.screen import Screen
+from textual.widgets import (
+    Button,
+    DirectoryTree,
+    Footer,
+    Header,
+    Label,
+    Static,
+    DataTable,
+    Switch,
+    TextArea,
+)
+from textual.widgets._directory_tree import DirEntry
+from rich.text import Text
+class TrackedDirectoryTree(DirectoryTree):
+    """Custom DirectoryTree that shows tracked files with indicators."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.tracked_files: Set[Path] = set()
+
+    def set_tracked_files(self, tracked_files: Set[Path]) -> None:
+        """Update the set of tracked files and refresh display."""
+        self.tracked_files = tracked_files
+        # Force a refresh by reloading the tree
+        self.reload()
+
+    def render_label(self, node, base_style, style):
+        """Override to add visual indicators for tracked files."""
+        # Get the default label
+        label = super().render_label(node, base_style, style)
+
+        # Check if this path is tracked
+        if hasattr(node.data, 'path'):
+            file_path = Path(node.data.path)
+            if file_path in self.tracked_files:
+                # Add a green indicator for tracked files
+                tracked_label = Text()
+                tracked_label.append("● ", style="green bold")
+                tracked_label.append(label)
+                return tracked_label
+        return label
+
+
+class InfoScreen(Screen):
+    """Modal screen for displaying file information."""
+
+    BINDINGS = [
+        Binding("escape", "dismiss", "Close"),
+        Binding("q", "dismiss", "Close"),
+    ]
+
+    def __init__(self, info: dict, app_instance):
+        super().__init__()
+        self.info = info
+        self.app_instance = app_instance
+
+    def compose(self) -> ComposeResult:
+        """Compose the info screen."""
+        # Create buttons directly based on status
+        status = self.info['status']
+
+        # Build button container with explicit button creation
+        if status == 'File Conflict':
+            button_container = Horizontal(
+                Button("Re-ingest", id="reingest_btn", variant="warning"),
+                Button("Delete Tracking", id="delete_tracking_btn", variant="error"),
+                Button("Close", id="info_close_btn", variant="primary"),
+                id="button_row",
+                classes="resolution-buttons"
+            )
+        elif status in ['Wrong Link Target', 'Broken Symlink', 'Not Linked']:
+            button_container = Horizontal(
+                Button("Unpack", id="unpack_file_btn", variant="success"),
+                Button("Delete Tracking", id="delete_tracking_btn", variant="error"),
+                Button("Close", id="info_close_btn", variant="primary"),
+                id="button_row",
+                classes="resolution-buttons"
+            )
+        else:
+            # Only close button for other statuses
+            button_container = Horizontal(
+                Button("Close", id="info_close_btn", variant="primary"),
+                id="button_row",
+                classes="resolution-buttons"
+            )
+
+        yield Vertical(
+            Static(f"File Information: {self.info['file_name']}", classes="dialog-title"),
+            Container(
+                TextArea(
+                    self.format_info(),
+                    id="info_content",
+                    classes="dialog-content",
+                    read_only=True,
+                    show_line_numbers=False,
+                ),
+                classes="content-wrapper"
+            ),
+            button_container,
+            classes="dialog",
+        )
+
+    def format_info(self) -> str:
+        """Format the file information for display."""
+        lines = [
+            f"📁 File: {self.info['file_name']}",
+            f"📊 Status: {self.info['status']}",
+            "",
+            "📋 Details:",
+        ]
+
+        for detail in self.info['details']:
+            lines.append(f"  • {detail}")
+
+        if self.info['diff']:
+            lines.extend([
+                "",
+                "🔍 File Differences:",
+                "─" * 60,
+                self.info['diff']
+            ])
+
+        return "\n".join(lines)
+
+    @on(Button.Pressed, "#info_close_btn")
+    def on_close_pressed(self) -> None:
+        """Handle close button press."""
+        self.dismiss()
+
+    @on(Button.Pressed, "#reingest_btn")
+    def on_reingest_pressed(self) -> None:
+        """Handle re-ingest button press."""
+        file_path = Path(self.info['home_path'])
+        self.app_instance.run_ingest([file_path])
+        self.dismiss()
+
+    @on(Button.Pressed, "#unpack_file_btn")
+    def on_unpack_file_pressed(self) -> None:
+        """Handle unpack file button press."""
+        dotfile_path = Path(self.info['dotfile_path'])
+        self.app_instance.run_unpack_single_file(dotfile_path)
+        self.dismiss()
+
+    @on(Button.Pressed, "#delete_tracking_btn")
+    def on_delete_tracking_pressed(self) -> None:
+        """Handle delete tracking button press."""
+        dotfile_path = Path(self.info['dotfile_path'])
+        self.app_instance.delete_tracked_file(dotfile_path)
+        self.dismiss()
+
+    def action_dismiss(self) -> None:
+        """Dismiss the screen."""
+        self.dismiss()
+
+
+class DotfileApp(App[None]):
+    """Main application for dotfile management."""
+
+    CSS = """
+    .box {
+        border: solid $primary;
+        height: 100%;
+        margin: 1;
+    }
+
+    .selected {
+        background: $accent 50%;
+    }
+
+    .tracked {
+        background: $success 30%;
+    }
+
+    .buttons {
+        dock: bottom;
+        height: 3;
+        background: $surface;
+    }
+
+    .mode-switch {
+        dock: top;
+        height: 3;
+        background: $surface;
+    }
+
+    DirectoryTree {
+        width: 1fr;
+    }
+
+    DataTable {
+        width: 1fr;
+    }
+
+    .dialog {
+        background: $surface;
+        border: thick $primary;
+        width: 80%;
+        height: 70%;
+        margin: 2;
+    }
+
+    .dialog-title {
+        dock: top;
+        height: 3;
+        background: $primary;
+        color: $text;
+        text-align: center;
+        padding: 1;
+    }
+
+    .dialog-content {
+        height: 100%;
+        padding: 1;
+        background: $background;
+        overflow-y: auto;
+        scrollbar-size: 1 1;
+    }
+
+    .content-wrapper {
+        height: 1fr;
+        border: none;
+    }
+
+    #close_btn {
+        dock: bottom;
+        margin: 1;
+    }
+
+    #info_close_btn {
+        /* No dock property - stays in horizontal flow */
+        margin: 0 1;
+        height: 3;
+    }
+
+    .resolution-buttons {
+        height: 5;
+        margin: 1;
+        width: 100%;
+        padding: 1;
+        min-width: 60;
+    }
+
+    .resolution-buttons Button {
+        margin: 0 1;
+        height: 3;
+        min-width: 15;
+        max-width: 20;
+    }
+    """
+
+    BINDINGS = [
+        Binding("q", "quit", "Quit"),
+        Binding("i", "ingest_selected", "Ingest", show=False, key_display="I"),
+        Binding("escape", "cancel", "Cancel", show=False),
+        Binding("space", "toggle_select", "Select", show=False),
+        Binding("enter", "toggle_select", "Select", show=False),
+        Binding("d", "delete_selected", "Delete", show=False),
+        Binding("u", "unpack_selected", "Unpack", show=False),
+        Binding("f", "show_info", "Info", show=False, key_display="F"),
+    ]
+
+    def __init__(self):
+        super().__init__()
+        self.dotfiles_dir = Path.home() / ".dotfiles"
+        self.setup_script = self.dotfiles_dir / "setup.sh"
+        self.selected_files: Set[Path] = set()
+        self.is_manage_mode = False
+        self.tracked_file_paths: List[Path] = []  # Store paths corresponding to table rows
+
+    def compose(self) -> ComposeResult:
+        """Compose the UI."""
+        yield Header()
+
+        with Container(classes="mode-switch"):
+            with Horizontal():
+                yield Label("Mode:")
+                yield Switch(value=False, id="mode_switch")
+                yield Label("Add Files", id="mode_label")
+
+        with Container(classes="box"):
+            yield TrackedDirectoryTree(
+                str(Path.home()),
+                id="directory_tree"
+            )
+            yield DataTable(
+                id="tracked_files_table",
+                show_header=True,
+                show_cursor=True,
+            )
+
+        with Container(classes="buttons"):
+            with Horizontal():
+                yield Button("Ingest Selected", id="ingest_btn", variant="primary")
+                yield Button("Cancel", id="cancel_btn")
+                yield Button("Delete Selected", id="delete_btn", variant="error")
+                yield Button("Show Info", id="info_btn", variant="default")
+                yield Button("Unpack All", id="unpack_btn", variant="success")
+
+        yield Footer()
+
+    def on_mount(self) -> None:
+        """Initialize the app when mounted."""
+        self.update_mode_display()
+        self.refresh_tracked_files()
+
+    @on(Switch.Changed, "#mode_switch")
+    def on_mode_change(self, event: Switch.Changed) -> None:
+        """Handle mode switch between Add and Manage modes."""
+        self.is_manage_mode = event.value
+        self.update_mode_display()
+
+    def update_mode_display(self) -> None:
+        """Update the UI based on current mode."""
+        tree = self.query_one("#directory_tree", TrackedDirectoryTree)
+        table = self.query_one("#tracked_files_table", DataTable)
+        mode_label = self.query_one("#mode_label", Label)
+
+        ingest_btn = self.query_one("#ingest_btn", Button)
+        cancel_btn = self.query_one("#cancel_btn", Button)
+        delete_btn = self.query_one("#delete_btn", Button)
+        info_btn = self.query_one("#info_btn", Button)
+        unpack_btn = self.query_one("#unpack_btn", Button)
+
+        if self.is_manage_mode:
+            # Manage mode - show tracked files table
+            mode_label.update("Manage Tracked Files")
+            tree.display = False
+            table.display = True
+
+            ingest_btn.display = False
+            cancel_btn.display = False
+            delete_btn.display = True
+            info_btn.display = True
+            unpack_btn.display = True
+
+            self.refresh_tracked_files()
+        else:
+            # Add mode - show directory tree
+            mode_label.update("Add Files")
+            tree.display = True
+            table.display = False
+
+            ingest_btn.display = True
+            cancel_btn.display = True
+            delete_btn.display = False
+            info_btn.display = True
+            unpack_btn.display = False
+
+            self.selected_files.clear()
+            self.refresh_tree_highlights()
+
+    def refresh_tracked_files(self) -> None:
+        """Refresh the tracked files table."""
+        table = self.query_one("#tracked_files_table", DataTable)
+        table.clear(columns=True)
+        table.add_columns("File", "Status")
+        self.tracked_file_paths.clear()
+
+        if not self.dotfiles_dir.exists():
+            table.add_row("No dotfiles directory found", "N/A")
+            return
+
+        # Get files tracked by git
+        git_tracked_files = self.get_git_tracked_files()
+
+        if not git_tracked_files:
+            table.add_row("No git-tracked files found", "N/A")
+            return
+
+        tracked_files = []
+        for file_path in git_tracked_files:
+            # Calculate the home path this would link to
+            relative_path = file_path.relative_to(self.dotfiles_dir)
+            home_path = Path.home() / relative_path
+
+            if home_path.is_symlink():
+                # Check if symlink points to the correct dotfile
+                try:
+                    if home_path.resolve() == file_path.resolve():
+                        status = "🔗 Linked"
+                    else:
+                        status = "⚠️  Wrong link"
+                except (OSError, RuntimeError):
+                    status = "⚠️  Broken link"
+            elif home_path.exists():
+                status = "⚠️  Conflicts"
+            else:
+                status = "❌ Not linked"
+
+            tracked_files.append((str(relative_path), status, file_path))
+
+        # Sort and add to table
+        for file_path_str, status, full_file_path in sorted(tracked_files):
+            table.add_row(file_path_str, status)
+            self.tracked_file_paths.append(full_file_path)
+
+    def get_tracked_files(self) -> Set[Path]:
+        """Get set of currently tracked files."""
+        tracked = set()
+
+        # Get files tracked by git and map to home directory paths
+        git_tracked_files = self.get_git_tracked_files()
+        for file_path in git_tracked_files:
+            # Map back to home directory path
+            relative_path = file_path.relative_to(self.dotfiles_dir)
+            home_path = Path.home() / relative_path
+            tracked.add(home_path)
+
+        return tracked
+
+    def get_git_tracked_files(self) -> List[Path]:
+        """Get list of files tracked by git in the dotfiles directory."""
+        if not self.dotfiles_dir.exists():
+            return []
+
+        try:
+            # Use git ls-files to get tracked files
+            result = subprocess.run(
+                ["git", "-C", str(self.dotfiles_dir), "ls-files"],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+
+            tracked_files = []
+            for line in result.stdout.strip().split('\n'):
+                if line.strip():  # Skip empty lines
+                    file_path = self.dotfiles_dir / line.strip()
+                    if file_path.exists():  # Only include files that actually exist
+                        tracked_files.append(file_path)
+
+            return tracked_files
+
+        except subprocess.CalledProcessError:
+            # Not a git repository or git command failed
+            return []
+        except Exception:
+            # Other errors (git not installed, etc.)
+            return []
+
+    def refresh_tree_highlights(self) -> None:
+        """Refresh highlighting in the directory tree."""
+        tree = self.query_one("#directory_tree", TrackedDirectoryTree)
+        tracked_files = self.get_tracked_files()
+        tree.set_tracked_files(tracked_files)
+
+    @on(TrackedDirectoryTree.DirectorySelected)
+    def on_directory_selected(self, event: DirectoryTree.DirectorySelected) -> None:
+        """Handle directory selection in tree."""
+        if not self.is_manage_mode:
+            path = Path(event.path)
+            if path in self.selected_files:
+                self.selected_files.discard(path)
+            else:
+                self.selected_files.add(path)
+
+    @on(TrackedDirectoryTree.FileSelected)
+    def on_file_selected(self, event: DirectoryTree.FileSelected) -> None:
+        """Handle file selection in tree."""
+        if not self.is_manage_mode:
+            path = Path(event.path)
+            if path in self.selected_files:
+                self.selected_files.discard(path)
+            else:
+                self.selected_files.add(path)
+
+    def action_toggle_select(self) -> None:
+        """Toggle selection of current item."""
+        if self.is_manage_mode:
+            return
+
+        tree = self.query_one("#directory_tree", TrackedDirectoryTree)
+        if tree.cursor_line is not None:
+            # Get the path of the currently highlighted item
+            node = tree.get_node_at_line(tree.cursor_line)
+            if node and hasattr(node, 'data') and hasattr(node.data, 'path'):
+                path = Path(node.data.path)
+                if path in self.selected_files:
+                    self.selected_files.discard(path)
+                else:
+                    self.selected_files.add(path)
+
+    def action_ingest_selected(self) -> None:
+        """Ingest selected files."""
+        if self.is_manage_mode or not self.selected_files:
+            return
+
+        self.run_ingest(list(self.selected_files))
+
+    def action_cancel(self) -> None:
+        """Cancel current selection."""
+        if not self.is_manage_mode:
+            self.selected_files.clear()
+
+    def action_delete_selected(self) -> None:
+        """Delete selected tracked files."""
+        if not self.is_manage_mode:
+            return
+
+        table = self.query_one("#tracked_files_table", DataTable)
+
+        # Use cursor_row to index into our tracked_file_paths list
+        if (table.cursor_row is not None and
+            0 <= table.cursor_row < len(self.tracked_file_paths)):
+            file_path = self.tracked_file_paths[table.cursor_row]
+            self.delete_tracked_file(file_path)
+        else:
+            # Add mode - show info for current directory tree item
+            tree = self.query_one("#directory_tree", TrackedDirectoryTree)
+            if tree.cursor_line is not None:
+                node = tree.get_node_at_line(tree.cursor_line)
+                if node and hasattr(node, 'data') and hasattr(node.data, 'path'):
+                    file_path = Path(node.data.path)
+                    if file_path.is_file():
+                        info = self.get_file_info_for_any_file(file_path)
+                        self.show_info_dialog(info)
+                    else:
+                        self.notify("Please select a file (not directory)", severity="warning")
+                else:
+                    self.notify("No file selected", severity="warning")
+            else:
+                self.notify("No file selected", severity="warning")
+
+    def action_show_info(self) -> None:
+        """Show detailed info about selected tracked file."""
+        if self.is_manage_mode:
+            # Manage mode - show info for selected tracked file
+            table = self.query_one("#tracked_files_table", DataTable)
+
+            # Use cursor_row to index into our tracked_file_paths list
+            if (table.cursor_row is not None and
+                0 <= table.cursor_row < len(self.tracked_file_paths)):
+                file_path = self.tracked_file_paths[table.cursor_row]
+                info = self.get_file_info(file_path)
+                self.show_info_dialog(info)
+            else:
+                self.notify("No file selected", severity="warning")
+        else:
+            # Add mode - show info for current directory tree item
+            tree = self.query_one("#directory_tree", TrackedDirectoryTree)
+            if tree.cursor_line is not None:
+                node = tree.get_node_at_line(tree.cursor_line)
+                if node and hasattr(node, 'data') and hasattr(node.data, 'path'):
+                    file_path = Path(node.data.path)
+                    if file_path.is_file():
+                        info = self.get_file_info_for_any_file(file_path)
+                        self.show_info_dialog(info)
+                    else:
+                        self.notify("Please select a file (not directory)", severity="warning")
+                else:
+                    self.notify("No file selected", severity="warning")
+            else:
+                self.notify("No file selected", severity="warning")
+
+    def get_file_info(self, file_path: Path) -> dict:
+        """Get detailed information about a tracked file."""
+        relative_path = file_path.relative_to(self.dotfiles_dir)
+        home_path = Path.home() / relative_path
+
+        info = {
+            'file_name': str(relative_path),
+            'dotfile_path': str(file_path),
+            'home_path': str(home_path),
+            'dotfile_exists': file_path.exists(),
+            'home_exists': home_path.exists(),
+            'home_is_symlink': home_path.is_symlink() if home_path.exists() else False,
+            'status': '',
+            'details': [],
+            'diff': None
+        }
+
+        if not info['dotfile_exists']:
+            info['status'] = 'Missing Dotfile'
+            info['details'].append(f"Tracked dotfile does not exist: {file_path}")
+            return info
+
+        if info['home_is_symlink']:
+            try:
+                link_target = home_path.resolve()
+                dotfile_resolved = file_path.resolve()
+
+                if link_target == dotfile_resolved:
+                    info['status'] = 'Correctly Linked'
+                    info['details'].append(f"Symlink correctly points to: {link_target}")
+                else:
+                    info['status'] = 'Wrong Link Target'
+                    info['details'].append(f"Symlink points to: {link_target}")
+                    info['details'].append(f"Should point to: {dotfile_resolved}")
+
+            except (OSError, RuntimeError) as e:
+                info['status'] = 'Broken Symlink'
+                info['details'].append(f"Symlink is broken: {e}")
+
+        elif info['home_exists']:
+            info['status'] = 'File Conflict'
+            info['details'].append(f"Regular file exists at: {home_path}")
+            info['details'].append(f"Should be symlink to: {file_path}")
+
+            # Get diff if both files exist
+            if file_path.is_file() and home_path.is_file():
+                info['diff'] = self.get_file_diff(file_path, home_path)
+
+        else:
+            info['status'] = 'Not Linked'
+            info['details'].append(f"No file exists at: {home_path}")
+            info['details'].append(f"Dotfile ready for linking: {file_path}")
+
+        return info
+
+    def get_file_info_for_any_file(self, file_path: Path) -> dict:
+        """Get info for any file, whether tracked or not."""
+        # Check if this file is already tracked
+        tracked_files = self.get_tracked_files()
+        is_tracked = file_path in tracked_files
+
+        if is_tracked:
+            # If tracked, find the dotfile and use regular get_file_info
+            try:
+                relative_path = file_path.relative_to(Path.home())
+                dotfile_path = self.dotfiles_dir / relative_path
+                return self.get_file_info(dotfile_path)
+            except ValueError:
+                # File is not under home directory
+                pass
+
+        # For untracked files or files outside home
+        info = {
+            'file_name': str(file_path.name),
+            'dotfile_path': '',
+            'home_path': str(file_path),
+            'dotfile_exists': False,
+            'home_exists': file_path.exists(),
+            'home_is_symlink': file_path.is_symlink() if file_path.exists() else False,
+            'status': 'Not Tracked',
+            'details': [],
+            'diff': None
+        }
+
+        if not is_tracked:
+            info['details'].append(f"File is not tracked in dotfiles")
+            info['details'].append(f"Located at: {file_path}")
+            try:
+                relative_path = file_path.relative_to(Path.home())
+                potential_dotfile = self.dotfiles_dir / relative_path
+                info['details'].append(f"Would be tracked as: {potential_dotfile}")
+            except ValueError:
+                info['details'].append("File is outside home directory - cannot track")
+
+        return info
+
+    def get_file_diff(self, file1: Path, file2: Path) -> str:
+        """Get diff between two files."""
+        try:
+            result = subprocess.run(
+                ["diff", "-u", str(file1), str(file2)],
+                capture_output=True,
+                text=True
+            )
+
+            if result.returncode == 0:
+                return "Files are identical"
+            else:
+                return result.stdout
+
+        except Exception as e:
+            return f"Error comparing files: {e}"
+
+    def show_info_dialog(self, info: dict) -> None:
+        """Show file info in a modal dialog."""
+        info_screen = InfoScreen(info, self)
+        self.push_screen(info_screen)
+    def action_unpack_selected(self) -> None:
+        """Unpack all tracked files."""
+        if not self.is_manage_mode:
+            return
+
+        self.run_unpack()
+
+    @on(Button.Pressed, "#ingest_btn")
+    def on_ingest_pressed(self) -> None:
+        """Handle ingest button press."""
+        self.action_ingest_selected()
+
+    @on(Button.Pressed, "#cancel_btn")
+    def on_cancel_pressed(self) -> None:
+        """Handle cancel button press."""
+        self.action_cancel()
+
+    @on(Button.Pressed, "#delete_btn")
+    def on_delete_pressed(self) -> None:
+        """Handle delete button press."""
+        self.action_delete_selected()
+    @on(Button.Pressed, "#info_btn")
+    def on_info_pressed(self) -> None:
+        """Handle info button press."""
+        self.action_show_info()
+
+    @on(Button.Pressed, "#unpack_btn")
+    def on_unpack_pressed(self) -> None:
+        """Handle unpack button press."""
+        self.action_unpack_selected()
+
+    def run_ingest(self, files: List[Path]) -> None:
+        """Run the ingest command for selected files."""
+        if not self.setup_script.exists():
+            self.notify("Setup script not found at ~/.dotfiles/setup.sh", severity="error")
+            return
+
+        for file_path in files:
+            try:
+                # Run setup.sh -i for each file
+                result = subprocess.run(
+                    [str(self.setup_script), "-i", str(file_path)],
+                    capture_output=True,
+                    text=True,
+                    cwd=str(self.dotfiles_dir)
+                )
+
+                if result.returncode == 0:
+                    self.notify(f"Ingested: {file_path.name}")
+                else:
+                    self.notify(f"Failed to ingest {file_path.name}: {result.stderr}", severity="error")
+
+            except Exception as e:
+                self.notify(f"Error ingesting {file_path.name}: {e}", severity="error")
+
+        self.selected_files.clear()
+        if self.is_manage_mode:
+            self.refresh_tracked_files()
+        else:
+            # Refresh tree highlights to show newly tracked files
+            self.refresh_tree_highlights()
+
+    def git_add_file(self, original_path: Path) -> None:
+        """This method is no longer needed - setup.sh handles git operations automatically."""
+        pass
+
+    def delete_tracked_file(self, file_path: Path) -> None:
+        """Delete a tracked file from dotfiles using setup.sh."""
+        if not self.setup_script.exists():
+            self.notify("Setup script not found at ~/.dotfiles/setup.sh", severity="error")
+            return
+            
+        try:
+            relative_path = file_path.relative_to(self.dotfiles_dir)
+            
+            result = subprocess.run(
+                ["zsh", str(self.setup_script), "-t", str(relative_path)],
+                capture_output=True,
+                text=True,
+                cwd=str(self.dotfiles_dir)
+            )
+            
+            if result.returncode == 0:
+                self.notify(f"Deleted: {relative_path}")
+            else:
+                self.notify(f"Failed to delete: {result.stderr}", severity="error")
+
+            if self.is_manage_mode:
+                self.refresh_tracked_files()
+            else:
+                self.refresh_tree_highlights()
+
+        except Exception as e:
+            self.notify(f"Error deleting file: {e}", severity="error")
+
+    def run_unpack(self) -> None:
+        """Run the unpack command."""
+        if not self.setup_script.exists():
+            self.notify("Setup script not found at ~/.dotfiles/setup.sh", severity="error")
+            return
+
+        try:
+            result = subprocess.run(
+                [str(self.setup_script), "-u"],
+                capture_output=True,
+                text=True,
+                cwd=str(self.dotfiles_dir)
+            )
+
+            if result.returncode == 0:
+                self.notify("Unpacked all dotfiles")
+                if self.is_manage_mode:
+                    self.refresh_tracked_files()
+                else:
+                    self.refresh_tree_highlights()
+            else:
+                self.notify(f"Failed to unpack: {result.stderr}", severity="error")
+
+        except Exception as e:
+            self.notify(f"Error unpacking: {e}", severity="error")
+
+    def run_unpack_single_file(self, dotfile_path: Path) -> None:
+        """Run unpack for a single file using setup.sh -u flag."""
+        if not self.setup_script.exists():
+            self.notify("Setup script not found at ~/.dotfiles/setup.sh", severity="error")
+            return
+
+        try:
+            relative_path = dotfile_path.relative_to(self.dotfiles_dir)
+            
+            result = subprocess.run(
+                ["zsh", str(self.setup_script), "-u", str(relative_path)],
+                capture_output=True,
+                text=True,
+                cwd=str(self.dotfiles_dir)
+            )
+            
+            if result.returncode == 0:
+                self.notify(f"Unpacked: {relative_path}")
+            else:
+                self.notify(f"Failed to unpack: {result.stderr}", severity="error")
+                
+            if self.is_manage_mode:
+                self.refresh_tracked_files()
+            else:
+                self.refresh_tree_highlights()
+
+        except Exception as e:
+            self.notify(f"Error unpacking {dotfile_path.name}: {e}", severity="error")
+
+
+def main():
+    """Main entry point."""
+    app = DotfileApp()
+    app.run()
+
+
+if __name__ == "__main__":
+    main()
