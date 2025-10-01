@@ -53,6 +53,50 @@ git clone <your-dotfiles-repo> ~/my-config
 chmod +x setup.sh update.sh check_update.sh
 ```
 
+### 3. System Setup (Optional)
+
+For a complete development environment setup, create an `install.sh` script to install system packages and tools. A template is provided as `install.sh.template`:
+
+```bash
+# Copy and customize the template
+cp install.sh.template install.sh
+chmod +x install.sh
+
+# Edit to match your needs
+vim install.sh
+
+# Run to set up your system
+./install.sh
+```
+
+The install script template includes:
+- **Cross-platform support** (Linux and macOS)
+- **System package installation** (development tools, editors, CLI utilities)
+- **Language runtimes** (Python, Node.js, Rust, etc.)
+- **Font installation** (Nerd Fonts for terminal icons)
+- **Development environment setup** (Oh My Zsh, tmux, editor plugins)
+- **Custom builds** (for bleeding-edge versions of tools)
+
+**Structure Overview:**
+```bash
+#!/usr/bin/zsh
+if [[ `uname` != "Darwin" ]]; then
+    # Linux-specific installations
+    sudo apt-get install [packages]
+    # Custom builds in ~/ext/
+    # Font installation to ~/.local/share/fonts/
+else  
+    # macOS-specific installations
+    brew install [packages]
+    brew install --cask [gui-apps]
+fi
+
+# Cross-platform setup
+python3 -m venv ~/.venv
+pip3 install [python-packages]
+# Shell frameworks, editor setup, etc.
+```
+
 ### 3. Configure Shell Integration
 
 Add to your shell configuration file (`.zshrc`, `.bashrc`, etc.):
