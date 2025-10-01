@@ -2,20 +2,33 @@
 
 # Check if script is being executed directly (not sourced)
 # In zsh, when sourced, $0 is the name of the calling shell, not the script
+# Debug the detection values
+# echo "DEBUG: \$0='$0', %N='${(%):-%N}', \${0:t}='${0:t}'" >&2
+
 force_update=false
-if [[ "${(%):-%N}" == "${0:t}" ]] || [[ "$0" == *"check_update.sh" ]]; then
+# More robust script detection
+if [[ "$0" == *"check_update.sh"* ]] || [[ "${0:t}" == "check_update.sh" ]] || [[ "${(%):-%N}" == "check_update.sh" ]]; then
     # Script is being executed directly, parse arguments
+    # echo "DEBUG: Detected as executed directly" >&2
     zmodload zsh/zutil
-    local -a force
-    zparseopts -D -E - f=force -force=force || {
-        echo "Usage: $0 [-f|--force]" >&2
+    local -a force debug
+    zparseopts -D -E - f=force -force=force d=debug -debug=debug || {
+        echo "Usage: $0 [-f|--force] [-d|--debug]" >&2
         echo "  -f, --force    Force update check even if timestamp is recent" >&2
+        echo "  -d, --debug    Enable debug output for troubleshooting" >&2
         exit 1
     }
     
     if [[ ${#force[@]} -gt 0 ]]; then
         force_update=true
     fi
+    
+    if [[ ${#debug[@]} -gt 0 ]]; then
+        export DOTFILES_DEBUG=1
+        echo "DEBUG: Debug mode enabled" >&2
+    fi
+else
+    # echo "DEBUG: Detected as sourced" >&2
 fi
 
 # Allow override of dotfiles directory via zstyle
@@ -97,6 +110,11 @@ function get_default_branch(){
 }
 
 function is_update_available() {
+  # Debug output function
+  local debug_log() {
+    [[ -n "$DOTFILES_DEBUG" ]] && echo "[DEBUG] $*" >&2
+  }
+  
   local branch
   # Use unlikely defaults that we can detect and replace with dynamic detection
   branch=${"$(builtin cd -q "$dotfiles"; git config --local oh-my-zsh.branch)":-__DOTFILES_UNLIKELY_BRANCH__}
@@ -115,6 +133,39 @@ function is_update_available() {
       remote=$(get_default_remote)
   fi
   
+  # Ensure we have valid remote and branch
+  if [[ -z "$remote" ]] || [[ -z "$branch" ]]; then
+    debug_log "Missing remote ($remote) or branch ($branch)"
+    # Can't determine remote/branch, assume updates available
+    return 0
+  fi
+  
+  debug_log "Checking for updates: $remote/$branch"
+  
+  # Fetch from remote to get latest refs (quietly)
+  if ! (builtin cd -q "$dotfiles"; git fetch "$remote" "$branch" 2>/dev/null); then
+    debug_log "Git fetch failed, falling back to GitHub API"
+    # Fetch failed, might be network issue - try GitHub API as fallback
+    # Continue with existing API logic
+  else
+    debug_log "Git fetch succeeded, comparing refs directly"
+    # Fetch succeeded, compare local and remote refs directly
+    local local_head remote_head
+    local_head=$(builtin cd -q "$dotfiles"; git rev-parse HEAD 2>/dev/null) || return 0
+    remote_head=$(builtin cd -q "$dotfiles"; git rev-parse "$remote/$branch" 2>/dev/null) || return 0
+    
+    debug_log "Local HEAD: ${local_head:0:8}, Remote HEAD: ${remote_head:0:8}"
+    
+    # Simple comparison - if different, updates are available
+    if [[ "$local_head" != "$remote_head" ]]; then
+      debug_log "Updates available (different HEADs)"
+      return 0
+    else
+      debug_log "No updates available (HEADs match)"
+      return 1
+    fi
+  fi
+  
   remote_url=$(builtin cd -q "$dotfiles"; git config remote.$remote.url)
 
   local repo
@@ -122,41 +173,56 @@ function is_update_available() {
   https://github.com/*) repo=${${remote_url#https://github.com/}%.git} ;;
   git@github.com:*) repo=${${remote_url#git@github.com:}%.git} ;;
   *)
-    # If the remote is not using GitHub we can't check for updates
-    # Let's assume there are updates
+    debug_log "Non-GitHub remote: $remote_url"
+    # Non-GitHub remote and fetch failed, assume updates available
     return 0 ;;
   esac
 
+  # GitHub API fallback (when fetch fails)
   local api_url="https://api.github.com/repos/${repo}/commits/${branch}"
+  debug_log "Using GitHub API: $api_url"
 
   # Get local HEAD. If this fails assume there are updates
   local local_head
-  local_head=$(builtin cd -q "$dotfiles"; git rev-parse $branch 2>/dev/null) || return 0
+  local_head=$(builtin cd -q "$dotfiles"; git rev-parse HEAD 2>/dev/null) || return 0
 
-  # Get remote HEAD. If no suitable command is found assume there are updates
-  # On any other error, skip the update (connection may be down)
+  # Get remote HEAD via API with better error handling
   local remote_head
   remote_head=$(
     if (( ${+commands[curl]} )); then
-      curl --connect-timeout 2 -fsSL -H 'Accept: application/vnd.github.v3.sha' -H "Authorization: Bearer ${GH_TOKEN}" $api_url 2>/dev/null
+      # Use longer timeout and better error handling
+      local auth_header=""
+      [[ -n "$GH_TOKEN" ]] && auth_header="-H Authorization: Bearer ${GH_TOKEN}"
+      curl --connect-timeout 10 --max-time 30 -fsSL \
+        -H 'Accept: application/vnd.github.v3.sha' \
+        $auth_header "$api_url" 2>/dev/null
     elif (( ${+commands[wget]} )); then
-      wget -T 2 -O- --header='Accept: application/vnd.github.v3.sha' --header="Authorization: Bearer ${GH_TOKEN}"  $api_url 2>/dev/null
+      local auth_header=""
+      [[ -n "$GH_TOKEN" ]] && auth_header="--header=Authorization: Bearer ${GH_TOKEN}"
+      wget --timeout=30 -O- --header='Accept: application/vnd.github.v3.sha' \
+        $auth_header "$api_url" 2>/dev/null
     else
-      exit 0
+      # No curl or wget available, assume updates
+      return 0
     fi
-  ) || return 1
+  )
+  
+  # If API call failed, assume updates available (better safe than sorry)
+  if [[ -z "$remote_head" ]]; then
+    debug_log "GitHub API call failed, assuming updates available"
+    return 0
+  fi
+  
+  debug_log "Local HEAD: ${local_head:0:8}, Remote HEAD (API): ${remote_head:0:8}"
 
   # Compare local and remote HEADs (if they're equal there are no updates)
-  [[ "$local_head" != "$remote_head" ]] || return 1
-
-  # If local and remote HEADs don't match, check if there's a common ancestor
-  # If the merge-base call fails, $remote_head might not be downloaded so assume there are updates
-  local base
-  base=$(builtin cd -q "$dotfiles"; git merge-base $local_head $remote_head 2>/dev/null) || return 0
-
-  # If the common ancestor ($base) is not $remote_head,
-  # the local HEAD is older than the remote HEAD
-  [[ $base != $remote_head ]]
+  if [[ "$local_head" != "$remote_head" ]]; then
+    debug_log "Updates available via API (different HEADs)"
+    return 0
+  else
+    debug_log "No updates available via API (HEADs match)"
+    return 1
+  fi
 }
 
 function update_last_updated_file() {
@@ -267,13 +333,25 @@ function handle_update() {
 
     # Number of days before trying to update again
     zstyle -s ':dotfiles:update' frequency epoch_target || epoch_target=${UPDATE_DOTFILE_SECONDS:-3600}
+    
+    # Debug timestamp check
+    if [[ -n "$DOTFILES_DEBUG" ]]; then
+      local current_time=$(current_epoch)
+      local time_diff=$(( current_time - LAST_EPOCH ))
+      echo "[DEBUG] Timestamp check: current=$current_time, last=$LAST_EPOCH, diff=${time_diff}s, target=${epoch_target}s" >&2
+    fi
+    
     # Test if enough time has passed until the next update
     if (( ( $(current_epoch) - $LAST_EPOCH ) < $epoch_target )); then
       if [[ "$force_update" != "true" ]]; then
+        [[ -n "$DOTFILES_DEBUG" ]] && echo "[DEBUG] Timestamp check failed, not enough time passed (use -f to force)" >&2
         return
       else
+        [[ -n "$DOTFILES_DEBUG" ]] && echo "[DEBUG] Timestamp check failed but force mode enabled" >&2
         echo "[dotfiles] Forcing update check despite recent timestamp"
       fi
+    else
+      [[ -n "$DOTFILES_DEBUG" ]] && echo "[DEBUG] Timestamp check passed, proceeding with update check" >&2
     fi
 
     # Test if Oh My Zsh directory is a git repository
