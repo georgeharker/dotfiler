@@ -375,7 +375,7 @@ python dotfile_manager.py
  source venv/bin/activate  # On Windows: venv\Scripts\activate
  ```
  
- #### Installation
+ #### TUI Installation
  
  ```bash
  cd ~/.dotfiles/.nounpack/dotfiler
