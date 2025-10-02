@@ -152,6 +152,16 @@ function copy_if_needed(){
   fullpath_home=$HOME:A
   fullpath_script_dir=$script_dir:A
   
+  # SAFETY CHECK: Prevent re-ingesting symlinked files
+  if [[ -L "$1" ]]; then
+    link_target=$(readlink "$1")
+    link_target_abs="${link_target:A}"
+    if [[ "$link_target_abs" == "$fullpath_script_dir"* ]]; then
+      info ".. SKIPPING: $1 is already a symlink to dotfiles ($link_target_abs)"
+      return 0
+    fi
+  fi
+  
   # Check if source is already in dotfiles directory
   if [[ "$src" == "$fullpath_script_dir"* ]]; then
     # Source is already in dotfiles, so we're probably re-ingesting from dotfiles to dotfiles
@@ -160,8 +170,19 @@ function copy_if_needed(){
     return 0
   else
     # Normal case: source is in home directory, copy to dotfiles
-    dest="$script_dir/"${src#$fullpath_home/}
-    destdir="$script_dir/"`dirname ${src#$fullpath_home/}`
+    # Calculate relative path from home directory
+    if [[ "$src" == "$fullpath_home/"* ]]; then
+      # File is under home directory - use relative path
+      relative_path="${src#$fullpath_home/}"
+      dest="$script_dir/$relative_path"
+      destdir="$script_dir/$(dirname "$relative_path")"
+    else
+      # File is not under home directory - use basename only
+      filename=$(basename "$src")
+      dest="$script_dir/$filename"
+      destdir="$script_dir"
+      warn "WARNING: $src is not under home directory, placing in dotfiles root as $filename"
+    fi
   fi
   
   info_nonl "checking $src to $dest ($destdir) .."
@@ -209,6 +230,7 @@ function copy_if_needed(){
       mkdir -p $destdir
       cp -r $src $destdir
       action ".. Copied $src to $dest"
+      git -C "$script_dir" add "$dest"
     fi
   fi
   return 0
@@ -274,6 +296,8 @@ excluded_paths=(
   ".git"
   "setup.sh"
   "install.sh"
+  "install.sh.backup"
+  "install_module.sh"
   "update.sh"
   "check_update.sh"
   ".nounpack"
