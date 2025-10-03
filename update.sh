@@ -7,23 +7,6 @@ helper_script_dir="${script_name:h}"
 
 source "${helper_script_dir}/helpers.sh"
 
-# Initialize git status variables
-git_deleted=""
-git_added=""
-
-deleted_files=()
-for line in ${(f)git_deleted}; do
-    [[ "$line" == D$'\t'* ]] || continue
-    local file="${line#D$'\t'}"
-    [[ -n "$file" ]] && deleted_files+=("$file") && warn "found $file as deleted"
-done
-added_files=()
-for line in ${(f)git_added}; do
-    [[ "$line" == A$'\t'* ]] || continue
-    local file="${line#A$'\t'}"
-    [[ -n "$file" ]] && added_files+=("$file") && info "found $file as added"
-done
-
 # Detect script directory - handle being in .nounpack/scripts/
 dotfiles_dir=$(find_dotfiles_directory)
 script_dir=$(find_dotfiles_script_directory)
