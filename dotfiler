@@ -22,7 +22,7 @@ Usage: $script_name <command> [options]
 Commands:
     gui                 Launch the graphical user interface
     setup               Run dotfile setup/installation
-    check_update        Check for updates to dotfiles
+    check-update        Check for updates to dotfiles
     update              Update dotfiles from repository
 
 Options:
@@ -31,7 +31,7 @@ Options:
 Examples:
     $script_name gui                      # Launch GUI
     $script_name setup -u                 # Run setup with unpack
-    $script_name check_update --force     # Force update check
+    $script_name check_updates --force    # Force update check
     $script_name update --quiet           # Update quietly
 
 For command-specific help, run:
@@ -46,7 +46,7 @@ while [[ $# -gt 0 ]]; do
             usage
             exit 0
             ;;
-        gui|setup|check_update|update)
+        gui|setup|check-updates|update)
             command="$1"
             shift
             break
@@ -80,7 +80,7 @@ case "$command" in
         # Run setup script with all remaining arguments
         exec "$script_dir/setup.sh" "$@"
         ;;
-    check_update)
+    check-updates)
         # Run check_update script with all remaining arguments
         exec "$script_dir/check_update.sh" "$@"
         ;;
