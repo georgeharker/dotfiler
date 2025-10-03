@@ -3,11 +3,14 @@
 Dotfile Manager - A TUI for managing dotfiles with textual
 """
 
-import os
+from __future__ import annotations
+
+
+import argparse
 import subprocess
-import sys
 from pathlib import Path
-from typing import List, Set, Optional
+from dataclasses import dataclass
+from typing import List, Optional, Set
 
 from textual import on
 from textual.app import App, ComposeResult
@@ -25,14 +28,31 @@ from textual.widgets import (
     Switch,
     TextArea,
 )
-from textual.widgets._directory_tree import DirEntry
+from textual.widgets._tree import TreeNode
+from textual.types import DirEntry
 from rich.text import Text
+
+@dataclass
+class FileInfo:
+    file_name: str
+    dotfile_path: str
+    home_path: str
+    dotfile_exists: bool
+    home_exists: bool
+    home_is_symlink: bool
+    status: str
+    details: List[str]
+    diff: Optional[str]
+
+
 class TrackedDirectoryTree(DirectoryTree):
     """Custom DirectoryTree that shows tracked files with indicators."""
 
+    tracked_files: Set[Path]
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.tracked_files: Set[Path] = set()
+        self.tracked_files = set()
 
     def set_tracked_files(self, tracked_files: Set[Path]) -> None:
         """Update the set of tracked files and refresh display."""
@@ -65,7 +85,10 @@ class InfoScreen(Screen):
         Binding("q", "dismiss", "Close"),
     ]
 
-    def __init__(self, info: dict, app_instance):
+    info: FileInfo
+    app_instance: DotfileApp
+
+    def __init__(self, info: FileInfo, app_instance):
         super().__init__()
         self.info = info
         self.app_instance = app_instance
@@ -73,7 +96,7 @@ class InfoScreen(Screen):
     def compose(self) -> ComposeResult:
         """Compose the info screen."""
         # Create buttons directly based on status
-        status = self.info['status']
+        status = self.info.status
 
         # Build button container with explicit button creation
         if status == 'File Conflict':
@@ -101,7 +124,7 @@ class InfoScreen(Screen):
             )
 
         yield Vertical(
-            Static(f"File Information: {self.info['file_name']}", classes="dialog-title"),
+            Static(f"File Information: {self.info.file_name}", classes="dialog-title"),
             Container(
                 TextArea(
                     self.format_info(),
@@ -119,21 +142,21 @@ class InfoScreen(Screen):
     def format_info(self) -> str:
         """Format the file information for display."""
         lines = [
-            f"📁 File: {self.info['file_name']}",
-            f"📊 Status: {self.info['status']}",
+            f"📁 File: {self.info.file_name}",
+            f"📊 Status: {self.info.status}",
             "",
             "📋 Details:",
         ]
 
-        for detail in self.info['details']:
+        for detail in self.info.details:
             lines.append(f"  • {detail}")
 
-        if self.info['diff']:
+        if self.info.diff:
             lines.extend([
                 "",
                 "🔍 File Differences:",
                 "─" * 60,
-                self.info['diff']
+                self.info.diff
             ])
 
         return "\n".join(lines)
@@ -146,31 +169,37 @@ class InfoScreen(Screen):
     @on(Button.Pressed, "#reingest_btn")
     def on_reingest_pressed(self) -> None:
         """Handle re-ingest button press."""
-        file_path = Path(self.info['home_path'])
+        file_path = Path(self.info.home_path)
         self.app_instance.run_ingest([file_path])
         self.dismiss()
 
     @on(Button.Pressed, "#unpack_file_btn")
     def on_unpack_file_pressed(self) -> None:
         """Handle unpack file button press."""
-        dotfile_path = Path(self.info['dotfile_path'])
+        dotfile_path = Path(self.info.dotfile_path)
         self.app_instance.run_unpack_single_file(dotfile_path)
         self.dismiss()
 
     @on(Button.Pressed, "#delete_tracking_btn")
     def on_delete_tracking_pressed(self) -> None:
         """Handle delete tracking button press."""
-        dotfile_path = Path(self.info['dotfile_path'])
+        dotfile_path = Path(self.info.dotfile_path)
         self.app_instance.delete_tracked_file(dotfile_path)
         self.dismiss()
 
-    def action_dismiss(self) -> None:
-        """Dismiss the screen."""
-        self.dismiss()
+    # def action_dismiss(self) -> Any:
+    #     """Dismiss the screen."""
+    #     self.dismiss()
 
 
 class DotfileApp(App[None]):
     """Main application for dotfile management."""
+
+    tracked_file_paths: List[Path]
+    dotfiles_dir: Path
+    setup_script: Path
+    selected_files: Set[Path]
+    is_manage_mode:bool
 
     CSS = """
     .box {
@@ -275,13 +304,13 @@ class DotfileApp(App[None]):
         Binding("f", "show_info", "Info", show=False, key_display="F"),
     ]
 
-    def __init__(self):
+    def __init__(self, dotfiles_dir: Optional[Path] = None, setup_script: Optional[Path] = None):
         super().__init__()
-        self.dotfiles_dir = Path.home() / ".dotfiles"
-        self.setup_script = self.dotfiles_dir / "setup.sh"
-        self.selected_files: Set[Path] = set()
+        self.dotfiles_dir = dotfiles_dir or (Path.home() / ".dotfiles")
+        self.setup_script = setup_script or (self.dotfiles_dir / "setup.sh")
+        self.selected_files = set()
         self.is_manage_mode = False
-        self.tracked_file_paths: List[Path] = []  # Store paths corresponding to table rows
+        self.tracked_file_paths = []  # Store paths corresponding to table rows
 
     def compose(self) -> ComposeResult:
         """Compose the UI."""
@@ -488,8 +517,8 @@ class DotfileApp(App[None]):
         tree = self.query_one("#directory_tree", TrackedDirectoryTree)
         if tree.cursor_line is not None:
             # Get the path of the currently highlighted item
-            node = tree.get_node_at_line(tree.cursor_line)
-            if node and hasattr(node, 'data') and hasattr(node.data, 'path'):
+            node: Optional[TreeNode[DirEntry]] = tree.get_node_at_line(tree.cursor_line)
+            if node is not None and node.data is not None:
                 path = Path(node.data.path)
                 if path in self.selected_files:
                     self.selected_files.discard(path)
@@ -524,8 +553,8 @@ class DotfileApp(App[None]):
             # Add mode - show info for current directory tree item
             tree = self.query_one("#directory_tree", TrackedDirectoryTree)
             if tree.cursor_line is not None:
-                node = tree.get_node_at_line(tree.cursor_line)
-                if node and hasattr(node, 'data') and hasattr(node.data, 'path'):
+                node: Optional[TreeNode[DirEntry]] = tree.get_node_at_line(tree.cursor_line)
+                if node is not None and node.data is not None:
                     file_path = Path(node.data.path)
                     if file_path.is_file():
                         info = self.get_file_info_for_any_file(file_path)
@@ -555,8 +584,8 @@ class DotfileApp(App[None]):
             # Add mode - show info for current directory tree item
             tree = self.query_one("#directory_tree", TrackedDirectoryTree)
             if tree.cursor_line is not None:
-                node = tree.get_node_at_line(tree.cursor_line)
-                if node and hasattr(node, 'data') and hasattr(node.data, 'path'):
+                node: Optional[TreeNode[DirEntry]] = tree.get_node_at_line(tree.cursor_line)
+                if node is not None and node.data is not None:
                     file_path = Path(node.data.path)
                     if file_path.is_file():
                         info = self.get_file_info_for_any_file(file_path)
@@ -568,62 +597,62 @@ class DotfileApp(App[None]):
             else:
                 self.notify("No file selected", severity="warning")
 
-    def get_file_info(self, file_path: Path) -> dict:
+    def get_file_info(self, file_path: Path) -> FileInfo:
         """Get detailed information about a tracked file."""
         relative_path = file_path.relative_to(self.dotfiles_dir)
         home_path = Path.home() / relative_path
 
-        info = {
-            'file_name': str(relative_path),
-            'dotfile_path': str(file_path),
-            'home_path': str(home_path),
-            'dotfile_exists': file_path.exists(),
-            'home_exists': home_path.exists(),
-            'home_is_symlink': home_path.is_symlink() if home_path.exists() else False,
-            'status': '',
-            'details': [],
-            'diff': None
-        }
+        info = FileInfo(
+            file_name= str(relative_path),
+            dotfile_path= str(file_path),
+            home_path= str(home_path),
+            dotfile_exists= file_path.exists(),
+            home_exists= home_path.exists(),
+            home_is_symlink= home_path.is_symlink() if home_path.exists() else False,
+            status= '',
+            details= [],
+            diff= None
+        )
 
-        if not info['dotfile_exists']:
-            info['status'] = 'Missing Dotfile'
-            info['details'].append(f"Tracked dotfile does not exist: {file_path}")
+        if not info.dotfile_exists:
+            info.status = 'Missing Dotfile'
+            info.details.append(f"Tracked dotfile does not exist: {file_path}")
             return info
 
-        if info['home_is_symlink']:
+        if info.home_is_symlink:
             try:
                 link_target = home_path.resolve()
                 dotfile_resolved = file_path.resolve()
 
                 if link_target == dotfile_resolved:
-                    info['status'] = 'Correctly Linked'
-                    info['details'].append(f"Symlink correctly points to: {link_target}")
+                    info.status = 'Correctly Linked'
+                    info.details.append(f"Symlink correctly points to: {link_target}")
                 else:
-                    info['status'] = 'Wrong Link Target'
-                    info['details'].append(f"Symlink points to: {link_target}")
-                    info['details'].append(f"Should point to: {dotfile_resolved}")
+                    info.status = 'Wrong Link Target'
+                    info.details.append(f"Symlink points to: {link_target}")
+                    info.details.append(f"Should point to: {dotfile_resolved}")
 
             except (OSError, RuntimeError) as e:
-                info['status'] = 'Broken Symlink'
-                info['details'].append(f"Symlink is broken: {e}")
+                info.status = 'Broken Symlink'
+                info.details.append(f"Symlink is broken: {e}")
 
-        elif info['home_exists']:
-            info['status'] = 'File Conflict'
-            info['details'].append(f"Regular file exists at: {home_path}")
-            info['details'].append(f"Should be symlink to: {file_path}")
+        elif info.home_exists:
+            info.status = 'File Conflict'
+            info.details.append(f"Regular file exists at: {home_path}")
+            info.details.append(f"Should be symlink to: {file_path}")
 
             # Get diff if both files exist
             if file_path.is_file() and home_path.is_file():
-                info['diff'] = self.get_file_diff(file_path, home_path)
+                info.diff = self.get_file_diff(file_path, home_path)
 
         else:
-            info['status'] = 'Not Linked'
-            info['details'].append(f"No file exists at: {home_path}")
-            info['details'].append(f"Dotfile ready for linking: {file_path}")
+            info.status = 'Not Linked'
+            info.details.append(f"No file exists at: {home_path}")
+            info.details.append(f"Dotfile ready for linking: {file_path}")
 
         return info
 
-    def get_file_info_for_any_file(self, file_path: Path) -> dict:
+    def get_file_info_for_any_file(self, file_path: Path) -> FileInfo:
         """Get info for any file, whether tracked or not."""
         # Check if this file is already tracked
         tracked_files = self.get_tracked_files()
@@ -640,27 +669,27 @@ class DotfileApp(App[None]):
                 pass
 
         # For untracked files or files outside home
-        info = {
-            'file_name': str(file_path.name),
-            'dotfile_path': '',
-            'home_path': str(file_path),
-            'dotfile_exists': False,
-            'home_exists': file_path.exists(),
-            'home_is_symlink': file_path.is_symlink() if file_path.exists() else False,
-            'status': 'Not Tracked',
-            'details': [],
-            'diff': None
-        }
+        info = FileInfo(
+            file_name= str(file_path.name),
+            dotfile_path= '',
+            home_path= str(file_path),
+            dotfile_exists= False,
+            home_exists= file_path.exists(),
+            home_is_symlink= file_path.is_symlink() if file_path.exists() else False,
+            status= 'Not Tracked',
+            details= [],
+            diff= None
+        )
 
         if not is_tracked:
-            info['details'].append(f"File is not tracked in dotfiles")
-            info['details'].append(f"Located at: {file_path}")
+            info.details.append("File is not tracked in dotfiles")
+            info.details.append(f"Located at: {file_path}")
             try:
                 relative_path = file_path.relative_to(Path.home())
                 potential_dotfile = self.dotfiles_dir / relative_path
-                info['details'].append(f"Would be tracked as: {potential_dotfile}")
+                info.details.append(f"Would be tracked as: {potential_dotfile}")
             except ValueError:
-                info['details'].append("File is outside home directory - cannot track")
+                info.details.append("File is outside home directory - cannot track")
 
         return info
 
@@ -681,7 +710,7 @@ class DotfileApp(App[None]):
         except Exception as e:
             return f"Error comparing files: {e}"
 
-    def show_info_dialog(self, info: dict) -> None:
+    def show_info_dialog(self, info: FileInfo) -> None:
         """Show file info in a modal dialog."""
         info_screen = InfoScreen(info, self)
         self.push_screen(info_screen)
@@ -838,7 +867,24 @@ class DotfileApp(App[None]):
 
 def main():
     """Main entry point."""
-    app = DotfileApp()
+    parser = argparse.ArgumentParser(description="Dotfile Manager - A TUI for managing dotfiles")
+    parser.add_argument(
+        "--dotfiles-dir",
+        type=Path,
+        help="Path to dotfiles directory (default: ~/.dotfiles)"
+    )
+    parser.add_argument(
+        "--setup-script",
+        type=Path,
+        help="Path to setup script (default: <dotfiles-dir>/setup.sh)"
+    )
+    
+    args = parser.parse_args()
+    
+    app = DotfileApp(
+        dotfiles_dir=args.dotfiles_dir,
+        setup_script=args.setup_script
+    )
     app.run()
 
 

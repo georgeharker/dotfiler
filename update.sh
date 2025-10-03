@@ -1,24 +1,40 @@
 #!/bin/zsh
 
-script_dir=`dirname $0`
-script_dir=$script_dir:A
 
-# Allow override of dotfiles directory via zstyle
-zstyle -s ':dotfiles:directory' path dotfiles_override
-if [[ -n "$dotfiles_override" ]]; then
-  script_dir="${dotfiles_override:A}"
-fi
+# Capture script name early before functions change context
+script_name="${${(%):-%x}:A}"
+helper_script_dir="${script_name:h}"
+
+source "${helper_script_dir}/helpers.sh"
+
+deleted_files=()
+for line in ${(f)git_deleted}; do
+    [[ "$line" == D$'\t'* ]] || continue
+    local file="${line#D$'\t'}"
+    [[ -n "$file" ]] && deleted_files+=("$file") && warn "found $file as deleted"
+done
+added_files=()
+for line in ${(f)git_added}; do
+    [[ "$line" == A$'\t'* ]] || continue
+    local file="${line#A$'\t'}"
+    [[ -n "$file" ]] && added_files+=("$file") && info "found $file as added"
+done
+
+# Detect script directory - handle being in .nounpack/scripts/
+dotfiles_dir=$(find_dotfiles_directory)
+script_dir=$(find_dotfiles_script_directory)
 
 commit_hash=()
 range=()
 function usage(){
-  echo "Usage: $0 [--quiet | -q] [--commit-hash hash | -c hash] [--range range | -r range]"
+  echo "Usage: ${script_name} [-D | --dry_run] [--quiet | -q] [--commit-hash hash | -c hash] [--range range | -r range]"
 }
 
 zmodload zsh/zutil
 zparseopts -D -E - q=quiet -q=quiet \
                    c+:=commit_hash -commit-hash+:=commit_hash \
-                   r+:=range -range+:=range || \
+                   r+:=range -range+:=range \
+                   D=dry_run -dry-run=dry_run || \
   (usage; exit 1)
 
 # Clean up commit_hash array
@@ -50,7 +66,7 @@ function warn(){
 }
 
 # Ensure relative to dotfiles
-cd "${script_dir}"
+cd "${dotfiles_dir}"
 
 # Get default remote and branch
 function get_default_remote(){
@@ -69,11 +85,20 @@ function get_default_branch(){
     local remote="${1:-$(get_default_remote)}"
     
     # Try to get the default branch from remote HEAD
-    local default_branch=$(git symbolic-ref refs/remotes/${remote}/HEAD 2>/dev/null | sed "s@^refs/remotes/${remote}/@@")
+    local ref_output default_branch
+    ref_output=$(git symbolic-ref refs/remotes/${remote}/HEAD 2>/dev/null)
+    default_branch="${ref_output#refs/remotes/${remote}/}"
     
     # If that fails, try to get it from remote show
     if [[ -z "$default_branch" ]]; then
-        default_branch=$(git remote show "$remote" 2>/dev/null | grep "HEAD branch" | cut -d: -f2 | tr -d ' ')
+        local remote_output line
+        remote_output=$(git remote show "$remote" 2>/dev/null)
+        for line in ${(f)remote_output}; do
+            if [[ "$line" == *"HEAD branch:"* ]]; then
+                default_branch="${${line#*: }// /}"  # Remove prefix and spaces
+                break
+            fi
+        done
     fi
     
     # Final fallback to common default branches
@@ -110,29 +135,20 @@ else
     info "Using ${default_remote}/${default_branch} mode: ${diff_range}"
 fi
 
-deleted_files=()
-while IFS= read -r file; do
-    if [[ -n "$file" ]]; then
-        warn "found $file as deleted"
-        deleted_files+=("$file")
-    fi
-done < <(git log -m -1 --name-status --diff-filter=D --no-decorate --pretty=oneline ${diff_range} | ${GREP} "^D\t" | cut -f 2)
-
-added_files=()
-while IFS= read -r file; do
-    if [[ -n "$file" ]]; then
-        info "found $file as added"
-        added_files+=("$file")
-    fi
-done < <(git log -m -1 --name-status --diff-filter=A --no-decorate --pretty=oneline ${diff_range} | ${GREP} "^A\t" | cut -f 2)
-
+# Process git changes using zsh array operations
+local git_deleted git_added git_modified
+git_deleted=$(git log -m -1 --name-status --diff-filter=D --no-decorate --pretty=oneline ${diff_range})
+git_added=$(git log -m -1 --name-status --diff-filter=A --no-decorate --pretty=oneline ${diff_range})
+git_modified=$(git log -m -1 --name-status --diff-filter=M --no-decorate --pretty=oneline ${diff_range})
 modified_files=()
-while IFS= read -r file; do
+for line in ${(f)git_modified}; do
+    [[ "$line" == M$'\t'* ]] || continue
+    local file="${line#M$'\t'}"
     if [[ -n "$file" ]]; then
         info "found $file as modified"
         modified_files+=("$file")
     fi
-done < <(git log -m -1 --name-status --diff-filter=M --no-decorate --pretty=oneline ${diff_range} | ${GREP} "^M\t" | cut -f 2)
+done
 
 # Only pull in origin/master mode
 if [[ ${#commit_hash[@]} == 0 && ${#range[@]} == 0 ]]; then
@@ -141,14 +157,22 @@ if [[ ${#commit_hash[@]} == 0 && ${#range[@]} == 0 ]]; then
     git pull "$default_remote" "$default_branch"
 fi
 
+function safe_rm(){
+    if [[ ${#dry_run[@]} -gt 0 ]]; then
+        action "[DRY RUN] Would remove: $1"
+    else
+        rm "$1"
+    fi
+}
+
 delete_if_needed(){
     src=$1:A
-    fullpath_script_dir=$script_dir:A
-    dest="$HOME/"${1#$fullpath_script_dir/}
-    destdir="$script_dir/"`dirname ${src#$fullpath_home/}`
+    fullpath_dotfiles_dir=$dotfiles_dir:A
+    dest="$HOME/"${1#$fullpath_dotfiles_dir/}
+    destdir="$dotfiles_dir/"`dirname ${src#$fullpath_home/}`
     if [[ -L "$dest" ]]; then
         action "cleaning up $dest"
-        rm "$dest"
+        safe_rm "$dest"
     else
         warn "$dest is not a symlink, not removing"
     fi
@@ -166,9 +190,13 @@ files_to_unpack=("${added_files[@]}" "${modified_files[@]}")
 
 if [[ ${#files_to_unpack[@]} -gt 0 ]]; then
     info "files to unpack (added: ${#added_files[@]}, modified: ${#modified_files[@]}): ${files_to_unpack[*]}"
+    local dry_run_arg=""
+    if [[ ${#dry_run[@]} -gt 0 ]]; then
+        dry_run_arg="-D"
+    fi
     if [[ ${#quiet[@]} == 0 ]]; then
-        ${script_dir}"/setup.sh" -u "${files_to_unpack[@]}"
+        ${script_dir}"/setup.sh" "${dry_run_arg}" -u "${files_to_unpack[@]}"
     else
-        ${script_dir}"/setup.sh" -u -q "${files_to_unpack[@]}"
+        ${script_dir}"/setup.sh" "${dry_run_arg}" -u -q "${files_to_unpack[@]}"
     fi
 fi

@@ -1,5 +1,11 @@
 #!/bin/zsh
 
+# Capture script name early before functions change context
+script_name="${${(%):-%x}:A}"
+helper_script_dir="${script_name:h}"
+
+source "${helper_script_dir}/helpers.sh"
+
 ingest=()
 setup=()
 unpack=()
@@ -8,9 +14,15 @@ untrack=()
 diff=()
 
 function usage(){
-  echo "Usage: $0 ([-ingest path | -i path ...] | [-setup | -s]) [-unpack [file ...] | -u [file ...]] [-force-unpack [file ...] | -U [file ...]] [--untrack path | -t path ...] [--diff | -d] [--yes | y] [--no | -n]"
+  echo "Usage: $script_name ([-ingest path | -i path ...] | [-setup | -s]) [-unpack [file ...] | -u [file ...]] [-force-unpack [file ...] | -U [file ...]] [--untrack path | -t path ...] [--diff | -d] [--dry-run | -D] [--yes | y] [--no | -n]"
   echo "  -u, --unpack        Unpack files (respects exclusions)"
   echo "  -U, --force-unpack  Force unpack files (ignores exclusions)"
+  echo "  -D, --dry-run       Show what actions would be taken without making changes"
+  echo ""
+  echo "Examples:"
+  echo "  $script_name -s -D           # Show what setup would do (dry run)"
+  echo "  $script_name -u .vimrc -D    # Show what unpacking .vimrc would do"
+  echo "  $script_name -i ~/.bashrc -D # Show what ingesting ~/.bashrc would do"
 }
 
 zmodload zsh/zutil
@@ -21,9 +33,95 @@ zparseopts -D -E - i+:=ingest -ingest+:=ingest \
                    t+:=untrack -untrack+:=untrack \
                    d=diff -d=diff \
                    q=quiet -q=quiet \
+                   D=dry_run -dry-run=dry_run \
                    y=yes -y=defyes \
-                   n=yes -n=defno || \
-  (usage; exit 1)
+                   n=no -n=defno || \
+  { usage; exit 1; }
+
+# Develop an expression for exclusion
+# Function to read exclusion patterns from file or use defaults
+read_exclusion_patterns() {
+    local exclusion_file="$1"
+    local -a path_patterns=()
+    local -a name_patterns=()
+    
+    # Default exclusions if no file provided or file doesn't exist
+    if [[ -z "$exclusion_file" ]] || [[ ! -f "$exclusion_file" ]]; then
+        # Default path patterns (relative to dotfiles root)
+        path_patterns=(
+            ".git"
+            ".git/*"
+            ".nounpack"
+            ".nounpack/*"
+        )
+        
+        # Default name patterns (filenames to exclude anywhere)
+        name_patterns=(
+            "*.swp"
+            "*.swo" 
+            ".DS_Store"
+            "*~"
+        )
+    else
+        # Read file contents into array, splitting on newlines
+        # (f) splits by line, (u) makes patterns unique, (ND) prevents globbing
+        local -a raw_patterns=(${(fu)"$(<$exclusion_file)"}(ND))
+        
+        # Process each pattern
+        for line in "${raw_patterns[@]}"; do
+            # Skip comments and empty lines
+            [[ "$line" =~ ^#.* ]] && continue
+            [[ -z "$line" ]] && continue
+            
+            # Convert patterns similar to gitignore logic
+            # Handle directory patterns (ending with /)
+            if [[ "$line" =~ /$ ]]; then
+                # Remove trailing slash and add both directory and contents
+                local path_pattern="${line%/}"
+                path_patterns+=("$path_pattern" "$path_pattern/*")
+            # Handle patterns with path separators
+            elif [[ "$line" =~ / ]]; then
+                path_patterns+=("$line")
+            # Handle name patterns (no path separators)
+            else
+                name_patterns+=("$line")
+            fi
+        done
+    fi
+    
+    # Set global arrays
+    excluded_paths=("${path_patterns[@]}")
+    excluded_names=("${name_patterns[@]}")
+}
+
+# Function to build find exclusion arguments
+build_find_exclusion_args() {
+    local -a excludes=()
+    
+    # Build path exclusions
+    for pattern in ${excluded_paths[@]}; do
+        if [[ ${#excludes[@]} -gt 0 ]]; then
+            excludes+=("-or")
+        fi
+        excludes+=("-path" "$dotfiles_dir/$pattern")
+    done
+    
+    # Build name exclusions  
+    for pattern in ${excluded_names[@]}; do
+        if [[ ${#excludes[@]} -gt 0 ]]; then
+            excludes+=("-or")
+        fi
+        excludes+=("-name" "$pattern")
+    done
+    
+    # Set global exclude_args
+    if [[ ${#excludes[@]} -gt 0 ]]; then
+        exclude_args=("-and" "(" "-not" "(" ${excludes[@]} ")" ")")
+    else
+        exclude_args=()
+    fi
+}
+
 
 ingest=("${(@)ingest:#-i}")
 ingest=("${(@)ingest:#--ingest=}")
@@ -46,22 +144,27 @@ if [[ ${#force_unpack[@]} -gt 0 ]]; then
     force_unpack_files=("$@")
 fi
 
-if (( ${#ingest[@]} == 0 && ${#setup[@]} == 0 && ${#unpack[@]} == 0 && ${#force_unpack[@]} == 0 && ${#untrack[@]} == 0 )); then
+if (( ${#ingest[@]} == 0 && ${#setup[@]} == 0 && ${#unpack[@]} == 0 && ${#force_unpack[@]} == 0 && ${#untrack[@]} == 0 && ${#diff[@]} == 0 )); then
   usage
   exit 1
 fi
 
+# Detect script directory
+dotfiles_dir=$(find_dotfiles_directory)
 
-script_dir=`dirname $0`
-script_dir=$script_dir:A
+# Must be after dotfiles_dir detection
+# Initialize exclusion patterns (can be called with custom file path)
+# Usage: read_exclusion_patterns [/path/to/exclusion/file]
+dotfiles_exclude_file="${}"
+read_exclusion_patterns "$DOTFILES_EXCLUDE_FILE"
+build_find_exclusion_args
 
-# Allow override of dotfiles directory via zstyle
-zstyle -s ':dotfiles:directory' path dotfiles_override
-if [[ -n "$dotfiles_override" ]]; then
-  script_dir="${dotfiles_override:A}"
+# Indicate dry run mode if active
+if [[ ${#dry_run[@]} -gt 0 ]]; then
+    warn "=== DRY RUN MODE ACTIVE - No filesystem changes will be made ==="
 fi
 
-pretty_script_dir=`print -D $script_dir:P`
+pretty_dotfiles_dir=`print -D $dotfiles_dir:P`
 
 function prompt_yes_no(){
   [[ ${#defno[@]} -ge 1 ]] && exit 0
@@ -90,19 +193,74 @@ function warn(){
     [[ ${#quiet[@]} == 0 ]] && print -P "%F{yellow}$@%f"
 }
 
+# Safe filesystem operation wrappers that respect dry run mode
+function safe_mkdir(){
+    if [[ ${#dry_run[@]} -gt 0 ]]; then
+        action "[DRY RUN] Would create directory: $1"
+    else
+        mkdir -p "$1"
+    fi
+}
+
+function safe_ln(){
+    local src="$1"
+    local dest="$2"
+    if [[ ${#dry_run[@]} -gt 0 ]]; then
+        action "[DRY RUN] Would create symlink: $dest -> $src"
+    else
+        ln -s "$src" "$dest"
+    fi
+}
+
+function safe_rm(){
+    if [[ ${#dry_run[@]} -gt 0 ]]; then
+        action "[DRY RUN] Would remove: $1"
+    else
+        rm "$1"
+    fi
+}
+
+function safe_cp(){
+    local src="$1"
+    local dest="$2"
+    if [[ ${#dry_run[@]} -gt 0 ]]; then
+        action "[DRY RUN] Would copy: $src -> $dest"
+    else
+        cp "$src" "$dest"
+    fi
+}
+
+function safe_cp_r(){
+    local src="$1"
+    local dest="$2"
+    if [[ ${#dry_run[@]} -gt 0 ]]; then
+        action "[DRY RUN] Would copy recursively: $src -> $dest"
+    else
+        cp -r "$src" "$dest"
+    fi
+}
+
+function safe_git(){
+    if [[ ${#dry_run[@]} -gt 0 ]]; then
+        action "[DRY RUN] Would run git: git $*"
+    else
+        git "$@"
+    fi
+}
+
 function dolink(){
   src=$1
   dest=$2
-  destdir=`dirname $dest`
-  mkdir -p $destdir
-  ln -s $src $destdir/
+  destdir="${dest:h}"
+  safe_mkdir $destdir
+  safe_ln $src $destdir/
   action ".. Linked $src to $dest"
 }
 
 function link_if_needed(){
   src=$1:A
-  fullpath_script_dir=$script_dir:A
-  dest="$HOME/"${1#$fullpath_script_dir/}
+  fullpath_dotfiles_dir=$dotfiles_dir:A
+  dest="$HOME/"${1#$fullpath_dotfiles_dir/}
   info_nonl "checking $src to $dest .."
   if [[ -L "$dest" ]]; then
     linkfile=`readlink $dest`
@@ -126,7 +284,7 @@ function link_if_needed(){
       msg=".. file $dest exists and is identical, replace with link?"
     fi
     if `prompt_yes_no "$msg"`; then
-      rm $dest
+      safe_rm $dest
       dolink $src $dest
     else
       warn ".. Refused link of $src to $dest"
@@ -150,20 +308,20 @@ function link_if_needed(){
 function copy_if_needed(){
   src=$1:A
   fullpath_home=$HOME:A
-  fullpath_script_dir=$script_dir:A
+  fullpath_dotfiles_dir=$dotfiles_dir:A
   
   # SAFETY CHECK: Prevent re-ingesting symlinked files
   if [[ -L "$1" ]]; then
     link_target=$(readlink "$1")
     link_target_abs="${link_target:A}"
-    if [[ "$link_target_abs" == "$fullpath_script_dir"* ]]; then
+    if [[ "$link_target_abs" == "$fullpath_dotfiles_dir"* ]]; then
       info ".. SKIPPING: $1 is already a symlink to dotfiles ($link_target_abs)"
       return 0
     fi
   fi
   
   # Check if source is already in dotfiles directory
-  if [[ "$src" == "$fullpath_script_dir"* ]]; then
+  if [[ "$src" == "$fullpath_dotfiles_dir"* ]]; then
     # Source is already in dotfiles, so we're probably re-ingesting from dotfiles to dotfiles
     # This shouldn't happen in normal usage, but let's handle it gracefully
     info ".. WARNING: Source $src is already in dotfiles directory"
@@ -174,13 +332,7 @@ function copy_if_needed(){
     if [[ "$src" == "$fullpath_home/"* ]]; then
       # File is under home directory - use relative path
       relative_path="${src#$fullpath_home/}"
-      dest="$script_dir/$relative_path"
-      destdir="$script_dir/$(dirname "$relative_path")"
-    else
-      # File is not under home directory - use basename only
-      filename=$(basename "$src")
-      dest="$script_dir/$filename"
-      destdir="$script_dir"
+      destdir="$dotfiles_dir"
       warn "WARNING: $src is not under home directory, placing in dotfiles root as $filename"
     fi
   fi
@@ -199,7 +351,7 @@ function copy_if_needed(){
         warn ".. File $dest exists and differs from $src"
         msg="Update tracked file $dest with contents from $src?"
         if `prompt_yes_no "$msg"`; then
-          cp "$src" "$dest"
+          safe_cp "$src" "$dest"
           action ".. Updated $dest with contents from $src"
         else
           warn ".. Skipped updating $dest"
@@ -215,7 +367,7 @@ function copy_if_needed(){
         warn ".. Directory $dest exists and differs from $src"
         msg="Update tracked directory $dest with contents from $src?"
         if `prompt_yes_no "$msg"`; then
-          cp -r "$src"/* "$dest"/
+          safe_cp_r "$src"/* "$dest"/
           action ".. Updated $dest with contents from $src"
         else
           warn ".. Skipped updating $dest"
@@ -227,10 +379,10 @@ function copy_if_needed(){
   else
     msg="Track $src"
     if `prompt_yes_no "$msg"`; then
-      mkdir -p $destdir
-      cp -r $src $destdir
+      safe_mkdir $destdir
+      safe_cp_r $src $destdir
       action ".. Copied $src to $dest"
-      git -C "$script_dir" add "$dest"
+      safe_git -C "$dotfiles_dir" add "$dest"
     fi
   fi
   return 0
@@ -245,20 +397,20 @@ function untrack_if_needed(){
     src=$file_path
   else
     # Relative path from dotfiles directory
-    src="$script_dir/$file_path"
+    src="$dotfiles_dir/$file_path"
   fi
   
   src=$src:A
-  fullpath_script_dir=$script_dir:A
+  fullpath_dotfiles_dir=$dotfiles_dir:A
   
   # Ensure the file is within the dotfiles directory
-  if [[ "$src" != "$fullpath_script_dir"* ]]; then
-    error "File $src is not within dotfiles directory $fullpath_script_dir"
+  if [[ "$src" != "$fullpath_dotfiles_dir"* ]]; then
+    error "File $src is not within dotfiles directory $fullpath_dotfiles_dir"
     exit 1
   fi
   
   # Calculate the relative path within dotfiles
-  relative_path="${src#$fullpath_script_dir/}"
+  relative_path="${src#$fullpath_dotfiles_dir/}"
   home_path="$HOME/$relative_path"
   
   info_nonl "untracking $src (home: $home_path) .."
@@ -268,7 +420,7 @@ function untrack_if_needed(){
     if [[ -L "$home_path" ]]; then
       link_target=$(readlink "$home_path")
       if [[ "$link_target" == "$src" ]]; then
-        rm "$home_path"
+        safe_rm "$home_path"
         action ".. Removed symlink $home_path"
       else
         warn ".. Symlink $home_path points to different target: $link_target"
@@ -278,11 +430,11 @@ function untrack_if_needed(){
     fi
     
     # Remove from git and filesystem
-    git -C "$script_dir" rm "$relative_path"
+    safe_git -C "$dotfiles_dir" rm "$relative_path"
     action ".. Removed $src from git tracking"
   elif [[ -d "$src" ]]; then
     # Handle directory removal
-    git -C "$script_dir" rm -r "$relative_path"
+    safe_git -C "$dotfiles_dir" rm -r "$relative_path"
     action ".. Removed directory $src from git tracking"
   else
     error ".. File $src does not exist"
@@ -290,70 +442,46 @@ function untrack_if_needed(){
   fi
 }
 
-# Develop an expression for exclusion
-# Centralized exclusion configuration
-excluded_paths=(
-  ".git"
-  "setup.sh"
-  "install.sh"
-  "install.sh.backup"
-  "install_module.sh"
-  "update.sh"
-  "check_update.sh"
-  ".nounpack"
-)
-exclude_suffixes=".*.swp,.*.swo,.DS_Store"
-
+# Enhanced exclusion checking function
 function should_exclude_file(){
   local file_path="$1"
   local abs_file_path="${file_path:A}"
-  
-  # Check against excluded paths using centralized config
-  for excluded in ${excluded_paths[@]}; do
-    local full_excluded_path="$script_dir/$excluded"
-    if [[ "$abs_file_path" == "${full_excluded_path:A}" ]] || [[ "$abs_file_path" == "${full_excluded_path:A}/"* ]]; then
-      return 0  # Should exclude
+    local dotfiles_dir_abs="${dotfiles_dir:A}"
+    
+    # Get relative path from dotfiles directory for path pattern matching
+    local relative_path=""
+    if [[ "$abs_file_path" == "$dotfiles_dir_abs"* ]]; then
+        relative_path="${abs_file_path#$dotfiles_dir_abs/}"
+    fi
+    
+    # Check against excluded path patterns
+    for pattern in ${excluded_paths[@]}; do
+        # Check if pattern contains wildcards
+        if [[ "$pattern" == *"*"* ]] || [[ "$pattern" == *"?"* ]] || [[ "$pattern" == *"["* ]]; then
+            # Pattern contains wildcards - use glob matching against relative path
+            if [[ -n "$relative_path" ]] && [[ "$relative_path" == ${~pattern} ]]; then
+                return 0  # Should exclude
+            fi
+        else
+            # Literal path - do exact matching
+            local full_pattern_path="$dotfiles_dir_abs/$pattern"
+            if [[ "$abs_file_path" == "${full_pattern_path:A}" ]]; then
+                return 0  # Should exclude
+            fi
     fi
   done
   
-  # Check excluded suffixes
-  local excluded_suffixes=(".swp" ".swo" ".DS_Store")
-  for suffix in ${excluded_suffixes[@]}; do
-    if [[ "$file_path" == *"$suffix" ]]; then
+    # Check against excluded name patterns
+    local basename="${abs_file_path:t}"  # Get just the filename
+    for pattern in ${excluded_names[@]}; do
+        # Use zsh pattern matching for name patterns
+        if [[ "$basename" == ${~pattern} ]]; then
       return 0  # Should exclude
     fi
   done
   
   return 1  # Should not exclude
 }
-
-# Build find exclusion args from centralized config
-excludes=()
-for excluded in ${excluded_paths[@]}; do
-  if [[ ${#excludes[@]} -gt 0 ]]; then
-    excludes+=("-or")
-  fi
-  excludes+=("-path" "$script_dir/$excluded")
-  # Also exclude subdirectories for .git and .nounpack
-  if [[ "$excluded" == ".git" ]] || [[ "$excluded" == ".nounpack" ]]; then
-    excludes+=("-or" "-path" "$script_dir/$excluded/*")
-  fi
-done
-
-# Add suffix exclusions to find args
-a=("${(@s/,/)exclude_suffixes}")
-for x in $a; do
-  if [[ ${#excludes[@]} -gt 0 ]]; then
-    excludes+=("-or" "-name" "$x")
-  else
-    excludes+=("-name" "$x")
-  fi
-done
-
-exclude_args=()
-if [[ ${#excludes[@]} -gt 0 ]]; then
-  exclude_args=("-and" "(" "-not" "(" ${excludes[@]} ")" ")")
-fi
 
 findopt=("-depth")
 findoptd=()
@@ -367,8 +495,8 @@ if [[ ${#ingest[@]} -gt 0 ]]; then
     info "Copying files in $file"
     copy_if_needed $file || exit 1
   done
-  git -C $script_dir add -A
-  #  git -C $script_dir commit
+  safe_git -C $dotfiles_dir add -A
+  #  git -C $dotfiles_dir commit
 fi
 
 # Untrack files
@@ -381,12 +509,15 @@ fi
 
 if [[ ${#setup[@]} -gt 0 ]]; then
   info "Copying files in"
-  find $findoptd $HOME $findopt -name "\.[a-zA-Z]*" -maxdepth 1 -mindepth 1 $exclude_args | while read -r file
-  do
-    copy_if_needed $file  || exit 1
-    link_if_needed $file  || exit 1
-    git -C $script_Dir add -A
-    # git -C $script_dir commit
+  local find_output files
+  find_output=$(find $findoptd $HOME $findopt -name "\.[a-zA-Z]*" -maxdepth 1 -mindepth 1 $exclude_args)
+  files=(${(f)find_output})
+  for file in "${files[@]}"; do
+    [[ -n "$file" ]] || continue
+    copy_if_needed "$file" || exit 1
+    link_if_needed "$file" || exit 1
+    safe_git -C $dotfiles_dir add -A
+    # git -C $dotfiles_dir commit
   done
 fi
 
@@ -401,27 +532,30 @@ if [[ ${#unpack[@]} -gt 0 ]]; then
       [[ -z "$target_file" ]] && continue
       
       # Check if file exists in dotfiles directory
-      if [[ ! -f "$script_dir/$target_file" ]] && [[ ! -d "$script_dir/$target_file" ]]; then
+      if [[ ! -f "$dotfiles_dir/$target_file" ]] && [[ ! -d "$dotfiles_dir/$target_file" ]]; then
         warn "File not found in dotfiles directory: $target_file"
         continue
       fi
       
       # Check if file should be excluded (only for regular unpack, not force unpack)
-      if should_exclude_file "$script_dir/$target_file"; then
+      if should_exclude_file "$dotfiles_dir/$target_file"; then
         warn "Skipping excluded file: $target_file (use -U to force unpack)"
         continue
       fi
       
       file_found=false
       
-      # Check if it's a direct match in script_dir
-      if [[ -f "$script_dir/$target_file" ]]; then
-        link_if_needed "$script_dir/$target_file" || exit 1
+      # Check if it's a direct match in dotfiles_dir
+      if [[ -f "$dotfiles_dir/$target_file" ]]; then
+        link_if_needed "$dotfiles_dir/$target_file" || exit 1
         file_found=true
       else
         # Search for the file in subdirectories
-        find $findoptd $script_dir $findopt -name "$target_file" -type f $exclude_args | while read -r file
-        do
+        local find_output files
+        find_output=$(find $findoptd $dotfiles_dir $findopt -name "$target_file" -type f $exclude_args)
+        files=(${(f)find_output})
+        for file in "${files[@]}"; do
+          [[ -n "$file" ]] || continue
           link_if_needed "$file" || exit 1
           file_found=true
         done
@@ -435,14 +569,19 @@ if [[ ${#unpack[@]} -gt 0 ]]; then
   else
     # Unpack all files (existing behavior)
     info "Linking all files"
-  find $findoptd $script_dir $findopt -mindepth 1 -maxdepth 1 -name "\.[a-zA-Z]*" $exclude_args | while read -r file
-  do
-    link_if_needed $file || exit 1
+    local find_output files
+    find_output=$(find $findoptd $dotfiles_dir $findopt -mindepth 1 -maxdepth 1 -name "\.[a-zA-Z]*" $exclude_args)
+    files=(${(f)find_output})
+    for file in "${files[@]}"; do
+      [[ -n "$file" ]] || continue
+      link_if_needed "$file" || exit 1
   done
   info "creating directory links"
-  find $findoptd $script_dir $findopt -mindepth 2  -and -type f $exclude_args | while read -r file
-  do
-    link_if_needed $file || exit 1
+    find_output=$(find $findoptd $dotfiles_dir $findopt -mindepth 2 -and -type f $exclude_args)
+    files=(${(f)find_output})
+    for file in "${files[@]}"; do
+      [[ -n "$file" ]] || continue
+      link_if_needed "$file" || exit 1
   done
 fi
 fi
@@ -459,14 +598,17 @@ if [[ ${#force_unpack[@]} -gt 0 ]]; then
       
       file_found=false
       
-      # Check if it's a direct match in script_dir
-      if [[ -f "$script_dir/$target_file" ]]; then
-        link_if_needed "$script_dir/$target_file" || exit 1
+      # Check if it's a direct match in dotfiles_dir
+      if [[ -f "$dotfiles_dir/$target_file" ]]; then
+        link_if_needed "$dotfiles_dir/$target_file" || exit 1
         file_found=true
       else
         # Search for the file in subdirectories (without exclusions)
-        find $findoptd $script_dir $findopt -name "$target_file" -type f | while read -r file
-        do
+        local find_output files
+        find_output=$(find $findoptd $dotfiles_dir $findopt -name "$target_file" -type f)
+        files=(${(f)find_output})
+        for file in "${files[@]}"; do
+          [[ -n "$file" ]] || continue
           link_if_needed "$file" || exit 1
           file_found=true
         done
@@ -480,14 +622,19 @@ if [[ ${#force_unpack[@]} -gt 0 ]]; then
   else
     # Force unpack all files (ignore exclusions)
     info "Force linking all files (ignoring exclusions)"
-    find $findoptd $script_dir $findopt -mindepth 1 -maxdepth 1 -name "\.[a-zA-Z]*" | while read -r file
-    do
-      link_if_needed $file || exit 1
+    local find_output files
+    find_output=$(find $findoptd $dotfiles_dir $findopt -mindepth 1 -maxdepth 1 -name "\.[a-zA-Z]*")
+    files=(${(f)find_output})
+    for file in "${files[@]}"; do
+      [[ -n "$file" ]] || continue
+      link_if_needed "$file" || exit 1
     done
     info "creating directory links (force)"
-    find $findoptd $script_dir $findopt -mindepth 2  -and -type f | while read -r file
-    do
-      link_if_needed $file || exit 1
+    find_output=$(find $findoptd $dotfiles_dir $findopt -mindepth 2 -and -type f)
+    files=(${(f)find_output})
+    for file in "${files[@]}"; do
+      [[ -n "$file" ]] || continue
+      link_if_needed "$file" || exit 1
     done
   fi
 fi

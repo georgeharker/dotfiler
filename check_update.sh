@@ -1,19 +1,20 @@
 #!/bin/zsh
 
-# Check if script is being executed directly (not sourced)
-# In zsh, when sourced, $0 is the name of the calling shell, not the script
-# Debug the detection values
-# echo "DEBUG: \$0='$0', %N='${(%):-%N}', \${0:t}='${0:t}'" >&2
+# Capture script name early before functions change context
+script_name="${${(%):-%x}:A}"
+helper_script_dir="${script_name:h}"
+
+source "${helper_script_dir}/helpers.sh"
 
 force_update=false
-# More robust script detection
-if [[ "$0" == *"check_update.sh"* ]] || [[ "${0:t}" == "check_update.sh" ]] || [[ "${(%):-%N}" == "check_update.sh" ]]; then
+
+# Check if script is being executed directly (not sourced)
+if ! is_script_sourced; then
     # Script is being executed directly, parse arguments
-    # echo "DEBUG: Detected as executed directly" >&2
     zmodload zsh/zutil
     local -a force debug
     zparseopts -D -E - f=force -force=force d=debug -debug=debug || {
-        echo "Usage: $0 [-f|--force] [-d|--debug]" >&2
+        echo "Usage: ${script_name} [-f|--force] [-d|--debug]" >&2
         echo "  -f, --force    Force update check even if timestamp is recent" >&2
         echo "  -d, --debug    Enable debug output for troubleshooting" >&2
         exit 1
@@ -27,13 +28,11 @@ if [[ "$0" == *"check_update.sh"* ]] || [[ "${0:t}" == "check_update.sh" ]] || [
         export DOTFILES_DEBUG=1
         echo "DEBUG: Debug mode enabled" >&2
     fi
-else
-    # echo "DEBUG: Detected as sourced" >&2
 fi
 
-# Allow override of dotfiles directory via zstyle
-zstyle -s ':dotfiles:directory' path dotfiles || dotfiles="${HOME}/.dotfiles"
-dotfiles="${dotfiles:A}"  # Convert to absolute path
+# Get dotfiles_dir directory using robust detection
+script_dir=$(find_dotfiles_script_directory)
+dotfiles_dir=$(find_dotfiles_directory)
 
 dotfiles_cache_dir="${XDG_CACHE_DIR:-$HOME/.cache}/dotfiles"
 dotfiles_timestamp="${dotfiles_cache_dir}/dotfiles_update"
@@ -55,12 +54,12 @@ zstyle -s ':dotfile:update' mode update_mode || {
 
 # Cancel update if:
 # - the automatic update is disabled
-# - the current user doesn't have write permissions nor owns the $dotfiles directory
+# - the current user doesn't have write permissions nor owns the $dotfiles_dir directory
 # - is not run from a tty
 # - git is unavailable on the system
-# - $dotfiles is not a git repository
+# - $dotfiles_dir is not a git repository
 if [[ "$update_mode" = disabled ]] \
-   || [[ ! -w "$dotfiles" || ! -O "$dotfiles" ]] \
+   || [[ ! -w "$dotfiles_dir" || ! -O "$dotfiles_dir" ]] \
    || ! command git --version 2>&1 >/dev/null \
    || (builtin cd -q "$ZSH"; ! command git rev-parse --is-inside-work-tree &>/dev/null); then
   unset update_mode
@@ -75,13 +74,13 @@ function current_epoch() {
 # Get default remote and branch (similar to update.sh)
 function get_default_remote(){
     # Get the remote that the current branch tracks, fallback to 'origin'
-    local current_branch=$(builtin cd -q "$dotfiles"; git branch --show-current)
-    local upstream=$(builtin cd -q "$dotfiles"; git config --get branch.${current_branch}.remote 2>/dev/null)
+    local current_branch=$(builtin cd -q "$dotfiles_dir"; git branch --show-current)
+    local upstream=$(builtin cd -q "$dotfiles_dir"; git config --get branch.${current_branch}.remote 2>/dev/null)
     if [[ -n "$upstream" ]]; then
         echo "$upstream"
     else
         # Fallback to first remote, typically 'origin'
-        builtin cd -q "$dotfiles"; git remote | head -n1
+        builtin cd -q "$dotfiles_dir"; git remote | head -n1
     fi
 }
 
@@ -89,17 +88,26 @@ function get_default_branch(){
     local remote="${1:-$(get_default_remote)}"
     
     # Try to get the default branch from remote HEAD
-    local default_branch=$(builtin cd -q "$dotfiles"; git symbolic-ref refs/remotes/${remote}/HEAD 2>/dev/null | sed "s@^refs/remotes/${remote}/@@")
+    local ref_output default_branch
+    ref_output=$(builtin cd -q "$dotfiles_dir"; git symbolic-ref refs/remotes/${remote}/HEAD 2>/dev/null)
+    default_branch="${ref_output#refs/remotes/${remote}/}"
     
     # If that fails, try to get it from remote show
     if [[ -z "$default_branch" ]]; then
-        default_branch=$(builtin cd -q "$dotfiles"; git remote show "$remote" 2>/dev/null | grep "HEAD branch" | cut -d: -f2 | tr -d ' ')
+        local remote_output line
+        remote_output=$(builtin cd -q "$dotfiles_dir"; git remote show "$remote" 2>/dev/null)
+        for line in ${(f)remote_output}; do
+            if [[ "$line" == *"HEAD branch:"* ]]; then
+                default_branch="${${line#*: }// /}"  # Remove prefix and spaces
+                break
+            fi
+        done
     fi
     
     # Final fallback to common default branches
     if [[ -z "$default_branch" ]]; then
         for branch in main master; do
-            if (builtin cd -q "$dotfiles"; git show-ref --verify --quiet refs/remotes/${remote}/${branch}); then
+            if (builtin cd -q "$dotfiles_dir"; git show-ref --verify --quiet refs/remotes/${remote}/${branch}); then
                 default_branch="$branch"
                 break
             fi
@@ -117,7 +125,7 @@ function is_update_available() {
   
   local branch
   # Use unlikely defaults that we can detect and replace with dynamic detection
-  branch=${"$(builtin cd -q "$dotfiles"; git config --local oh-my-zsh.branch)":-__DOTFILES_UNLIKELY_BRANCH__}
+  branch=${"$(builtin cd -q "$dotfiles_dir"; git config --local oh-my-zsh.branch)":-__DOTFILES_UNLIKELY_BRANCH__}
   
   # If the unlikely default was used, detect actual default branch
   if [[ "$branch" == "__DOTFILES_UNLIKELY_BRANCH__" ]]; then
@@ -126,7 +134,7 @@ function is_update_available() {
 
   local remote remote_url remote_repo
   # Use unlikely defaults that we can detect and replace with dynamic detection
-  remote=${"$(builtin cd -q "$dotfiles"; git config --local oh-my-zsh.remote)":-__DOTFILES_UNLIKELY_REMOTE__}
+  remote=${"$(builtin cd -q "$dotfiles_dir"; git config --local oh-my-zsh.remote)":-__DOTFILES_UNLIKELY_REMOTE__}
   
   # If the unlikely default was used, detect actual default remote
   if [[ "$remote" == "__DOTFILES_UNLIKELY_REMOTE__" ]]; then
@@ -143,7 +151,7 @@ function is_update_available() {
   debug_log "Checking for updates: $remote/$branch"
   
   # Fetch from remote to get latest refs (quietly)
-  if ! (builtin cd -q "$dotfiles"; git fetch "$remote" "$branch" 2>/dev/null); then
+  if ! (builtin cd -q "$dotfiles_dir"; git fetch "$remote" "$branch" 2>/dev/null); then
     debug_log "Git fetch failed, falling back to GitHub API"
     # Fetch failed, might be network issue - try GitHub API as fallback
     # Continue with existing API logic
@@ -151,8 +159,8 @@ function is_update_available() {
     debug_log "Git fetch succeeded, comparing refs directly"
     # Fetch succeeded, compare local and remote refs directly
     local local_head remote_head
-    local_head=$(builtin cd -q "$dotfiles"; git rev-parse HEAD 2>/dev/null) || return 0
-    remote_head=$(builtin cd -q "$dotfiles"; git rev-parse "$remote/$branch" 2>/dev/null) || return 0
+    local_head=$(builtin cd -q "$dotfiles_dir"; git rev-parse HEAD 2>/dev/null) || return 0
+    remote_head=$(builtin cd -q "$dotfiles_dir"; git rev-parse "$remote/$branch" 2>/dev/null) || return 0
     
     debug_log "Local HEAD: ${local_head:0:8}, Remote HEAD: ${remote_head:0:8}"
     
@@ -166,7 +174,7 @@ function is_update_available() {
     fi
   fi
   
-  remote_url=$(builtin cd -q "$dotfiles"; git config remote.$remote.url)
+  remote_url=$(builtin cd -q "$dotfiles_dir"; git config remote.$remote.url)
 
   local repo
   case "$remote_url" in
@@ -184,7 +192,7 @@ function is_update_available() {
 
   # Get local HEAD. If this fails assume there are updates
   local local_head
-  local_head=$(builtin cd -q "$dotfiles"; git rev-parse HEAD 2>/dev/null) || return 0
+  local_head=$(builtin cd -q "$dotfiles_dir"; git rev-parse HEAD 2>/dev/null) || return 0
 
   # Get remote HEAD via API with better error handling
   local remote_head
@@ -250,13 +258,13 @@ function update_dotfiles() {
   fi
 
   if [[ "$update_mode" != background-alpha ]] \
-    && LANG= ZSH="$ZSH" zsh -f "$dotfiles/update.sh" "$quiet"; then
+    && LANG= ZSH="$ZSH" zsh -f "${script_dir}/update.sh" "$quiet"; then
     update_last_updated_file
     return $?
   fi
 
   local exit_status error
-  if error=$(LANG= ZSH="$ZSH" zsh -f "$dotfiles/update.sh" -q 2>&1); then
+  if error=$(LANG= ZSH="$ZSH" zsh -f "${script_dir}/update.sh" -q 2>&1); then
     update_last_updated_file 0 "Update successful"
   else
     exit_status=$?
@@ -319,7 +327,7 @@ function handle_update() {
     trap "
       ret=\$?
       unset update_mode
-      unset dotfiles dotfiles_cache_dir dotfiles_timestamp 2>/dev/null
+      unset dotfiles_dir dotfiles_cache_dir dotfiles_timestamp 2>/dev/null
       unset -f current_epoch get_default_remote get_default_branch is_update_available update_last_updated_file update_dotfiles handle_update 2>/dev/null
       command rm -rf '$dotfiles_cache_dir/update.lock'
       return \$ret
@@ -355,7 +363,7 @@ function handle_update() {
     fi
 
     # Test if Oh My Zsh directory is a git repository
-    if ! (builtin cd -q "$dotfiles" && LANG= git rev-parse &>/dev/null); then
+    if ! (builtin cd -q "$dotfiles_dir" && LANG= git rev-parse &>/dev/null); then
       echo >&2 "[dotfiles] Can't update: not a git repository."
       return
     fi
@@ -369,7 +377,7 @@ function handle_update() {
     # If in reminder mode or user has typed input, show reminder and exit
     if [[ "$update_mode" = reminder ]] || { [[ "$update_mode" != background-alpha ]] && has_typed_input }; then
       printf '\r\e[0K' # move cursor to first column and clear whole line
-      echo "[dotfiles] It's time to update! You can do that by running \`${dotfiles}/update.sh\`"
+      echo "[dotfiles] It's time to update! You can do that by running \`${dotfiles_dir}/update.sh\`"
       return 0
     fi
 
@@ -387,12 +395,12 @@ function handle_update() {
     case "$option" in
       [yY$'\n']) update_dotfiles ;;
       [nN]) update_last_updated_file ;&
-      *) echo "[dotfiles] You can update manually by running \`${dotfiles}/update.sh\`" ;;
+      *) echo "[dotfiles] You can update manually by running \`${dotfiles_dir}/update.sh\`" ;;
     esac
   }
 
   unset update_mode
-  unset dotfiles dotfiles_cache_dir dotfiles_timestamp
+  unset dotfiles_dir dotfiles_cache_dir dotfiles_timestamp
   unset -f current_epoch get_default_remote get_default_branch is_update_available update_last_updated_file update_dotfiles handle_update
 }
 

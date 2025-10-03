@@ -1,0 +1,61 @@
+# Default Dotfiles Exclusion Patterns
+# Lines starting with # are comments
+# Empty lines are ignored
+#
+# This file contains sensible defaults for files and directories that should
+# typically be excluded from dotfile management. You can override these by
+# creating your own exclusion file.
+
+# Excludes for the dotfiles system
+.nounpack/
+dotfiles_exclude
+
+# Version control directories
+.git/
+.svn/
+.hg/
+
+# Build and dependency directories
+node_modules/
+__pycache__/
+.venv/
+venv/
+env/
+.tox/
+dist/
+build/
+.pytest_cache/
+
+# IDE and editor directories/files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.#*
+#*#
+
+# System files
+.DS_Store
+Thumbs.db
+desktop.ini
+*.tmp
+*.log
+*.bak
+*.orig
+*.rej
+
+# Package manager files
+package-lock.json
+yarn.lock
+Pipfile.lock
+
+# Cache and temporary directories
+.cache/
+.mypy_cache/
+.codecompanion/progress
+
+temp/
+tmp/
+*.pid
+*.sock

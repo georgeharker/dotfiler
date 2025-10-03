@@ -1,0 +1,96 @@
+#!/bin/zsh
+# Dotfiler - Main wrapper script for dotfile management system
+
+# Capture script name early before functions change context
+script_name="${${(%):-%x}:A}"
+helper_script_dir="${script_name:h}"
+
+source "${helper_script_dir}/helpers.sh"
+
+set -e
+
+# Get the directory where this script is located
+script_dir=$(find_dotfiles_script_directory)
+
+function usage() {
+    local script_name="$(basename "$0")"
+    cat <<EOF
+Dotfiler - Dotfile Management System
+
+Usage: $script_name <command> [options]
+
+Commands:
+    gui                 Launch the graphical user interface
+    setup               Run dotfile setup/installation
+    check_update        Check for updates to dotfiles
+    update              Update dotfiles from repository
+
+Options:
+    -h, --help         Show this help message
+
+Examples:
+    $script_name gui                      # Launch GUI
+    $script_name setup -u                 # Run setup with unpack
+    $script_name check_update --force     # Force update check
+    $script_name update --quiet           # Update quietly
+
+For command-specific help, run:
+    $script_name <command> --help
+EOF
+}
+
+# Parse global options
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        gui|setup|check_update|update)
+            command="$1"
+            shift
+            break
+            ;;
+        *)
+            echo "Error: Unknown option '$1'" >&2
+            echo "Use '$0 --help' for usage information." >&2
+            exit 1
+            ;;
+    esac
+done
+
+# Check if command was provided
+if [[ -z "${command:-}" ]]; then
+    echo "Error: No command specified" >&2
+    usage
+    exit 1
+fi
+
+# Execute the appropriate command
+case "$command" in
+    gui)
+        # Get directories using helper functions
+        dotfiles_dir=$(find_dotfiles_directory)
+        setup_script="$script_dir/setup.sh"
+        
+        # Launch the GUI with discovered directories and user arguments
+        exec "$script_dir/dotfiler-gui" --dotfiles-dir "$dotfiles_dir" --setup-script "$setup_script" "$@"
+        ;;
+    setup)
+        # Run setup script with all remaining arguments
+        exec "$script_dir/setup.sh" "$@"
+        ;;
+    check_update)
+        # Run check_update script with all remaining arguments
+        exec "$script_dir/check_update.sh" "$@"
+        ;;
+    update)
+        # Run update script with all remaining arguments
+        exec "$script_dir/update.sh" "$@"
+        ;;
+    *)
+        echo "Error: Unknown command '$command'" >&2
+        usage
+        exit 1
+        ;;
+esac
