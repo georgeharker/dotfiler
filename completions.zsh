@@ -32,12 +32,18 @@ _dotfiler() {
                 setup)
                     _dotfiler_setup_args
                     ;;
-                check_update)
+                check-updates)
                     _dotfiler_check_update_args
                     ;;
                 update)
                     _dotfiler_update_args
                     ;;
+               install)
+                   _dotfiler_install_args
+                   ;;
+               install-module)
+                   _dotfiler_install_module_args
+                   ;;
             esac
             ;;
     esac
@@ -49,8 +55,10 @@ _dotfiler_commands() {
     commands=(
         'gui:Launch the graphical user interface'
         'setup:Run dotfile setup and management operations'
-        'check_update:Check for updates to dotfiles repository'
+        'check-updates:Check for updates to dotfiles repository'
         'update:Update dotfiles from remote repository'
+       'install:Run modular installation system (all modules)'
+       'install-module:Run specific installation module'
     )
     _describe 'dotfiler commands' commands
 }
@@ -95,6 +103,78 @@ _dotfiler_update_args() {
         '(-c --commit-hash)'{-c,--commit-hash}'[Update to specific commit hash]:hash:' \
         '(-r --range)'{-r,--range}'[Show changes in specific range]:range:' \
         '(-D --dry-run)'{-D,--dry-run}'[Show what would be updated without making changes]'
+}
+
+# Complete install command arguments
+_dotfiler_install_args() {
+    _arguments \
+        '(- *)--help[Show help message]'
+}
+
+# Complete install-module command arguments
+_dotfiler_install_module_args() {
+    _arguments \
+        '(- *)--help[Show help message]' \
+        '1: :_dotfiler_modules' \
+        '2: :_dotfiler_module_functions'
+}
+
+# Complete available installation modules
+_dotfiler_modules() {
+    local modules
+    local install_dir
+    
+    # Try to find install directory
+    if [[ -d ~/.dotfiles/.nounpack/install ]]; then
+        install_dir=~/.dotfiles/.nounpack/install
+    elif [[ -d ~/.dotfiles/.nounpack/scripts/install ]]; then
+        install_dir=~/.dotfiles/.nounpack/scripts/install
+    elif [[ -d ~/.dotfiles/.nounpack/scripts/example_install ]]; then
+        install_dir=~/.dotfiles/.nounpack/scripts/example_install
+    fi
+    
+    if [[ -n "$install_dir" && -d "$install_dir" ]]; then
+        modules=()
+        for module_file in "$install_dir"/[0-9]*.sh; do
+            if [[ -f "$module_file" ]]; then
+                # Extract module name from file
+                local module_name=$(awk '/^module_name=/{gsub(/["'"'"']/, "", $0); sub(/^module_name=/, "", $0); print $0; exit}' "$module_file" 2>/dev/null)
+                local module_desc=$(awk '/^module_description=/{gsub(/["'"'"']/, "", $0); sub(/^module_description=/, "", $0); print $0; exit}' "$module_file" 2>/dev/null)
+                if [[ -n "$module_name" ]]; then
+                    modules+=("$module_name:$module_desc")
+                fi
+            fi
+        done
+        
+        if [[ ${#modules[@]} -gt 0 ]]; then
+            _describe 'installation modules' modules
+            return
+        fi
+    fi
+    
+    # Fallback to common module names if directory parsing fails
+    modules=(
+        'package-manager:Package manager setup and fonts'
+        'development-tools:Core development tools and utilities'
+        'editors-terminals:Editors, terminals, and shell enhancements'
+        'programming-languages:Language runtimes and tools'
+        'applications:End-user applications'
+        'post-install:Final configuration and cleanup'
+    )
+    _describe 'installation modules' modules
+}
+
+# Complete module functions (simplified - would need module context)
+_dotfiler_module_functions() {
+    # This is a simplified implementation - in practice would need to parse the specific module
+    local functions
+    functions=(
+        'install_development_tools:Install core development tools'
+        'install_github_cli:Install GitHub CLI'
+        'install_package_manager:Set up package manager'
+        'setup_fonts:Install and configure fonts'
+    )
+    _describe 'module functions' functions
 }
 
 # File completion for dotfiles (helps with -i, -u, -t options)

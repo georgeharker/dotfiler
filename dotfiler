@@ -13,7 +13,6 @@ set -e
 script_dir=$(find_dotfiles_script_directory)
 
 function usage() {
-    local script_name="$(basename "$0")"
     cat <<EOF
 Dotfiler - Dotfile Management System
 
@@ -22,8 +21,10 @@ Usage: $script_name <command> [options]
 Commands:
     gui                 Launch the graphical user interface
     setup               Run dotfile setup/installation
-    check-update        Check for updates to dotfiles
+    check-updates       Check for updates to dotfiles
     update              Update dotfiles from repository
+    install             Run modular installation system (all modules)
+    install-module      Run specific installation module
 
 Options:
     -h, --help         Show this help message
@@ -31,8 +32,10 @@ Options:
 Examples:
     $script_name gui                      # Launch GUI
     $script_name setup -u                 # Run setup with unpack
-    $script_name check_updates --force    # Force update check
+    $script_name check-updates --force    # Force update check
     $script_name update --quiet           # Update quietly
+    $script_name install                  # Run all installation modules
+    $script_name install-module development-tools  # Run specific module
 
 For command-specific help, run:
     $script_name <command> --help
@@ -46,7 +49,7 @@ while [[ $# -gt 0 ]]; do
             usage
             exit 0
             ;;
-        gui|setup|check-updates|update)
+        gui|setup|check-updates|update|install|install-module)
             command="$1"
             shift
             break
@@ -88,6 +91,14 @@ case "$command" in
         # Run update script with all remaining arguments
         exec "$script_dir/update.sh" "$@"
         ;;
+   install)
+       # Run install script with all remaining arguments
+       exec "$script_dir/install.sh" "$@"
+       ;;
+   install-module)
+       # Run install_module script with all remaining arguments
+       exec "$script_dir/install_module.sh" "$@"
+       ;;
     *)
         echo "Error: Unknown command '$command'" >&2
         usage
