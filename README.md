@@ -14,6 +14,9 @@ chmod +x .nounpack/scripts/dotfiler
 .nounpack/scripts/dotfiler setup -i ~/.bashrc ~/.vimrc ~/.gitconfig
 .nounpack/scripts/dotfiler setup -u
 
+# Set up exclusions (recommended)
+cp .nounpack/scripts/dotfiles_exclude ./
+
 # Enable automatic updates (optional)
 echo 'source ~/.dotfiles/.nounpack/scripts/check_update.sh' >> ~/.zshrc
 ```
@@ -105,11 +108,19 @@ By default, exclusions are read from `dotfiles_exclude` in your dotfiles directo
 # Example dotfiles_exclude file
 .git/                    # Version control
 .nounpack/              # Dotfiler system files
+dotfiles_exclude       # Exclude the exclusion file itself
 node_modules/           # Dependencies
 .vscode/                # IDE files
 *.swp                   # Temporary files
 .DS_Store              # System files
 .codecompanion/*       # Progress tracking files
+```
+
+**Important**: Copy `dotfiles_exclude` to your dotfiles root directory and ensure it includes `dotfiles_exclude` in its patterns to prevent tracking the exclusion file itself.
+
+```bash
+# Copy exclusion file to dotfiles root
+cp .nounpack/scripts/dotfiles_exclude ~/.dotfiles/
 ```
 
 ### Custom Exclusion File
