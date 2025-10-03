@@ -14,14 +14,16 @@ run_development_tools_module() {
 
 install_development_tools() {
     # Common tools for both platforms
-    install_package cmake autoconf automake pkg-config gettext bison ninja-build unzip
+    install_package cmake autoconf automake pkg-config gettext bison unzip
     
     # Language and core tools
     install_package python3 lua luarocks nodejs npm ripgrep bat
     
     if [[ "$DOTFILES_OS" == "Darwin" ]]; then
         install_package bash fzf
+        install_package ninja
     else
+        install_package ninja-build
         # xsel is Linux-only (X11 clipboard utility)
         install_package xsel
         

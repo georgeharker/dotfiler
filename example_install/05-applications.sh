@@ -12,7 +12,7 @@ run_applications_module() {
     install_onepassword
 }
 
-install_git_delta() {}
+install_git_delta() {
     echo "Installing git-delta..."
     ensure_rust
     

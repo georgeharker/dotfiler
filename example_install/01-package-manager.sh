@@ -27,7 +27,7 @@ install_package_manager() {
 
 setup_fonts() {
     if [[ "$DOTFILES_OS" == "Darwin" ]]; then
-        brew tap homebrew/cask-fonts
+        brew tap homebrew/cask
         install_package font-meslo-lg font-meslo-lg-dz font-meslo-lg-nerd-font
     else
         echo "Installing Nerd Fonts..."

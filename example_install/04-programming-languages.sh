@@ -11,7 +11,7 @@ run_programming_languages_module() {
     install_python_environment
     install_rust_environment
     install_claude
-    install_tree_sitter
+    install_treesitter
 }
 
 install_python_environment() {
@@ -38,7 +38,7 @@ install_rust_environment() {
     fi
 }
 
-install_node_environment() {
+install_claude() {
     echo "Installing claude-code Node.js packages..."
     # Ensure Node.js is available for npm installs
     ensure_nodejs
@@ -47,7 +47,7 @@ install_node_environment() {
     sudo npm install -g @zed-industries/claude-code-acp
 }
 
-install_node_environment() {
+install_treesitter() {
     echo "Installing tree-sitter Node.js packages..."
     # Ensure Node.js is available for npm installs
     ensure_nodejs
