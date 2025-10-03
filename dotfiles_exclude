@@ -9,6 +9,7 @@
 # Excludes for the dotfiles system
 .nounpack/
 dotfiles_exclude
+.codecompanion/*
 
 # Version control directories
 .git/

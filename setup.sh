@@ -158,8 +158,8 @@ dotfiles_dir=$(find_dotfiles_directory)
 # Must be after dotfiles_dir detection
 # Initialize exclusion patterns (can be called with custom file path)
 # Usage: read_exclusion_patterns [/path/to/exclusion/file]
-dotfiles_exclude_file="${}"
-read_exclusion_patterns "$DOTFILES_EXCLUDE_FILE"
+dotfiles_exclude_file=$(find_dotfiles_exclude_file)
+read_exclusion_patterns "$dotfiles_exclude_file"
 build_find_exclusion_args
 
 # Indicate dry run mode if active
