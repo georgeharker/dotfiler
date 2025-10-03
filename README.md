@@ -20,6 +20,8 @@ cp .nounpack/scripts/dotfiles_exclude ./
 # Enable automatic updates (optional)
 echo 'source ~/.dotfiles/.nounpack/scripts/check_update.sh' >> ~/.zshrc
 ```
+# Enable shell completions (optional)
+echo 'source ~/.dotfiles/.nounpack/scripts/completions.zsh' >> ~/.zshrc
 
 ## Installation
 
@@ -94,6 +96,37 @@ zstyle ':dotfiles:update' frequency 86400  # seconds
 
 # Shell integration - add to .zshrc/.bashrc
 [[ -f ~/.dotfiles/.nounpack/scripts/check_update.sh ]] && source ~/.dotfiles/.nounpack/scripts/check_update.sh
+```
+
+## Shell Completions
+
+Dotfiler includes zsh completions for tab completion of commands and options.
+
+### Enable Completions
+
+Add to your `.zshrc`:
+
+```bash
+# Enable dotfiler completions
+source ~/.dotfiles/.nounpack/scripts/completions.zsh
+```
+
+### Completion Features
+
+The completions provide:
+
+- **Command completion**: `dotfiler <TAB>` shows available commands (gui, setup, check_update, update)
+- **Option completion**: `dotfiler setup -<TAB>` shows available options with descriptions
+- **File completion**: Options like `-i`, `-u`, `-t` provide intelligent file completion
+- **Help integration**: All completions include help text for options
+
+### Examples
+
+```bash
+dotfiler <TAB>                    # Lists: gui, setup, check_update, update
+dotfiler setup -<TAB>             # Shows: -i, -s, -u, -U, -t, -d, -q, -D, -y, -n
+dotfiler setup -i <TAB>           # File completion for tracking
+dotfiler check_update --<TAB>     # Shows: --force, --debug, --help
 ```
 
 ## File Exclusions
