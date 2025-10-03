@@ -38,6 +38,9 @@ zparseopts -D -E - i+:=ingest -ingest+:=ingest \
                    n=no -n=defno || \
   { usage; exit 1; }
 
+# Set quiet mode for helpers
+[[ ${#quiet[@]} -gt 0 ]] && quiet_mode=true
+
 # Develop an expression for exclusion
 # Function to read exclusion patterns from file or use defaults
 read_exclusion_patterns() {
@@ -175,22 +178,6 @@ function prompt_yes_no(){
   fi
   >&2 echo $REPLY; 
   exit 1
-}
-
-function info(){
-    [[ ${#quiet[@]} == 0 ]] && print -P "$@"
-}
-function info_nonl(){
-    [[ ${#quiet[@]} == 0 ]] && print -n -P "$@"
-}
-function action(){
-    [[ ${#quiet[@]} == 0 ]] && print -P "%F{blue}$@%f"
-}
-function error(){
-    [[ ${#quiet[@]} == 0 ]] && print -P "%F{red}$@%f"
-}
-function warn(){
-    [[ ${#quiet[@]} == 0 ]] && print -P "%F{yellow}$@%f"
 }
 
 # Safe filesystem operation wrappers that respect dry run mode
