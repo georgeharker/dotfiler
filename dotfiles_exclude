@@ -14,7 +14,7 @@ install_module.sh
 update.sh
 check_updates.sh
 dotfiler
-.codecompanion
+.codecompanion/*
 
 # Version control directories
 .git/

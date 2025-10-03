@@ -83,14 +83,52 @@ Available modules:
 ```bash
 # Directory and update settings
 zstyle ':dotfiles:directory' path '/path/to/dotfiles'
-zstyle ':dotfiles:scripts' directory '/path/to/scripts'     # Custom script location
-zstyle ':dotfiles:install' directory '/path/to/install'     # Custom install modules location
+zstyle ':dotfiles:scripts' directory '/path/to/scripts'     # Custom script location, may be relative to dotfiles:directory
+zstyle ':dotfiles:install' directory '/path/to/install'     # Custom install modules location, may be relative to dotfiles:directory
+zstyle ':dotfiles:exclude' path '/path/to/exclude/file'    # Override exclusions file (default: dotfiles_exclude), may be relative to dotfiles:directory
 zstyle ':dotfiles:update' mode 'auto|prompt|reminder|disabled'
 zstyle ':dotfiles:update' frequency 86400  # seconds
 
 # Shell integration - add to .zshrc/.bashrc
 [[ -f ~/.dotfiles/.nounpack/scripts/check_update.sh ]] && source ~/.dotfiles/.nounpack/scripts/check_update.sh
 ```
+
+## File Exclusions
+
+Dotfiler uses exclusion patterns to prevent tracking certain files and directories. The exclusion system supports gitignore-style patterns.
+
+### Default Exclusion File
+
+By default, exclusions are read from `dotfiles_exclude` in your dotfiles directory:
+
+```bash
+# Example dotfiles_exclude file
+.git/                    # Version control
+.nounpack/              # Dotfiler system files
+node_modules/           # Dependencies
+.vscode/                # IDE files
+*.swp                   # Temporary files
+.DS_Store              # System files
+.codecompanion/*       # Progress tracking files
+```
+
+### Custom Exclusion File
+
+Override the exclusion file location using zstyle:
+
+```bash
+# Use custom exclusion file
+zstyle ':dotfiles:exclude' path '/path/to/my-exclusions.txt'
+```
+
+### Pattern Types
+
+- **Directory patterns**: End with `/` (e.g., `node_modules/`)
+- **Path patterns**: Contain `/` (e.g., `.git/hooks/pre-commit`)
+- **Name patterns**: No `/` (e.g., `*.swp`, `.DS_Store`)
+- **Glob patterns**: Use standard shell wildcards
+
+The exclusion system processes both directory names and their contents, so `node_modules/` excludes both the directory and all files within it.
 
 ## GUI Application
 
