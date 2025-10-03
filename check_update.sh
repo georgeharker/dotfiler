@@ -329,6 +329,7 @@ function handle_update() {
       unset update_mode
       unset dotfiles_dir dotfiles_cache_dir dotfiles_timestamp 2>/dev/null
       unset -f current_epoch get_default_remote get_default_branch is_update_available update_last_updated_file update_dotfiles handle_update 2>/dev/null
+     cleanup_helpers 2>/dev/null
       command rm -rf '$dotfiles_cache_dir/update.lock'
       return \$ret
     " EXIT INT QUIT
@@ -402,6 +403,7 @@ function handle_update() {
   unset update_mode
   unset dotfiles_dir dotfiles_cache_dir dotfiles_timestamp
   unset -f current_epoch get_default_remote get_default_branch is_update_available update_last_updated_file update_dotfiles handle_update
+ cleanup_helpers
 }
 
 case "$update_mode" in

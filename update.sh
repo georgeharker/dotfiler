@@ -7,6 +7,10 @@ helper_script_dir="${script_name:h}"
 
 source "${helper_script_dir}/helpers.sh"
 
+# Initialize git status variables
+git_deleted=""
+git_added=""
+
 deleted_files=()
 for line in ${(f)git_deleted}; do
     [[ "$line" == D$'\t'* ]] || continue
@@ -44,26 +48,13 @@ commit_hash=("${(@)commit_hash:#--commit-hash}")
 range=("${(@)range:#-r}")
 range=("${(@)range:#--range}")
 if [[ `uname` != "Darwin" ]]; then
+# Set quiet mode for helpers
+[[ ${#quiet[@]} -gt 0 ]] && quiet_mode=true
+
     GREP=("grep" "-P")
 else
     GREP="grep"
 fi
-
-function info(){
-    [[ ${#quiet[@]} == 0 ]] && print -P "$@"
-}
-function info_nonl(){
-    [[ ${#quiet[@]} == 0 ]] && print -n -P "$@"
-}
-function action(){
-    [[ ${#quiet[@]} == 0 ]] && print -P "%F{blue}$@%f"
-}
-function error(){
-    [[ ${#quiet[@]} == 0 ]] && print -P "%F{red}$@%f"
-}
-function warn(){
-    [[ ${#quiet[@]} == 0 ]] && print -P "%F{yellow}$@%f"
-}
 
 # Ensure relative to dotfiles
 cd "${dotfiles_dir}"
