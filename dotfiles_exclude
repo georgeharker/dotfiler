@@ -9,6 +9,12 @@
 # Excludes for the dotfiles system
 .nounpack/
 dotfiles_exclude
+install.sh
+install_module.sh
+update.sh
+check_updates.sh
+dotfiler
+.codecompanion
 
 # Version control directories
 .git/
@@ -53,7 +59,6 @@ Pipfile.lock
 # Cache and temporary directories
 .cache/
 .mypy_cache/
-.codecompanion/progress
 
 temp/
 tmp/
