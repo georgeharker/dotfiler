@@ -11,6 +11,14 @@ source "${helper_script_dir}/module_helpers.sh"
 # Get install directory using helper
 install_dir=$(find_dotfiles_install_directory)
 
+# Global array for final instructions (same as install.sh)
+final_instructions=()
+
+# Function to add final instructions from modules
+add_final_instruction() {
+    final_instructions+=("$1")
+}
+
 # Function to list available functions in a module
 list_module_functions() {
     local module_file="$1"
@@ -42,6 +50,19 @@ if [[ $# -eq 0 ]]; then
     exit 1
 fi
 
+# Display accumulated final instructions
+if [[ ${#final_instructions[@]} -gt 0 ]]; then
+    echo ""
+    echo "=== Next Steps ==="
+    local step_num=1
+    for instruction in "${final_instructions[@]}"; do
+        echo "$step_num. $instruction"
+        ((step_num++))
+    done
+else
+    echo ""
+    echo "=== Module Complete ==="
+fi
 # Source helpers
 source "$install_dir/helpers.sh"
 detect_os
