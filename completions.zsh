@@ -2,7 +2,6 @@
 #
 # Zsh completions for dotfiler
 # Source this file in your .zshrc to enable tab completion
-#
 
 # Ensure completion system is loaded
 # Only load if not already loaded (avoid conflicts)
@@ -122,32 +121,33 @@ _dotfiler_install_module_args() {
 # Complete available installation modules
 _dotfiler_modules() {
     local modules
-    local install_dir
     
-    # Try to find install directory
-    if [[ -d ~/.dotfiles/.nounpack/install ]]; then
-        install_dir=~/.dotfiles/.nounpack/install
-    elif [[ -d ~/.dotfiles/.nounpack/scripts/install ]]; then
-        install_dir=~/.dotfiles/.nounpack/scripts/install
-    elif [[ -d ~/.dotfiles/.nounpack/scripts/example_install ]]; then
-        install_dir=~/.dotfiles/.nounpack/scripts/example_install
+    # Use the same approach as install scripts - find script directory and source module_helpers
+    local script_dir
+    
+    # Try to find dotfiler command location
+    if [[ -n "${commands[dotfiler]}" ]]; then
+        script_dir="${commands[dotfiler]:h}"
+    elif [[ -x ./dotfiler ]]; then
+        script_dir="."
     fi
     
-    if [[ -n "$install_dir" && -d "$install_dir" ]]; then
-        modules=()
-        for module_file in "$install_dir"/[0-9]*.sh; do
-            if [[ -f "$module_file" ]]; then
-                # Extract module name from file
-                local module_name=$(awk '/^module_name=/{gsub(/["'"'"']/, "", $0); sub(/^module_name=/, "", $0); print $0; exit}' "$module_file" 2>/dev/null)
-                local module_desc=$(awk '/^module_description=/{gsub(/["'"'"']/, "", $0); sub(/^module_description=/, "", $0); print $0; exit}' "$module_file" 2>/dev/null)
-                if [[ -n "$module_name" ]]; then
-                    modules+=("$module_name:$module_desc")
-                fi
-            fi
-        done
+    # Try to source module_helpers.sh and get modules
+    if [[ -n "$script_dir" && -f "$script_dir/module_helpers.sh" ]]; then
+        # Source in a subshell to avoid polluting completion environment
+        local module_list
+        module_list=$(
+            source "$script_dir/module_helpers.sh" 2>/dev/null && 
+            list_available_modules 2>/dev/null | 
+            tail -n +2 | 
+            sed 's/^[[:space:]]*//' | 
+            awk '{desc=""; for(i=2;i<=NF;i++) desc=desc $i " "; gsub(/ $/, "", desc); print $1":"desc}'
+        )
         
-        if [[ ${#modules[@]} -gt 0 ]]; then
-            _describe 'installation modules' modules
+        if [[ -n "$module_list" ]]; then
+            local -a module_array
+            module_array=(${(f)module_list})
+            _describe 'installation modules' module_array
             return
         fi
     fi
@@ -218,3 +218,4 @@ zstyle ':completion:*:dotfiler:*:descriptions' format '%B%d%b'
 # Enable completion caching for better performance
 zstyle ':completion:*:dotfiler:*' use-cache yes
 zstyle ':completion:*:dotfiler:*' cache-path ~/.zcompcache/dotfiler
+

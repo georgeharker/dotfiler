@@ -1,24 +1,15 @@
 #!/bin/zsh
 # Script to run individual installation modules
 
-script_dir="${${${(%):-%x}:A}:h}"
-install_dir="$script_dir/install"
+# Capture script name early before functions change context
+script_name="${${(%):-%x}:A}"
+helper_script_dir="${script_name:h}"
 
-# Function to list available modules
-list_modules() {
-    echo "Available modules:"
-    for module_file in "$install_dir"/[0-9]*.sh; do
-        if [[ -f "$module_file" ]]; then
-            # Source the module to get its name and description
-            source "$module_file"
-            if [[ -n "$module_name" ]]; then
-                printf "  %-20s %s\n" "$module_name" "$module_description"
-            fi
-            # Reset variables for next iteration
-            unset module_name module_description
-        fi
-    done
-}
+# Load module management helpers (which includes main helpers)
+source "${helper_script_dir}/module_helpers.sh"
+
+# Get install directory using helper
+install_dir=$(find_dotfiles_install_directory)
 
 # Function to list available functions in a module
 list_module_functions() {
@@ -37,23 +28,6 @@ list_module_functions() {
     done
 }
 
-# Function to find module file by name
-find_module_by_name() {
-    local target_name="$1"
-    for module_file in "$install_dir"/[0-9]*.sh; do
-        if [[ -f "$module_file" ]]; then
-            source "$module_file"
-            if [[ "$module_name" == "$target_name" ]]; then
-                echo "$module_file"
-                return 0
-            fi
-            # Reset variables
-            unset module_name module_description
-        fi
-    done
-    return 1
-}
-
 if [[ $# -eq 0 ]]; then
     echo "Usage: $0 <module_name> [function_name]"
     echo ""
@@ -64,7 +38,7 @@ if [[ $# -eq 0 ]]; then
     echo "  $0 development-tools                    # Run all development tools"
     echo "  $0 development-tools install_github_cli # Run only GitHub CLI installation"
     echo ""
-    list_modules
+    list_available_modules "$install_dir"
     exit 1
 fi
 
@@ -76,11 +50,11 @@ module_name="$1"
 target_function="$2"
 
 # Find the module file by name
-module_file=$(find_module_by_name "$module_name")
+module_file=$(find_module_by_name "$module_name" "$install_dir")
 if [[ $? -ne 0 ]]; then
     echo "Module '$module_name' not found."
     echo ""
-    list_modules
+    list_available_modules "$install_dir"
     exit 1
 fi
 

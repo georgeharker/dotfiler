@@ -4,7 +4,8 @@
 script_name="${${(%):-%x}:A}"
 helper_script_dir="${script_name:h}"
 
-source "${helper_script_dir}/helpers.sh"
+# Load module management helpers (which includes main helpers)
+source "${helper_script_dir}/module_helpers.sh"
 
 
 # Dotfiles Installation Script (Modular Version)
@@ -23,40 +24,15 @@ source "$install_dir/helpers.sh"
 detect_os
 # Global array for final instructions
 final_instructions=()
-# Global associative arrays for module data
-declare -A module_functions
-declare -A module_descriptions  
-declare -A module_filenames
 
 # Function to add final instructions from modules
 add_final_instruction() {
     final_instructions+=("$1")
 }
-# Function called by modules to register themselves
-register_module() {
-    local filename="$1"
-    
-    if [[ -z "$filename" ]]; then
-        echo "ERROR: register_module called without filename parameter" >&2
-        return 1
-    fi
-    
-    local basename=$(basename "$filename" .sh)
-    
-    module_filenames["$basename"]="$filename"
-    module_functions["$basename"]="${module_main_function:-run_${basename//-/_}_module}"
-    module_descriptions["$basename"]="${module_description:-$basename}"
-}
 
-# Load all install modules
-for module in "$install_dir"/*.sh; do
-    if [[ -f "$module" && "$module" != *"helpers.sh" ]]; then
-        echo "Loading module: $(basename "$module")"
-        source "$module"
-        # Register the module after loading
-        register_module "$module"
-    fi
-done
+# Load all install modules using helper
+echo "Loading installation modules..."
+load_install_modules "$install_dir"
 
 main() {
     echo "Starting modular dotfiles installation..."
@@ -65,12 +41,12 @@ main() {
 
     # Execute modules in filename order (collected during loading)
     # Sort by actual filename, not just basename
-    local sorted_modules=($(for key in "${(@k)module_filenames}"; do echo "$key:$(basename "${module_filenames[$key]}")"; done | sort -t: -k2 | cut -d: -f1))
+    local sorted_modules=($(get_sorted_modules))
     local module_count=1
     
     for module_basename in "${sorted_modules[@]}"; do
-        local section_name="${module_descriptions[$module_basename]}"
-        local main_function="${module_functions[$module_basename]}"
+        local section_name="${dotfiles_module_descriptions[$module_basename]}"
+        local main_function="${dotfiles_module_functions[$module_basename]}"
         
         # Execute the module
         print_section "$module_count. $section_name"
