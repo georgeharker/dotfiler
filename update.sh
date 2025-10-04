@@ -152,8 +152,6 @@ delete_if_needed(){
     fi
 }
 
-echo ${deleted_files}
-echo ${deleted_files[@]}
 for file in ${deleted_files[@]}; do
     info "checking deleted $file"
     delete_if_needed "$file"
