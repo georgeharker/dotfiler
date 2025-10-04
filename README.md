@@ -1,6 +1,6 @@
 # Dotfiler
 
-A comprehensive dotfiles management system with automatic updates, git integration, modular installation, and both command-line and GUI interfaces.
+A comprehensive zsh based dotfiles management system with automatic updates, git integration, modular installation, and both command-line and GUI interfaces.
 
 ## Quick Start
 
