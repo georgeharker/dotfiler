@@ -126,10 +126,12 @@ _dotfiler_modules() {
     local script_dir
     
     # Try to find dotfiler command location
-    if [[ -n "${commands[dotfiler]}" ]]; then
-        script_dir="${commands[dotfiler]:h}"
-    elif [[ -x ./dotfiler ]]; then
+    if [[ -x ./dotfiler ]]; then
+        # Prefer local development version
         script_dir="."
+   elif [[ -n "${commands[dotfiler]}" ]]; then
+       # Use :A to resolve any symlinks
+       script_dir="${commands[dotfiler]:A:h}"
     fi
     
     # Try to source module_helpers.sh and get modules
