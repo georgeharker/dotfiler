@@ -378,7 +378,7 @@ function handle_update() {
     # If in reminder mode or user has typed input, show reminder and exit
     if [[ "$update_mode" = reminder ]] || { [[ "$update_mode" != background-alpha ]] && has_typed_input }; then
       printf '\r\e[0K' # move cursor to first column and clear whole line
-      echo "[dotfiles] It's time to update! You can do that by running \`${script_dir}/update.sh\`"
+      echo "[dotfiles] It's time to update! You can do that by running \`${script_dir}/dotfiler update\`"
       return 0
     fi
 
@@ -396,7 +396,7 @@ function handle_update() {
     case "$option" in
       [yY$'\n']) update_dotfiles ;;
       [nN]) update_last_updated_file ;&
-      *) echo "[dotfiles] You can update manually by running \`${dotfiles_dir}/update.sh\`" ;;
+      *) echo "[dotfiles] You can update manually by running \`${dotfiles_dir}/dotfiler update\`" ;;
     esac
   }
 
