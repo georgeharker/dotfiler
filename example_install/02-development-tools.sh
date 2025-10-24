@@ -18,7 +18,7 @@ install_development_tools() {
     
     # Language and core tools
     install_package python3 nodejs npm ripgrep bat
-    
+
     if [[ "$DOTFILES_OS" == "Darwin" ]]; then
         install_package bash fzf
         install_package ninja
@@ -33,7 +33,7 @@ install_development_tools() {
         sudo apt-get install -y libevent-2.1-7 libevent-dev
         sudo apt-get install -y libncurses6 libncurses-dev
         sudo apt-get install -y curl build-essential
-        
+
         sudo apt-get install -y lua5.1 luarocks
         
         # Install fzf from git on Linux (system packages are often too old)

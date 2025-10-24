@@ -9,12 +9,15 @@ module_main_function="run_programming_languages_module"
 # Main function for this module
 run_programming_languages_module() {
     install_python_environment
-    install_rust_environment
+    ensure_rust
     install_claude
     install_treesitter
+    install_jupyter
 }
 
 install_python_environment() {
+    # Ensure uv
+    ensure_uv
     # Ensure Python3 is available
     ensure_python3
     
@@ -26,16 +29,6 @@ install_python_environment() {
     pip3 install mypy pynvim neovim
     pip3 install 'python-lsp-server[all]' pylsp-mypy
     pip3 install flake8 flake8-bugbear flake8-comprehensions flake8-builtins flake8-import-order
-}
-
-install_rust_environment() {
-    echo "Installing Rust..."
-    if ! command -v cargo &> /dev/null; then
-        curl https://sh.rustup.rs -sSf | sh -s -- --no-modify-path --default-toolchain stable --profile default -y
-        source ~/.cargo/env
-        rustup install stable
-        rustup default stable
-    fi
 }
 
 install_claude() {
@@ -54,3 +47,16 @@ install_treesitter() {
     
     sudo npm install -g tree-sitter-cli
 }
+
+install_jupyter() {
+    echo "Installing jupyter packages..."
+    install_package jupyter
+    
+    ensure_global_python_venv
+    source ~/.venv/bin/activate
+
+    echo "Installing jupyter Python packages..."
+    pip3 install jupyter_client ipykernel cairosvg pnglatex nbformat
+
+}
+

@@ -59,18 +59,18 @@ print_subsection() {
     echo "--- $1 ---"
 }
 
+ensure_homebrew() {
+    if [[ "$DOTFILES_OS" == "Darwin" ]] && ! command_exists brew; then
+        echo "Installing Homebrew dependency..."
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    fi
+}
+
 # Smart dependency helpers - ensure prerequisites are met
 ensure_nodejs() {
     if ! command_exists node && ! command_exists nodejs; then
         echo "Installing Node.js dependency..."
         install_package nodejs npm
-    fi
-}
-
-ensure_global_python_venv() {
-    if [[ ! -f ~/.venv/bin/activate ]]; then
-        echo "Creating Python virtual environment..."
-        (cd ~/ && python3 -m venv ~/.venv)
     fi
 }
 
@@ -84,16 +84,31 @@ ensure_rust() {
     fi
 }
 
+brew_python_version="3.14"
+python_version="cpython@3.14.0"
+
+ensure_uv() {
+    if ! command_exists uv; then
+        echo "Installing uv dependency..."
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+    fi
+    source "$HOME/.local/bin/env"
+}
+
 ensure_python3() {
+    ensure_uv
     if ! command_exists python3; then
         echo "Installing Python3 dependency..."
-        install_package python3
+        if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+            # On OSX ensure python3 is available via homebrew also
+            install_package "python@${brew_python_version}"
+        fi
+        uv python install --preview-features python-install-default --default "${python_version}"
     fi
 }
 
-ensure_homebrew() {
-    if [[ "$DOTFILES_OS" == "Darwin" ]] && ! command_exists brew; then
-        echo "Installing Homebrew dependency..."
-        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+ensure_global_python_venv() {
+    if [ ! -f ~/.venv/bin/activate ]; then
+        uv venv -p "${python_version}" --system-site-packages --seed ~/.venv
     fi
 }
