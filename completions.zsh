@@ -162,15 +162,45 @@ _dotfiler_modules() {
 
 # Complete module functions (simplified - would need module context)
 _dotfiler_module_functions() {
-    # This is a simplified implementation - in practice would need to parse the specific module
+    local module_name="$words[2]"
+    
+    # Only provide function completion if we have a module name
+    if [[ -z "$module_name" ]]; then
+        return 0
+    fi
+    
     local functions
-    functions=(
-        'install_development_tools:Install core development tools'
-        'install_github_cli:Install GitHub CLI'
-        'install_package_manager:Set up package manager'
-        'setup_fonts:Install and configure fonts'
+    local script_dir
+    
+    # Try to find dotfiler command location
+    script_dir="${${${(%):-%x}:A}:h}"
+    
+    # Try to source module_helpers.sh and get module functions
+    if [[ -n "$script_dir" && -f "$script_dir/module_helpers.sh" ]]; then
+        # Source in a subshell to avoid polluting completion environment
+        local function_list
+        function_list=$(
+            source "$script_dir/module_helpers.sh" 2>/dev/null && 
+            get_module_functions "$module_name" 2>/dev/null
+        )
+        
+        if [[ -n "$function_list" ]]; then
+            local -a function_array
+            function_array=(${(f)function_list})
+            _describe 'module functions' function_array
+            return
+        fi
+    fi
+    
+    # Fallback to common function names if module parsing fails
+    local fallback_functions
+    fallback_functions=(
+        "run_${module_name//-/_}_module:Main module function"
+        'install_tools:Install tools for this module'
+        'install_packages:Install packages for this module'
+        'setup_config:Set up configuration for this module'
     )
-    _describe 'module functions' functions
+    _describe 'module functions' fallback_functions
 }
 
 # File completion for dotfiles (helps with -i, -u, -t options)

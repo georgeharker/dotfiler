@@ -124,8 +124,63 @@ get_sorted_modules() {
     done | sort -t: -k2 | cut -d: -f1
 }
 
+# Helper function to extract functions from a module using subshell approach
+_extract_module_functions() {
+    local module_file="$1"
+    local format="${2:-raw}"
+    
+    # Use subshell to avoid namespace pollution while getting accurate function list
+    (
+        source "$module_file" 2>/dev/null || return 1
+typeset -f + | grep -E "^(install_[a-zA-Z0-9]*|ensure_[a-zA-Z0-9]*|setup_[a-zA-Z0-9]*|run_${module_name//-/_}_module)" | \
+        while read -r func_name; do
+            if [[ "$format" == "completion" ]]; then
+                echo "$func_name:Module function"
+            else
+                echo "$func_name"
+            fi
+        done
+    )
+}
+
+# Function to list available functions in a module (for user display)
+list_module_functions() {
+    local module_file="$1"
+    local module_name="$2"
+    
+    echo "Available functions in module '$module_name':"
+    
+    local functions
+    functions=$(_extract_module_functions "$module_file" "raw")
+    
+    if [[ -n "$functions" ]]; then
+        echo "$functions" | while read -r func_name; do
+            printf "  %s\n" "$func_name"
+        done
+    else
+        echo "  No functions found"
+    fi
+}
+
+# Function to get available functions in a module for tab completion
+get_module_functions() {
+    local module_name="$1"
+    local install_dir="${2:-$(find_dotfiles_install_directory)}"
+    
+    # Find the module file
+    local module_file
+    module_file=$(find_module_by_name "$module_name" "$install_dir")
+    if [[ $? -ne 0 ]]; then
+        return 1
+    fi
+    
+    # Use the unified helper with completion format
+    _extract_module_functions "$module_file" "completion"
+}
+
 # Clean up module helper variables and functions
 cleanup_module_helpers() {
     unset dotfiles_module_functions dotfiles_module_descriptions dotfiles_module_filenames dotfiles_module_names 2>/dev/null
-    unset -f register_module load_install_modules list_available_modules find_module_by_name get_sorted_modules cleanup_module_helpers 2>/dev/null
+    unset -f register_module load_install_modules list_available_modules find_module_by_name get_sorted_modules _extract_module_functions list_module_functions get_module_functions cleanup_module_helpers 2>/dev/null
 }
+

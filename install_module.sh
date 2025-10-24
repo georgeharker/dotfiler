@@ -19,23 +19,6 @@ add_final_instruction() {
     final_instructions+=("$1")
 }
 
-# Function to list available functions in a module
-list_module_functions() {
-    local module_file="$1"
-    local module_name="$2"
-    
-    echo "Available functions in module '$module_name':"
-    
-    # Source the module and extract function names
-    source "$module_file"
-    
-    # List all functions that start with 'install_' or the main function
-    declare -F | grep -E "(install_|run_${module_name//-/_}_module)" | while read -r line; do
-        func_name=$(echo "$line" | awk '{print $3}')
-        printf "  %s\n" "$func_name"
-    done
-}
-
 if [[ $# -eq 0 ]]; then
     echo "Usage: $0 <module_name> [function_name]"
     echo ""
