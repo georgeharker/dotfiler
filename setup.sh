@@ -319,7 +319,13 @@ function copy_if_needed(){
     if [[ "$src" == "$fullpath_home/"* ]]; then
       # File is under home directory - use relative path
       relative_path="${src#$fullpath_home/}"
-      destdir="$dotfiles_dir"
+      dest="${dotfiles_dir}/${relative_path}"
+      if [ ! -d "$src" ]; then
+          destdir="${dest:h}"
+      else
+          destdir="${dest}"
+      fi
+    else
       warn "WARNING: $src is not under home directory, placing in dotfiles root as $filename"
     fi
   fi
