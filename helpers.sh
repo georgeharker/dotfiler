@@ -1,7 +1,10 @@
 #!/bin/zsh
 
-# Global quiet mode setting - defaults to not quiet
-quiet_mode=false
+# Capture script name early before functions change context
+script_name="${${(%):-%x}:A}"
+script_dir="${script_name:h}"
+
+source "${script_dir}/logging.sh"
 
 # Simple script directory finder (no zstyle - used internally to avoid circular deps)
 find_script_directory_simple() {
@@ -12,9 +15,6 @@ find_script_directory_simple() {
 # Function to clean up all variables and functions introduced by helpers
 # This should be called at the end of scripts to clean up the environment
 function cleanup_helpers(){
-    # Unset variables
-    unset quiet_mode 2>/dev/null
-    
     # Unset all functions defined in this file
     unset -f find_script_directory_simple 2>/dev/null
     unset -f info info_nonl action error warn 2>/dev/null
@@ -25,27 +25,8 @@ function cleanup_helpers(){
     unset -f find_dotfiles_exclude_file 2>/dev/null
     unset -f is_script_sourced 2>/dev/null
     unset -f cleanup_helpers 2>/dev/null
-}
 
-# Helper output functions that respect quiet_mode
-function info(){
-    [[ "$quiet_mode" = true ]] || print -P "$@"
-}
-
-function info_nonl(){
-    [[ "$quiet_mode" = true ]] || print -n -P "$@"
-}
-
-function action(){
-    [[ "$quiet_mode" = true ]] || print -P "%F{blue}$@%f"
-}
-
-function error(){
-    [[ "$quiet_mode" = true ]] || print -P "%F{red}$@%f"
-}
-
-function warn(){
-    [[ "$quiet_mode" = true ]] || print -P "%F{yellow}$@%f"
+    cleanup_logging
 }
 
 # Helper function to resolve paths relative to dotfiles directory
