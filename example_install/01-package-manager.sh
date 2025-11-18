@@ -16,10 +16,10 @@ run_package_manager_module() {
 
 install_package_manager() {
     if [[ "$DOTFILES_OS" == "Darwin" ]]; then
-        echo "Installing Homebrew..."
+        action "Installing Homebrew..."
         ensure_homebrew
     else
-        echo "Updating apt packages..."
+        action "Updating apt packages..."
         sudo apt-get update
         sudo apt-get install -y curl
     fi
@@ -29,7 +29,7 @@ setup_fonts() {
     if [[ "$DOTFILES_OS" == "Darwin" ]]; then
         install_package font-meslo-lg font-meslo-lg-dz font-meslo-lg-nerd-font
     else
-        echo "Installing Nerd Fonts..."
+        action "Installing Nerd Fonts..."
         pushd /tmp/
         curl -OL https://github.com/ryanoasis/nerd-fonts/releases/download/v3.4.0/Meslo.tar.xz
         mkdir -p ~/.local/share/fonts
