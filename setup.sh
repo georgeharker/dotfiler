@@ -487,8 +487,8 @@ if [[ ${#ingest[@]} -gt 0 ]]; then
   for file in ${ingest[@]}; do
     info "Copying files in $file"
     copy_if_needed $file || exit 1
+    safe_git -C $dotfiles_dir add $file
   done
-  safe_git -C $dotfiles_dir add -A
   #  git -C $dotfiles_dir commit
 fi
 
