@@ -165,7 +165,7 @@ for line in ${(f)git_commits}; do
 done
 
 # Only pull in origin/master mode
-if [[ ${#dry_run[@]} -gt 0 && ${#commit_hash[@]} == 0 && ${#range[@]} == 0]]; then
+if [[ ${#dry_run[@]} -gt 0 && ${#commit_hash[@]} == 0 && ${#range[@]} == 0 ]]; then
     default_remote=$(get_default_remote)
     default_branch=$(get_default_branch "$default_remote")
     git pull "$default_remote" "$default_branch"
