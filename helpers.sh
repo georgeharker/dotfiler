@@ -17,7 +17,6 @@ find_script_directory_simple() {
 function cleanup_helpers(){
     # Unset all functions defined in this file
     unset -f find_script_directory_simple 2>/dev/null
-    unset -f info info_nonl action error warn 2>/dev/null
     unset -f resolve_dotfiles_path 2>/dev/null
     unset -f find_dotfiles_script_directory 2>/dev/null
     unset -f find_dotfiles_directory 2>/dev/null
