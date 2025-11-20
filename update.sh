@@ -212,3 +212,16 @@ if [[ ${#files_to_unpack[@]} -gt 0 ]]; then
         ${script_dir}"/setup.sh" "${dry_run_arg}" -u -q "${files_to_unpack[@]}"
     fi
 fi
+
+if [[ ${#files_to_unpack[@]} -gt 0 ]]; then
+    local modified_install_scripts=()
+    for file in ${files_to_unpack[@]}; do
+        if ${file} == ${dotfiles_dir}/.nounpack/install/*.sh; then
+            modified_install_scripts+=("$file")
+        fi
+    done
+
+    if [[ ${#files_to_unpack[@]} -gt 0 ]]; then
+        warn "Install scripts modified, you may need to run dotfile install-module"
+    fi
+fi
