@@ -15,6 +15,10 @@ diff=()
 
 function usage(){
   echo "Usage: $script_name ([-ingest path | -i path ...] | [-setup | -s]) [-unpack [file ...] | -u [file ...]] [-force-unpack [file ...] | -U [file ...]] [--untrack path | -t path ...] [--diff | -d] [--dry-run | -D] [--yes | y] [--no | -n]"
+  echo "  -s, --setup         Auto ingest dotfiles from ~/"
+  echo "  -i, --ingest        Ingest files (track then link)"
+  echo "  -t, --track         Track files"
+  echo "  -x, --untrack       Untrack files"
   echo "  -u, --unpack        Unpack files (respects exclusions)"
   echo "  -U, --force-unpack  Force unpack files (ignores exclusions)"
   echo "  -D, --dry-run       Show what actions would be taken without making changes"
@@ -30,7 +34,8 @@ zparseopts -D -E - i+:=ingest -ingest+:=ingest \
                    s=setup -setup=setup \
                    u=unpack -unpack=unpack \
                    U=force_unpack -force-unpack=force_unpack \
-                   t+:=untrack -untrack+:=untrack \
+                   t+:=track -track+:=track \
+                   x+:=untrack -untrack+:=untrack \
                    d=diff -d=diff \
                    q=quiet -q=quiet \
                    D=dry_run -dry-run=dry_run \
@@ -128,9 +133,10 @@ build_find_exclusion_args() {
 
 ingest=("${(@)ingest:#-i}")
 ingest=("${(@)ingest:#--ingest=}")
-untrack=("${(@)untrack:#-t}")
+track=("${(@)track:#-t}")
+track=("${(@)track:#--track}")
+untrack=("${(@)untrack:#-x}")
 untrack=("${(@)untrack:#--untrack}")
-unpack=("${(@)unpack:#--unpack}")
 
 force_unpack=("${(@)force_unpack:#-U}")
 force_unpack=("${(@)force_unpack:#--force-unpack}")
@@ -482,14 +488,20 @@ if [[ `uname` == "Darwin" ]]; then
   findoptd+=("-s")
 fi
 
-# Copy in files
+# Ingest is track + unpack
 if [[ ${#ingest[@]} -gt 0 ]]; then
-  for file in ${ingest[@]}; do
-    info "Copying files in $file"
+  unpack=("-u")
+  unpack_files+=("${ingest[@]}")
+  track+=("${ingest[@]}")
+fi
+
+# Copy in files
+if [[ ${#track[@]} -gt 0 ]]; then
+  for file in ${track[@]}; do
+    info "Copying in file $file"
     copy_if_needed $file || exit 1
     safe_git -C $dotfiles_dir add $file
   done
-  #  git -C $dotfiles_dir commit
 fi
 
 # Untrack files
@@ -510,7 +522,6 @@ if [[ ${#setup[@]} -gt 0 ]]; then
     copy_if_needed "$file" || exit 1
     link_if_needed "$file" || exit 1
     safe_git -C $dotfiles_dir add -A
-    # git -C $dotfiles_dir commit
   done
 fi
 
