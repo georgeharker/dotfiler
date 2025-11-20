@@ -112,13 +112,13 @@ fi
 # Process git changes using zsh array operations
 files_to_unpack=()
 files_to_remove=()
-git_commits=$(git log --diff-filter=ADMRC --no-decorate --pretty=format:%H%x09%s ${diff_range})
+git_commits=$(git log -m --diff-filter=ADMRC --no-decorate --pretty=format:%H%x09%s ${diff_range})
 
 for line in ${(f)git_commits}; do
     local hash=${line%%$'\t'*}
     local message=${line#*$'\t'}
     report "commit ${hash}: ${message}"
-    local git_log=$(git log --name-status --diff-filter=ADMRC --no-decorate --pretty=format: ${hash}...${hash}^)
+    local git_log=$(git log -m --name-status --diff-filter=ADMRC --no-decorate --pretty=format: ${hash}...${hash}^)
     for line in ${(f)git_log}; do
         [[ "$line" =~ "^[ADMRC][0-9]*"$'\t'".*$" ]] || continue
 
@@ -216,7 +216,7 @@ fi
 if [[ ${#files_to_unpack[@]} -gt 0 ]]; then
     local modified_install_scripts=()
     for file in ${files_to_unpack[@]}; do
-        if ${file} == ${dotfiles_dir}/.nounpack/install/*.sh; then
+        if [[ "${file}" == ${dotfiles_dir}/.nounpack/install/*.sh ]]; then
             modified_install_scripts+=("$file")
         fi
     done
