@@ -11,6 +11,8 @@ function cleanup_logging(){
     unset -f cleanup_logging 2>/dev/null
     unset -f info 2>/dev/null
     unset -f info_nonnl 2>/dev/null
+    unset -f success 2>/dev/null
+    unset -f report 2>/dev/null
     unset -f action 2>/dev/null
     unset -f error 2>/dev/null
     unset -f warn 2>/dev/null
@@ -23,6 +25,14 @@ function info(){
 
 function info_nonl(){
     [[ "$quiet_mode" = true ]] || print -n -P "$@"
+}
+
+function success(){
+    [[ "$quiet_mode" = true ]] || print -P "%F{green}$@%f"
+}
+
+function report(){
+    [[ "$quiet_mode" = true ]] || print -P "%F{cyan}$@%f"
 }
 
 function action(){
