@@ -110,22 +110,62 @@ else
 fi
 
 # Process git changes using zsh array operations
-local git_deleted git_added git_modified
-git_deleted=$(git log -m -1 --name-status --diff-filter=D --no-decorate --pretty=oneline ${diff_range})
-git_added=$(git log -m -1 --name-status --diff-filter=A --no-decorate --pretty=oneline ${diff_range})
-git_modified=$(git log -m -1 --name-status --diff-filter=M --no-decorate --pretty=oneline ${diff_range})
-modified_files=()
-for line in ${(f)git_modified}; do
-    [[ "$line" == M$'\t'* ]] || continue
-    local file="${line#M$'\t'}"
-    if [[ -n "$file" ]]; then
-        info "found $file as modified"
-        modified_files+=("$file")
-    fi
+files_to_unpack=()
+files_to_remove=()
+git_commits=$(git log --diff-filter=ADMRC --no-decorate --pretty=format:%H%x09%s ${diff_range})
+
+for line in ${(f)git_commits}; do
+    local hash=${line%%$'\t'*}
+    local message=${line#*$'\t'}
+    report "commit ${hash}: ${message}"
+    local git_log=$(git log --name-status --diff-filter=ADMRC --no-decorate --pretty=format: ${hash}...${hash}^)
+    for line in ${(f)git_log}; do
+        [[ "$line" =~ "^[ADMRC][0-9]*"$'\t'".*$" ]] || continue
+
+        update_type=${line%%$'\t'*}
+        file_refs=${line#*$'\t'}
+        if [[ "$update_type" == M ]]; then
+            local file="${file_refs}"
+            if [[ -n "$file" ]]; then
+                info "  $file modified"
+                files_to_unpack+=("$file")
+                files_to_remove=(${files_to_remove:#"$file"})
+            fi
+        elif [[ "$update_type" == A ]]; then
+            local file="${file_refs}"
+            if [[ -n "$file" ]]; then
+                info "  $file added"
+                files_to_unpack+=("$file")
+                files_to_remove=(${files_to_remove:#"$file"})
+            fi
+        elif [[ "$update_type" == C<-> ]]; then
+            local src_file="${file_refs%%$'\t'*}"
+            local dst_file="${file_refs#*$'\t'}"
+            if [[ -n "$dst_file" ]]; then
+                info "  $dst_file copied (from $src_file)"
+                files_to_unpack+=("$dst_file")
+                files_to_remove=(${files_to_remove:#"$dst_file"})
+            fi
+        elif [[ "$update_type" == R<-> ]]; then
+            local src_file="${file_refs%%$'\t'*}"
+            local dst_file="${file_refs#*$'\t'}"
+            if [[ -n "$dst_file" ]]; then
+                info "  $dst_file renamed (from $src_file)"
+                files_to_unpack=(${files_to_unpack:#"$src_file"})
+                files_to_remove+=("$src_file")
+            fi
+        elif [[ "$update_type" == D ]]; then
+            local file="${line#M$'\t'}"
+            if [[ -n "$file" ]]; then
+                info "  $file deleted"
+                files_to_unpack=(${files_to_unpack:#"$file"})
+            fi
+        fi
+    done
 done
 
 # Only pull in origin/master mode
-if [[ ${#commit_hash[@]} == 0 && ${#range[@]} == 0 ]]; then
+if [[ ${#dry_run[@]} -gt 0 && ${#commit_hash[@]} == 0 && ${#range[@]} == 0]]; then
     default_remote=$(get_default_remote)
     default_branch=$(get_default_branch "$default_remote")
     git pull "$default_remote" "$default_branch"
@@ -152,7 +192,7 @@ delete_if_needed(){
     fi
 }
 
-for file in ${deleted_files[@]}; do
+for file in "${files_to_remove[@]}"; do
     info "checking deleted $file"
     delete_if_needed "$file"
 done
