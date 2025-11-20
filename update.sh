@@ -192,16 +192,16 @@ delete_if_needed(){
     fi
 }
 
-for file in "${files_to_remove[@]}"; do
-    info "checking deleted $file"
-    delete_if_needed "$file"
-done
-
-# Combine added and modified files for unpacking
-files_to_unpack=("${added_files[@]}" "${modified_files[@]}")
+if [[ ${#files_to_remove[@]} -gt 0 ]]; then
+    info "files to remove: ${files_to_remove[*]}"
+    for file in "${files_to_remove[@]}"; do
+        info "checking $file"
+        delete_if_needed "$file"
+    done
+fi
 
 if [[ ${#files_to_unpack[@]} -gt 0 ]]; then
-    info "files to unpack (added: ${#added_files[@]}, modified: ${#modified_files[@]}): ${files_to_unpack[*]}"
+    info "files to unpack: ${files_to_unpack[*]}"
     local dry_run_arg=""
     if [[ ${#dry_run[@]} -gt 0 ]]; then
         dry_run_arg="-D"
