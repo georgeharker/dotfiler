@@ -221,7 +221,7 @@ if [[ ${#files_to_unpack[@]} -gt 0 ]]; then
         fi
     done
 
-    if [[ ${#files_to_unpack[@]} -gt 0 ]]; then
+    if [[ ${#modified_install_scripts[@]} -gt 0 ]]; then
         warn "Install scripts modified, you may need to run dotfile install-module"
     fi
 fi
