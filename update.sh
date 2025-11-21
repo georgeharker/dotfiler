@@ -110,6 +110,8 @@ else
 fi
 
 # Process git changes using zsh array operations
+typeset -aU files_to_unpack
+typeset -aU files_to_remove
 files_to_unpack=()
 files_to_remove=()
 git_commits=$(git log --reverse -m --diff-filter=ADMRC --no-decorate --pretty=format:%H%x09%s ${diff_range})
