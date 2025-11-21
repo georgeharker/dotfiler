@@ -105,14 +105,14 @@ else
     default_branch=$(get_default_branch "$default_remote")
     
     git fetch -q "$default_remote" "$default_branch"
-    diff_range="HEAD...${default_remote}/${default_branch}"
+    diff_range="HEAD..${default_remote}/${default_branch}"
     info "Using ${default_remote}/${default_branch} mode: ${diff_range}"
 fi
 
 # Process git changes using zsh array operations
 files_to_unpack=()
 files_to_remove=()
-git_commits=$(git log -m --diff-filter=ADMRC --no-decorate --pretty=format:%H%x09%s ${diff_range})
+git_commits=$(git log --reverse -m --diff-filter=ADMRC --no-decorate --pretty=format:%H%x09%s ${diff_range})
 
 for line in ${(f)git_commits}; do
     local hash=${line%%$'\t'*}
@@ -165,10 +165,13 @@ for line in ${(f)git_commits}; do
 done
 
 # Only pull in origin/master mode
-if [[ ${#dry_run[@]} -gt 0 && ${#commit_hash[@]} == 0 && ${#range[@]} == 0 ]]; then
+if [[ ${#dry_run[@]} -eq 0 && ${#commit_hash[@]} == 0 && ${#range[@]} == 0 ]]; then
     default_remote=$(get_default_remote)
     default_branch=$(get_default_branch "$default_remote")
-    git pull "$default_remote" "$default_branch"
+    git pull "$default_remote" "$default_branch" || {
+        warn "Update failed, likely modified files in the way"
+        exit 1
+    }
 fi
 
 function safe_rm(){
