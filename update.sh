@@ -145,8 +145,8 @@ for line in ${(f)git_commits}; do
             local dst_file="${file_refs#*$'\t'}"
             if [[ -n "$dst_file" ]]; then
                 info "  $dst_file copied (from $src_file)"
-                files_to_unpack+=("$dst_file")
                 files_to_remove=(${files_to_remove:#"$dst_file"})
+                files_to_unpack+=("$dst_file")
             fi
         elif [[ "$update_type" == R<-> ]]; then
             local src_file="${file_refs%%$'\t'*}"
@@ -155,6 +155,7 @@ for line in ${(f)git_commits}; do
                 info "  $dst_file renamed (from $src_file)"
                 files_to_unpack=(${files_to_unpack:#"$src_file"})
                 files_to_remove+=("$src_file")
+                files_to_unpack+=("$dst_file")
             fi
         elif [[ "$update_type" == D ]]; then
             local file="${line#M$'\t'}"
