@@ -543,7 +543,7 @@ if [[ ${#unpack[@]} -gt 0 ]]; then
       
       # Check if file should be excluded (only for regular unpack, not force unpack)
       if should_exclude_file "$dotfiles_dir/$target_file"; then
-        warn "Skipping excluded file: $target_file (use -U to force unpack)"
+        report "Skipping excluded file: $target_file (use -U to force unpack)"
         continue
       fi
       
