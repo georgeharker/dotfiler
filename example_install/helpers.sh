@@ -74,18 +74,52 @@ ensure_homebrew() {
     fi
 }
 
+
+ensure_git() {
+    if ! command_exists git; then
+        action "Installing git dependency..."
+        install_package git 
+    else
+        info "git already installed"
+    fi
+    if !command_exists git-lfs; then
+        action "Installing git-lfs dependency..."
+        install_package git-lfs
+        git-lfs install
+    else
+        info "git-lfs already installed"
+    fi
+}
+
 # Smart dependency helpers - ensure prerequisites are met
 ensure_nodejs() {
     if ! command_exists node && ! command_exists nodejs; then
         action "Installing Node.js dependency..."
-        install_package nodejs npm
+        if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+            install_package nodejs npm
+        else
+            curl -fsSL https://deb.nodesource.com/setup_25.x | sudo bash -
+            # Via nodesource npm will be installed by nodejs
+            install_package nodejs
+        fi
+    fi
+}
+
+install_npm_package() {
+    local command_name="$1"
+    local package_name="$2"
+    if ! command_exists "$command_name"; then
+        action "Installing npm package: $package_name"
+        sudo npm install -g "$package_name"
+    else
+        info "npm package $package_name already installed"
     fi
 }
 
 ensure_rust() {
     if ! command_exists cargo; then
         action "Installing Rust dependency..."
-        curl https://sh.rustup.rs -sSf | sh -s -- --no-modify-path --default-toolchain stable --profile default -y
+        curl https://sh.rustup.rs -sSf | sh -s -- --no-modify-path --default-toolchain stable --profile minimal -y
         source ~/.cargo/env
         rustup install stable
         rustup default stable
@@ -137,11 +171,59 @@ pip_install() {
     uv pip install "$@"
 }
 
+ensure_deb_packages() {
+    if [[ ! -d ~/ext/debian-packages ]]; then
+        if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+            action "Skipping deb package installation on macOS"
+        else
+            ensure_git
+            action "Cloning deb packages..."
+            mkdir -p ~/ext
+            pushd ~/ext
+            git clone git@github.com:georgeharker/debian-packages.git
+            popd
+        fi
+    fi
+}
+
+install_deb_package() {
+    if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+        action "Skipping deb package installation on macOS"
+        return 1
+    else
+        ensure_deb_packages
+        local package_name="$1"
+        local deb_arch=$(dpkg --print-architecture)
+        local package_path="${HOME}/ext/debian-packages/${deb_arch}/${package_name}_${deb_arch}.deb"
+        if [[ -f ${package_path} ]]; then
+            action "Installing deb package: ${package_name}"
+            sudo dpkg -i ${package_path}
+            return 0
+        else
+            error "Deb package not found: ${package_path}"
+            return 1
+        fi
+    fi
+}
+
+install_cargo_package() {
+    local command_name="$1"
+    local package_name="$2"
+    if ! command_exists "${command_name}"; then
+        if ! install_deb_package "${package_name}"; then
+            action "Installing cargo package: ${package_name}"
+            cargo install "${package_name}"
+        fi
+    else
+        info "Cargo package ${package_name} already installed"
+    fi
+}
+
 # Careful use of this allows reinstallation into venvs
 
 activate_global_or_local_python_venv() {
     if [ ${VIRTUAL_ENV+x} ]; then
-        echo "Using existing virtual environment at $VIRTUAL_ENV"
+        action "Using existing virtual environment at $VIRTUAL_ENV"
         source ${VIRTUAL_ENV}/bin/activate
     else
         if [ -f ~/.venv/bin/activate ]; then

@@ -10,7 +10,9 @@ module_main_function="run_programming_languages_module"
 run_programming_languages_module() {
     install_python_environment
     ensure_rust
+    ensure_nodejs
     install_claude
+    install_copilot
     install_treesitter
     install_jupyter
 }
@@ -40,19 +42,18 @@ install_basic_python_packages() {
 
 install_claude() {
     action "Installing claude-code Node.js packages..."
-    # Ensure Node.js is available for npm installs
-    ensure_nodejs
-    
-    sudo npm install -g @anthropic-ai/claude-code
-    sudo npm install -g @zed-industries/claude-code-acp
+    install_npm_package claude @anthropic-ai/claude-code
+    install_npm_package claude-code-acp @zed-industries/claude-code-acp
+}
+
+install_copilot() {
+    action "Installing copilot Node.js packages..."
+    install_npm_package copilot @github/copilot
 }
 
 install_treesitter() {
     action "Installing tree-sitter Node.js packages..."
-    # Ensure Node.js is available for npm installs
-    ensure_nodejs
-    
-    sudo npm install -g tree-sitter-cli
+    install_npm_package tree-sitter tree-sitter-cli
 }
 
 install_jupyter() {
