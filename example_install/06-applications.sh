@@ -14,7 +14,7 @@ run_applications_module() {
 
 install_tailscale() {
     action "Installing Tailscale..."
-    if ! command_exists tailscale; then
+    if ! check_command tailscale; then
         if [[ "$DOTFILES_OS" == "Darwin" ]]; then
             install_package --cask tailscale-app
         else
@@ -27,12 +27,10 @@ install_tailscale() {
 
 install_network_utils() {
     action "Installing network utils..."
-    if ! command_exists ip; then
-        if [[ "$DOTFILES_OS" == "Darwin" ]]; then
-            install_package iproute2mac
-        fi
+    if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+        install_package iproute2mac
     else
-        info "Installing iproute2 already installed"
+        info "iproute2 already available on Linux systems"
     fi
 }
 

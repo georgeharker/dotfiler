@@ -21,7 +21,7 @@ install_git_delta() {
     if [[ "$DOTFILES_OS" == "Darwin" ]]; then
         install_package git-delta
     else
-        install_cargo_package delta git-delta
+        install_cargo_package git-delta
     fi
 }
 
@@ -44,24 +44,22 @@ install_development_tools() {
         install_package xsel
         
         # Linux-specific packages
-        sudo apt-get install -y python3-pip
-        sudo apt-get install -y libevent-2.1-7 libevent-dev
-        sudo apt-get install -y libncurses6 libncurses-dev
-        sudo apt-get install -y curl build-essential
+        install_package python3-pip
+        install_package libevent-2.1-7 libevent-dev
+        install_package libncurses6 libncurses-dev
+        install_package curl build-essential
 
-        sudo apt-get install -y lua5.1 luarocks
+        install_package lua5.1 luarocks
         
         # git-delta eza will be installed via cargo in rust section
     fi
-
-    install_shell_tools
 }
 
 install_github_cli() {
     action "Installing github cli..."
-    if ! command_exists gh; then
+    if ! check_command gh || force_install; then
         if [[ "$DOTFILES_OS" == "Darwin" ]]; then
-            brew install gh
+            install_package gh
         else
             (type -p wget >/dev/null || (sudo apt update && sudo apt install wget -y)) \
             && sudo mkdir -p -m 755 /etc/apt/keyrings \

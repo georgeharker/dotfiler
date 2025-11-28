@@ -42,18 +42,18 @@ install_basic_python_packages() {
 
 install_claude() {
     action "Installing claude-code Node.js packages..."
-    install_npm_package claude @anthropic-ai/claude-code
-    install_npm_package claude-code-acp @zed-industries/claude-code-acp
+    install_npm_package @anthropic-ai/claude-code
+    install_npm_package @zed-industries/claude-code-acp
 }
 
 install_copilot() {
     action "Installing copilot Node.js packages..."
-    install_npm_package copilot @github/copilot
+    install_npm_package @github/copilot
 }
 
 install_treesitter() {
     action "Installing tree-sitter Node.js packages..."
-    install_npm_package tree-sitter tree-sitter-cli
+    install_npm_package tree-sitter-cli
 }
 
 install_jupyter() {

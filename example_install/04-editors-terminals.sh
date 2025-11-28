@@ -31,10 +31,11 @@ install_custom_tmux() {
         mkdir -p ~/ext/deb
         
         sudo dpkg -r tmux || echo "No local tmux installed"
-        if [[ ! -f ~/ext/tmux-deb/tmux_3.5a-1_arm64.deb ]]; then
+        if [[ ! -f ~/ext/tmux-deb/tmux_3.5a-1_arm64.deb ]] || force_install; then
             info "Building tmux from source..."
             sudo apt-get install -y libutempter-dev git-buildpackage
             pushd ~/ext/
+            [[ -d tmux-deb ]] && rm -rf tmux-deb
             mkdir -p tmux-deb
             cd tmux-deb
             if [[ ! -d tmux-3.5 ]]; then
@@ -57,9 +58,10 @@ install_custom_neovim() {
     if ! install_deb_package neovim; then
         action "Building custom neovim..."
         sudo dpkg -r neovim || echo "No local neovim installed"
-        if [[ ! -f ~/ext/neovim-deb/nvim-linux-arm64.deb ]]; then
+        if [[ ! -f ~/ext/neovim-deb/nvim-linux-arm64.deb ]] || force_install; then
             info "Building neovim from source..."
             pushd ~/ext/
+            [[ -f neovim-deb ]] && rm -rf neovim-deb
             mkdir -p neovim-deb
             cd neovim-deb
             if [[ ! -d neovim-0.11 ]]; then
@@ -87,7 +89,7 @@ install_ohmyposh() {
         install_package jandedobbeleer/oh-my-posh/oh-my-posh
     else
         mkdir -p ~/bin
-        if ! command -v oh-my-posh &> /dev/null; then
+        if ! check_command oh-my-posh; then
             curl -s https://ohmyposh.dev/install.sh | bash -s -- -d ~/bin
         fi
     fi
@@ -96,9 +98,7 @@ install_ohmyposh() {
 install_tpm() {
     action "Install tpm..."
     # TPM (Tmux Plugin Manager)
-    if [[ ! -d ~/.tmux/plugins/tpm ]]; then
-        git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
-    fi
+    install_using_git tpm https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
 }
 
 install_shell_enhancements() {
