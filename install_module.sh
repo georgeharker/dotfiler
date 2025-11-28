@@ -11,6 +11,13 @@ source "${helper_script_dir}/module_helpers.sh"
 # Get install directory using helper
 install_dir=$(find_dotfiles_install_directory)
 
+# Parse opts
+zmodload zsh/zutil
+zparseopts -D -E - f=force -force=force \
+                   h=help -help=help
+
+FORCE_INSTALL=$(( ${#force[@]} > 0 ))
+
 # Global array for final instructions (same as install.sh)
 final_instructions=()
 
@@ -19,9 +26,11 @@ add_final_instruction() {
     final_instructions+=("$1")
 }
 
-if [[ $# -eq 0 ]]; then
+if [[ $# -eq 0 || ${#help[@]} -gt 0 ]]; then
     echo "Usage: $0 <module_name> [function_name]"
     echo ""
+    echo "  -f, --force   : Force reinstallation of all components"
+    echo "  -h, --help    : Show this help message"
     echo "  module_name   : Name of the module to run"
     echo "  function_name : Optional specific function to run (defaults to main module function)"
     echo ""

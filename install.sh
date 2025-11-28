@@ -20,6 +20,24 @@ install_dir=$(find_dotfiles_install_directory)
 # Source helper functions
 source "$install_dir/helpers.sh"
 
+# parse opts
+
+zmodload zsh/zutil
+zparseopts -D -E - f=force -force=force \
+                   h=help -help=help
+
+FORCE_INSTALL=$(( ${#force[@]} > 0 ))
+
+if [[ ${#help[@]} -gt 0 ]]; then
+    echo "Usage: $0 [options]"
+    echo ""
+    echo "Options:"
+    echo "  -f, --force    : Force reinstallation of all components"
+    echo "  -h, --help     : Show this help message"
+    echo ""
+    exit 0
+fi
+
 # Detect operating system
 detect_os
 # Global array for final instructions

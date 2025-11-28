@@ -107,13 +107,15 @@ _dotfiler_update_args() {
 # Complete install command arguments
 _dotfiler_install_args() {
     _arguments \
-        '(- *)--help[Show help message]'
+        '(- *)--help[Show help message]' \
+        '(-f)'-f'[Force operation]'
 }
 
 # Complete install-module command arguments
 _dotfiler_install_module_args() {
     _arguments \
         '(- *)--help[Show help message]' \
+        '(-f)'-f'[Force operation]' \
         '1: :_dotfiler_modules' \
         '2: :_dotfiler_module_functions'
 }

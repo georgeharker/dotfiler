@@ -83,6 +83,78 @@ Available modules:
 
 **Note**: Copy templates from `example_install/` to `install/` before customizing.
 
+### Force Installation
+
+All install commands support a `-f` or `--force` flag to reinstall components:
+
+```bash
+# Force reinstall all modules
+.nounpack/scripts/install.sh --force
+
+# Force reinstall specific module
+.nounpack/scripts/install_module.sh development-tools --force
+```
+
+When `--force` is not specified, installation scripts will skip items that are already installed, making subsequent runs fast and safe.
+
+## Helper Functions Reference
+
+The `install/helpers.sh` file provides a comprehensive set of functions for building reliable, cross-platform installation modules:
+
+### Core Detection Functions
+
+- `detect_os()` - Detects operating system, sets `DOTFILES_OS` environment variable
+- `command_exists()` - Check if a command is available in PATH
+- `check_command()` - Respects force mode, returns true if command should be installed
+- `force_install()` - Returns true if `--force` flag was specified
+
+### Package Management
+
+- `install_package()` - Universal package installer (Homebrew on macOS, APT on Linux)
+- `install_package --cask` - Install macOS applications via Homebrew Cask
+- `check_package()` - Check if package is installed (respects force mode)
+
+### Language-Specific Installers
+
+- `ensure_nodejs()` / `install_npm_package()` - Node.js and npm package management
+- `ensure_rust()` / `install_cargo_package()` - Rust and Cargo package management
+- `ensure_python3()` / `ensure_uv()` - Python via uv package manager
+- `ensure_global_python_venv()` / `activate_global_python_venv()` - Python virtual environment management
+- `pip_install()` - Install Python packages via uv
+
+### Dependency Management
+
+- `ensure_homebrew()` - Install Homebrew if needed (macOS)
+- `ensure_git()` - Install git and git-lfs if needed
+- `ensure_deb_packages()` - Clone custom Debian package repository
+- `install_deb_package()` - Install custom .deb packages (Linux)
+
+### Output Helpers
+
+- `print_section()` - Print major section headers
+- `print_subsection()` - Print minor section headers
+- Logging functions via `logging.sh`: `info()`, `action()`, `error()`
+
+### Best Practices for Install Scripts
+
+1. **Always check before installing**: Use `check_command()` and `check_package()` functions
+2. **Respect force mode**: These functions automatically handle the `--force` flag
+3. **Handle dependencies**: Use `ensure_*()` functions to install prerequisites
+4. **Cross-platform support**: Use `install_package()` for consistent behavior
+5. **Provide feedback**: Use logging functions and section headers for clear output
+
+```bash
+# Example installation function
+install_ripgrep() {
+    if ! check_command rg; then
+        action "Installing ripgrep..."
+        install_package ripgrep
+    else
+        info "ripgrep already installed"
+    fi
+}
+```
+
 ## Configuration Options (zstyle)
 
 ```bash
