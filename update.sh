@@ -18,7 +18,8 @@ function usage(){
 }
 
 zmodload zsh/zutil
-zparseopts -D -E - q=quiet -q=quiet \
+zparseopts -D -E - q=quiet -quiet=quiet \
+                   v=verbose -verbose=verbose \
                    c+:=commit_hash -commit-hash+:=commit_hash \
                    r+:=range -range+:=range \
                    D=dry_run -dry-run=dry_run || \
@@ -30,10 +31,11 @@ commit_hash=("${(@)commit_hash:#--commit-hash}")
 # Clean up range array
 range=("${(@)range:#-r}")
 range=("${(@)range:#--range}")
-if [[ `uname` != "Darwin" ]]; then
 # Set quiet mode for helpers
 [[ ${#quiet[@]} -gt 0 ]] && quiet_mode=true
+[[ ${#verbose[@]} -gt 0 ]] && verbose_mode=true
 
+if [[ `uname` != "Darwin" ]]; then
     GREP=("grep" "-P")
 else
     GREP="grep"
@@ -129,14 +131,14 @@ for line in ${(f)git_commits}; do
         if [[ "$update_type" == M ]]; then
             local file="${file_refs}"
             if [[ -n "$file" ]]; then
-                info "  $file modified"
+                verbose "  $file modified"
                 files_to_unpack+=("$file")
                 files_to_remove=(${files_to_remove:#"$file"})
             fi
         elif [[ "$update_type" == A ]]; then
             local file="${file_refs}"
             if [[ -n "$file" ]]; then
-                info "  $file added"
+                verbose "  $file added"
                 files_to_unpack+=("$file")
                 files_to_remove=(${files_to_remove:#"$file"})
             fi
@@ -144,7 +146,7 @@ for line in ${(f)git_commits}; do
             local src_file="${file_refs%%$'\t'*}"
             local dst_file="${file_refs#*$'\t'}"
             if [[ -n "$dst_file" ]]; then
-                info "  $dst_file copied (from $src_file)"
+                verbose "  $dst_file copied (from $src_file)"
                 files_to_remove=(${files_to_remove:#"$dst_file"})
                 files_to_unpack+=("$dst_file")
             fi
@@ -152,7 +154,7 @@ for line in ${(f)git_commits}; do
             local src_file="${file_refs%%$'\t'*}"
             local dst_file="${file_refs#*$'\t'}"
             if [[ -n "$dst_file" ]]; then
-                info "  $dst_file renamed (from $src_file)"
+                verbose "  $dst_file renamed (from $src_file)"
                 files_to_unpack=(${files_to_unpack:#"$src_file"})
                 files_to_remove+=("$src_file")
                 files_to_unpack+=("$dst_file")
@@ -160,7 +162,7 @@ for line in ${(f)git_commits}; do
         elif [[ "$update_type" == D ]]; then
             local file="${line#M$'\t'}"
             if [[ -n "$file" ]]; then
-                info "  $file deleted"
+                verbose "  $file deleted"
                 files_to_unpack=(${files_to_unpack:#"$file"})
             fi
         fi
@@ -171,7 +173,7 @@ done
 if [[ ${#dry_run[@]} -eq 0 && ${#commit_hash[@]} == 0 && ${#range[@]} == 0 ]]; then
     default_remote=$(get_default_remote)
     default_branch=$(get_default_branch "$default_remote")
-    git pull "$default_remote" "$default_branch" || {
+    git pull -q "$default_remote" "$default_branch" || {
         warn "Update failed, likely modified files in the way"
         exit 1
     }
@@ -199,7 +201,8 @@ delete_if_needed(){
 }
 
 if [[ ${#files_to_remove[@]} -gt 0 ]]; then
-    info "files to remove: ${files_to_remove[*]}"
+    action "Removing files"
+    verbose "files to remove: ${files_to_remove[*]}"
     for file in "${files_to_remove[@]}"; do
         info "checking $file"
         delete_if_needed "$file"
@@ -207,7 +210,8 @@ if [[ ${#files_to_remove[@]} -gt 0 ]]; then
 fi
 
 if [[ ${#files_to_unpack[@]} -gt 0 ]]; then
-    info "files to unpack: ${files_to_unpack[*]}"
+    action "Unpacking files"
+    verbose "files to unpack: ${files_to_unpack[*]}"
     local dry_run_arg=""
     if [[ ${#dry_run[@]} -gt 0 ]]; then
         dry_run_arg="-D"

@@ -2,10 +2,12 @@
 
 # Global quiet mode setting - defaults to not quiet
 quiet_mode=false
+verbose_mode=false
 
 function cleanup_logging(){
     # Unset variables
     unset quiet_mode 2>/dev/null
+    unset verbose_mode 2>/dev/null
     
     # Unset all functions defined in this file
     unset -f cleanup_logging 2>/dev/null
@@ -19,6 +21,10 @@ function cleanup_logging(){
 }
 
 # Helper output functions that respect quiet_mode
+function verbose(){
+    [[ "$verbose_mode" = true ]] || print -P "$@"
+}
+
 function info(){
     [[ "$quiet_mode" = true ]] || print -P "$@"
 }
