@@ -30,17 +30,17 @@ function cleanup_helpers(){
 
 # Helper function to resolve paths relative to dotfiles directory
 resolve_dotfiles_path() {
-    local path="$1"
+    local dotfiles_path="$1"
     
     # Return as-is if absolute path
-    if [[ "$path" = /* ]]; then
-        echo "${path:A}"
+    if [[ "$dotfiles_path" = /* ]]; then
+        echo "${dotfiles_path:A}"
         return 0
     fi
     
     # Resolve relative to dotfiles directory
     local dotfiles_dir=$(find_dotfiles_directory)
-    echo "${dotfiles_dir}/${path}"
+    echo "${dotfiles_dir}/${dotfiles_path}"
     return 0
 }
 

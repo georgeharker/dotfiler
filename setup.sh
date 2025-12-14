@@ -175,6 +175,48 @@ fi
 
 pretty_dotfiles_dir=`print -D $dotfiles_dir:P`
 
+# Normalize paths to be relative to home directory
+# Takes a path (absolute or relative) and returns path relative to $HOME
+# Returns empty string if path is not under $HOME
+function normalize_path_to_home_relative(){
+  local input_path="$1"
+  local fullpath_home="${HOME:A}"
+  local abs_path
+
+  # Skip empty paths
+  [[ -z "$input_path" ]] && return 1
+
+  # Convert to absolute path
+  if [[ "$input_path" == /* ]]; then
+    # Already absolute
+    abs_path="${input_path:A}"
+  else
+    # Relative path - resolve relative to CWD
+    # Check if file exists relative to CWD
+    if [[ -e "$input_path" ]]; then
+      abs_path="${input_path:A}"
+    else
+      # File doesn't exist yet, but we still need to normalize the path
+      # Resolve it relative to CWD
+      abs_path="${PWD:A}/${input_path}"
+      # Normalize the path (resolve .. and . components)
+      abs_path="${abs_path:A}"
+    fi
+  fi
+
+  # Check if path is under home directory
+  if [[ "$abs_path" == "$fullpath_home/"* ]]; then
+    # Return relative path from home (without leading /)
+    local rel_path="${abs_path#$fullpath_home/}"
+    echo "$rel_path"
+    return 0
+  else
+    # Path is not under home directory
+    warn "Path $input_path (resolves to $abs_path) is not under home directory ($fullpath_home)"
+    return 1
+  fi
+}
+
 function prompt_yes_no(){
   [[ ${#defno[@]} -ge 1 ]] && exit 0
   [[ ${#defyes[@]} -ge 1 ]] && exit 1
@@ -298,42 +340,40 @@ function link_if_needed(){
   fi
 }
 
-function copy_if_needed(){
-  src=$1:A
-  fullpath_home=$HOME:A
-  fullpath_dotfiles_dir=$dotfiles_dir:A
-  
+function copy_in_if_needed(){
+  # Input is now expected to be a path relative to HOME (already normalized)
+  local home_relative_path="$1"
+  local fullpath_home="${HOME:A}"
+  local fullpath_dotfiles_dir="${dotfiles_dir:A}"
+
+  # Construct absolute source path from home-relative path
+  src="${fullpath_home}/${home_relative_path}"
+  src="${src:A}"
+
   # SAFETY CHECK: Prevent re-ingesting symlinked files
-  if [[ -L "$1" ]]; then
-    link_target=$(readlink "$1")
+  if [[ -L "$src" ]]; then
+    link_target=$(readlink "$src")
     link_target_abs="${link_target:A}"
     if [[ "$link_target_abs" == "$fullpath_dotfiles_dir"* ]]; then
-      info ".. SKIPPING: $1 is already a symlink to dotfiles ($link_target_abs)"
+      info ".. SKIPPING: $src is already a symlink to dotfiles ($link_target_abs)"
       return 0
     fi
   fi
-  
+
   # Check if source is already in dotfiles directory
   if [[ "$src" == "$fullpath_dotfiles_dir"* ]]; then
     # Source is already in dotfiles, so we're probably re-ingesting from dotfiles to dotfiles
     # This shouldn't happen in normal usage, but let's handle it gracefully
     info ".. WARNING: Source $src is already in dotfiles directory"
     return 0
+  fi
+
+  # Use the home-relative path to construct destination in dotfiles
+  dest="${dotfiles_dir}/${home_relative_path}"
+  if [ ! -d "$src" ]; then
+      destdir="${dest:h}"
   else
-    # Normal case: source is in home directory, copy to dotfiles
-    # Calculate relative path from home directory
-    if [[ "$src" == "$fullpath_home/"* ]]; then
-      # File is under home directory - use relative path
-      relative_path="${src#$fullpath_home/}"
-      dest="${dotfiles_dir}/${relative_path}"
-      if [ ! -d "$src" ]; then
-          destdir="${dest:h}"
-      else
-          destdir="${dest}"
-      fi
-    else
-      warn "WARNING: $src is not under home directory, placing in dotfiles root as $filename"
-    fi
+      destdir="${dest}"
   fi
   
   info_nonl "checking $src to $dest ($destdir) .."
@@ -388,29 +428,15 @@ function copy_if_needed(){
 }
 
 function untrack_if_needed(){
-  file_path=$1
-  
-  # Convert to absolute path if relative
-  if [[ "$file_path" == /* ]]; then
-    # Already absolute path
-    src=$file_path
-  else
-    # Relative path from dotfiles directory
-    src="$dotfiles_dir/$file_path"
-  fi
-  
-  src=$src:A
-  fullpath_dotfiles_dir=$dotfiles_dir:A
-  
-  # Ensure the file is within the dotfiles directory
-  if [[ "$src" != "$fullpath_dotfiles_dir"* ]]; then
-    error "File $src is not within dotfiles directory $fullpath_dotfiles_dir"
-    exit 1
-  fi
-  
-  # Calculate the relative path within dotfiles
-  relative_path="${src#$fullpath_dotfiles_dir/}"
-  home_path="$HOME/$relative_path"
+  # Input is now expected to be a path relative to HOME (already normalized)
+  local home_relative_path="$1"
+  local fullpath_dotfiles_dir="${dotfiles_dir:A}"
+
+  # Construct paths from home-relative path
+  src="${dotfiles_dir}/${home_relative_path}"
+  src="${src:A}"
+  home_path="${HOME}/${home_relative_path}"
+  home_path="${home_path:A}"
   
   info_nonl "untracking $src (home: $home_path) .."
   
@@ -429,11 +455,11 @@ function untrack_if_needed(){
     fi
     
     # Remove from git and filesystem
-    safe_git -C "$dotfiles_dir" rm "$relative_path"
+    safe_git -C "$dotfiles_dir" rm "$home_relative_path"
     action ".. Removed $src from git tracking"
   elif [[ -d "$src" ]]; then
     # Handle directory removal
-    safe_git -C "$dotfiles_dir" rm -r "$relative_path"
+    safe_git -C "$dotfiles_dir" rm -r "$home_relative_path"
     action ".. Removed directory $src from git tracking"
   else
     error ".. File $src does not exist"
@@ -488,6 +514,83 @@ if [[ `uname` == "Darwin" ]]; then
   findoptd+=("-s")
 fi
 
+# Normalize all paths to be relative to home directory
+# This ensures consistent behavior whether paths are provided as absolute or relative
+if [[ ${#ingest[@]} -gt 0 ]]; then
+  local normalized_ingest=()
+  local pwd_rel_path
+  for pwd_rel_path in "${ingest[@]}"; do
+    local normalized
+    if normalized=$(normalize_path_to_home_relative "$pwd_rel_path"); then
+      normalized_ingest+=("$normalized")
+    else
+      error "Failed to normalize ingest path: $pwd_rel_path"
+      exit 1
+    fi
+  done
+  ingest=("${normalized_ingest[@]}")
+fi
+
+if [[ ${#track[@]} -gt 0 ]]; then
+  local normalized_track=()
+  local pwd_rel_path
+  for pwd_rel_path in "${track[@]}"; do
+    local normalized
+    if normalized=$(normalize_path_to_home_relative "$pwd_rel_path"); then
+      normalized_track+=("$normalized")
+    else
+      error "Failed to normalize track path: $pwd_rel_path"
+      exit 1
+    fi
+  done
+  track=("${normalized_track[@]}")
+fi
+
+if [[ ${#untrack[@]} -gt 0 ]]; then
+  local normalized_untrack=()
+  local pwd_rel_path
+  for pwd_rel_path in "${untrack[@]}"; do
+    local normalized
+    if normalized=$(normalize_path_to_home_relative "$pwd_rel_path"); then
+      normalized_untrack+=("$normalized")
+    else
+      error "Failed to normalize untrack path: $pwd_rel_path"
+      exit 1
+    fi
+  done
+  untrack=("${normalized_untrack[@]}")
+fi
+
+if [[ ${#unpack_files[@]} -gt 0 ]]; then
+  local normalized_unpack=()
+  local pwd_rel_path
+  for pwd_rel_path in "${unpack_files[@]}"; do
+    local normalized
+    if normalized=$(normalize_path_to_home_relative "$pwd_rel_path"); then
+      normalized_unpack+=("$normalized")
+    else
+      error "Failed to normalize unpack path: $pwd_rel_path"
+      exit 1
+    fi
+  done
+  unpack_files=("${normalized_unpack[@]}")
+fi
+
+if [[ ${#force_unpack_files[@]} -gt 0 ]]; then
+  local normalized_force_unpack=()
+  local pwd_rel_path
+  for pwd_rel_path in "${force_unpack_files[@]}"; do
+    local normalized
+    if normalized=$(normalize_path_to_home_relative "$pwd_rel_path"); then
+      normalized_force_unpack+=("$normalized")
+    else
+      error "Failed to normalize force_unpack path: $pwd_rel_path"
+      exit 1
+    fi
+  done
+  force_unpack_files=("${normalized_force_unpack[@]}")
+fi
+
 # Ingest is track + unpack
 if [[ ${#ingest[@]} -gt 0 ]]; then
   unpack=("-u")
@@ -499,8 +602,9 @@ fi
 if [[ ${#track[@]} -gt 0 ]]; then
   for file in ${track[@]}; do
     info "Copying in file $file"
-    copy_if_needed $file || exit 1
-    safe_git -C $dotfiles_dir add $file
+    copy_in_if_needed $file || exit 1
+    # Git add needs the path relative to dotfiles directory
+    safe_git -C $dotfiles_dir add "$file"
   done
 fi
 
@@ -519,9 +623,16 @@ if [[ ${#setup[@]} -gt 0 ]]; then
   files=(${(f)find_output})
   for file in "${files[@]}"; do
     [[ -n "$file" ]] || continue
-    copy_if_needed "$file" || exit 1
-    link_if_needed "$file" || exit 1
-    safe_git -C $dotfiles_dir add -A
+    # Normalize the path to be home-relative
+    local normalized
+    if normalized=$(normalize_path_to_home_relative "$file"); then
+      copy_in_if_needed "$normalized" || exit 1
+      # For link_if_needed, we need the full dotfiles path
+      link_if_needed "${dotfiles_dir}/${normalized}" || exit 1
+      safe_git -C $dotfiles_dir add -A
+    else
+      warn "Skipping file that is not under home: $file"
+    fi
   done
 fi
 
@@ -529,46 +640,29 @@ fi
 if [[ ${#unpack[@]} -gt 0 ]]; then
   # Check if specific files were provided
   if [[ ${#unpack_files[@]} -gt 0 ]]; then
-    # Unpack specific files
+    # Unpack specific files (now using home-relative paths)
     info "Linking specific files: ${unpack_files[*]}"
     for target_file in ${unpack_files[@]}; do
       # Skip empty entries
       [[ -z "$target_file" ]] && continue
-      
+
+      # target_file is now a home-relative path, construct dotfiles path
+      local dotfiles_file="${dotfiles_dir}/${target_file}"
+
       # Check if file exists in dotfiles directory
-      if [[ ! -f "$dotfiles_dir/$target_file" ]] && [[ ! -d "$dotfiles_dir/$target_file" ]]; then
+      if [[ ! -f "$dotfiles_file" ]] && [[ ! -d "$dotfiles_file" ]]; then
         warn "File not found in dotfiles directory: $target_file"
         continue
       fi
-      
+
       # Check if file should be excluded (only for regular unpack, not force unpack)
-      if should_exclude_file "$dotfiles_dir/$target_file"; then
+      if should_exclude_file "$dotfiles_file"; then
         report "Skipping excluded file: $target_file (use -U to force unpack)"
         continue
       fi
-      
-      file_found=false
-      
-      # Check if it's a direct match in dotfiles_dir
-      if [[ -f "$dotfiles_dir/$target_file" ]]; then
-        link_if_needed "$dotfiles_dir/$target_file" || exit 1
-        file_found=true
-      else
-        # Search for the file in subdirectories
-        local find_output files
-        find_output=$(find $findoptd $dotfiles_dir $findopt -name "$target_file" -type f $exclude_args)
-        files=(${(f)find_output})
-        for file in "${files[@]}"; do
-          [[ -n "$file" ]] || continue
-          link_if_needed "$file" || exit 1
-          file_found=true
-        done
-      fi
-      
-      if [[ "$file_found" == "false" ]]; then
-        error "File $target_file not found in dotfiles directory"
-        exit 1
-      fi
+
+      # Link the file
+      link_if_needed "$dotfiles_file" || exit 1
     done
   else
     # Unpack all files (existing behavior)
@@ -594,34 +688,23 @@ fi
 if [[ ${#force_unpack[@]} -gt 0 ]]; then
   # Check if specific files were provided
   if [[ ${#force_unpack_files[@]} -gt 0 ]]; then
-    # Force unpack specific files (ignore exclusions)
+    # Force unpack specific files (ignore exclusions, now using home-relative paths)
     info "Force linking specific files (ignoring exclusions): ${force_unpack_files[*]}"
     for target_file in ${force_unpack_files[@]}; do
       # Skip empty entries
       [[ -z "$target_file" ]] && continue
-      
-      file_found=false
-      
-      # Check if it's a direct match in dotfiles_dir
-      if [[ -f "$dotfiles_dir/$target_file" ]]; then
-        link_if_needed "$dotfiles_dir/$target_file" || exit 1
-        file_found=true
-      else
-        # Search for the file in subdirectories (without exclusions)
-        local find_output files
-        find_output=$(find $findoptd $dotfiles_dir $findopt -name "$target_file" -type f)
-        files=(${(f)find_output})
-        for file in "${files[@]}"; do
-          [[ -n "$file" ]] || continue
-          link_if_needed "$file" || exit 1
-          file_found=true
-        done
-      fi
-      
-      if [[ "$file_found" == "false" ]]; then
-        error "File $target_file not found in dotfiles directory"
+
+      # target_file is now a home-relative path, construct dotfiles path
+      local dotfiles_file="${dotfiles_dir}/${target_file}"
+
+      # Check if file exists in dotfiles directory
+      if [[ ! -f "$dotfiles_file" ]] && [[ ! -d "$dotfiles_file" ]]; then
+        error "File not found in dotfiles directory: $target_file"
         exit 1
       fi
+
+      # Link the file (no exclusion check for force unpack)
+      link_if_needed "$dotfiles_file" || exit 1
     done
   else
     # Force unpack all files (ignore exclusions)
