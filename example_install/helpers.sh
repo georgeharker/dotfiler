@@ -266,7 +266,7 @@ activate_global_python_venv() {
 
 pip_packages_installed() {
     for package in "$@"; do
-        uv pip show "$package" || return 1
+        uv pip show "${package%\[[a-zA-Z_]*\]}" &>/dev/null || return 1
     done
     return 0
 }
