@@ -537,8 +537,8 @@ if [[ ${#ingest[@]} -gt 0 ]]; then
   local normalized_ingest=()
   local pwd_rel_path
   for pwd_rel_path in "${ingest[@]}"; do
-    local normalized
-    if normalized=$(normalize_path_to_home_relative "$pwd_rel_path") >/dev/null; then
+    local normalized=$(normalize_path_to_home_relative "$pwd_rel_path")
+    if [[ $? -eq 0 ]]; then
       normalized_ingest+=("$normalized")
     else
       error "Failed to normalize ingest path: $pwd_rel_path"
@@ -552,8 +552,8 @@ if [[ ${#track[@]} -gt 0 ]]; then
   local normalized_track=()
   local pwd_rel_path
   for pwd_rel_path in "${track[@]}"; do
-    local normalized
-    if normalized=$(normalize_path_to_home_relative "$pwd_rel_path") >/dev/null; then
+    local normalized=$(normalize_path_to_home_relative "$pwd_rel_path")
+    if [[ $? -eq 0 ]]; then
       normalized_track+=("$normalized")
     else
       error "Failed to normalize track path: $pwd_rel_path"
@@ -567,8 +567,8 @@ if [[ ${#untrack[@]} -gt 0 ]]; then
   local normalized_untrack=()
   local pwd_rel_path
   for pwd_rel_path in "${untrack[@]}"; do
-    local normalized
-    if normalized=$(normalize_path_to_home_relative "$pwd_rel_path") >/dev/null; then
+    local normalized=$(normalize_path_to_home_relative "$pwd_rel_path")
+    if [[ $? -eq 0 ]]; then
       normalized_untrack+=("$normalized")
     else
       error "Failed to normalize untrack path: $pwd_rel_path"
@@ -582,9 +582,9 @@ if [[ ${#unpack_files[@]} -gt 0 ]]; then
   local normalized_unpack=()
   local pwd_rel_path
   for pwd_rel_path in "${unpack_files[@]}"; do
-    local normalized
     # NOTE: unpack is an implicitly home relative path
-    if normalized=$(normalize_path_to_home_relative "$pwd_rel_path" 1) >/dev/null; then
+    local normalized=$(normalize_path_to_home_relative "$pwd_rel_path" 1)
+    if [[ $? -eq 0 ]]; then
       normalized_unpack+=("$normalized")
     else
       error "Failed to normalize unpack path: $pwd_rel_path"
@@ -598,9 +598,9 @@ if [[ ${#force_unpack_files[@]} -gt 0 ]]; then
   local normalized_force_unpack=()
   local pwd_rel_path
   for pwd_rel_path in "${force_unpack_files[@]}"; do
-    local normalized
     # NOTE: unpack is an implicitly home relative path
-    if normalized=$(normalize_path_to_home_relative "$pwd_rel_path" 1) >/dev/null; then
+    local normalized=$(normalize_path_to_home_relative "$pwd_rel_path" 1)
+    if [[ $? -eq 0 ]]; then
       normalized_force_unpack+=("$normalized")
     else
       error "Failed to normalize force_unpack path: $pwd_rel_path"
