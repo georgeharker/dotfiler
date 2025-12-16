@@ -180,27 +180,37 @@ pretty_dotfiles_dir=`print -D $dotfiles_dir:P`
 # Returns empty string if path is not under $HOME
 function normalize_path_to_home_relative(){
   local input_path="$1"
+  local force_home_rel="${2:-0}"
   local fullpath_home="${HOME:A}"
   local abs_path
 
   # Skip empty paths
   [[ -z "$input_path" ]] && return 1
 
+  # NOTE: we must take care not to resolve symlinks that would point
+  # back at dotfiles
+
   # Convert to absolute path
   if [[ "$input_path" == /* ]]; then
     # Already absolute
-    abs_path="${input_path:A}"
+    abs_path="${input_path:a}"
   else
-    # Relative path - resolve relative to CWD
-    # Check if file exists relative to CWD
-    if [[ -e "$input_path" ]]; then
-      abs_path="${input_path:A}"
+    if [ $force_home_rel -eq 1 ]; then
+      # Force relative to home directory
+      abs_path="${fullpath_home}/${input_path}"
+      abs_path="${abs_path:a}"
     else
-      # File doesn't exist yet, but we still need to normalize the path
-      # Resolve it relative to CWD
-      abs_path="${PWD:A}/${input_path}"
-      # Normalize the path (resolve .. and . components)
-      abs_path="${abs_path:A}"
+      # Relative path - resolve relative to CWD
+      # Check if file exists relative to CWD
+      if [[ -e "$input_path" ]]; then
+        abs_path="${input_path:a}"
+      else
+        # File doesn't exist yet, but we still need to normalize the path
+        # Resolve it relative to CWD
+        abs_path="${PWD:A}/${input_path}"
+        # Normalize the path (resolve .. and . components)
+        abs_path="${abs_path:a}"
+      fi
     fi
   fi
 
@@ -208,11 +218,11 @@ function normalize_path_to_home_relative(){
   if [[ "$abs_path" == "$fullpath_home/"* ]]; then
     # Return relative path from home (without leading /)
     local rel_path="${abs_path#$fullpath_home/}"
-    echo "$rel_path"
+    print -r -- "$rel_path"
     return 0
   else
     # Path is not under home directory
-    warn "Path $input_path (resolves to $abs_path) is not under home directory ($fullpath_home)"
+    warn "Path $input_path (resolves to $abs_path) is not under home directory ($fullpath_home)" > /dev/stderr
     return 1
   fi
 }
@@ -514,6 +524,13 @@ if [[ `uname` == "Darwin" ]]; then
   findoptd+=("-s")
 fi
 
+# Ingest is track + unpack
+if [[ ${#ingest[@]} -gt 0 ]]; then
+  unpack=("-u")
+  unpack_files+=("${ingest[@]}")
+  track+=("${ingest[@]}")
+fi
+
 # Normalize all paths to be relative to home directory
 # This ensures consistent behavior whether paths are provided as absolute or relative
 if [[ ${#ingest[@]} -gt 0 ]]; then
@@ -566,7 +583,8 @@ if [[ ${#unpack_files[@]} -gt 0 ]]; then
   local pwd_rel_path
   for pwd_rel_path in "${unpack_files[@]}"; do
     local normalized
-    if normalized=$(normalize_path_to_home_relative "$pwd_rel_path"); then
+    # NOTE: unpack is an implicitly home relative path
+    if normalized=$(normalize_path_to_home_relative "$pwd_rel_path" 1); then
       normalized_unpack+=("$normalized")
     else
       error "Failed to normalize unpack path: $pwd_rel_path"
@@ -581,7 +599,8 @@ if [[ ${#force_unpack_files[@]} -gt 0 ]]; then
   local pwd_rel_path
   for pwd_rel_path in "${force_unpack_files[@]}"; do
     local normalized
-    if normalized=$(normalize_path_to_home_relative "$pwd_rel_path"); then
+    # NOTE: unpack is an implicitly home relative path
+    if normalized=$(normalize_path_to_home_relative "$pwd_rel_path" 1); then
       normalized_force_unpack+=("$normalized")
     else
       error "Failed to normalize force_unpack path: $pwd_rel_path"
@@ -591,12 +610,6 @@ if [[ ${#force_unpack_files[@]} -gt 0 ]]; then
   force_unpack_files=("${normalized_force_unpack[@]}")
 fi
 
-# Ingest is track + unpack
-if [[ ${#ingest[@]} -gt 0 ]]; then
-  unpack=("-u")
-  unpack_files+=("${ingest[@]}")
-  track+=("${ingest[@]}")
-fi
 
 # Copy in files
 if [[ ${#track[@]} -gt 0 ]]; then
