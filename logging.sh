@@ -23,6 +23,7 @@ function cleanup_logging(){
 # Helper output functions that respect quiet_mode
 function verbose(){
     [[ "$verbose_mode" = true ]] && print -P "$@"
+    return 0
 }
 
 function info(){
