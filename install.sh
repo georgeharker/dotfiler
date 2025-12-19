@@ -41,6 +41,7 @@ fi
 # Detect operating system
 detect_os
 # Global array for final instructions
+declare -aU final_instructions
 final_instructions=()
 
 # Function to add final instructions from modules
@@ -84,6 +85,7 @@ main() {
     
     # Display accumulated final instructions
     if [[ ${#final_instructions[@]} -gt 0 ]]; then
+        print "${final_instructions[@]}"
         echo "Next steps:"
         local step_num=1
         for instruction in "${final_instructions[@]}"; do
