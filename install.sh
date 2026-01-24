@@ -24,16 +24,31 @@ source "$install_dir/helpers.sh"
 
 zmodload zsh/zutil
 zparseopts -D -E - f=force -force=force \
-                   h=help -help=help
+                   h=help -help=help \
+                   p:=profile -profile:=profile
 
 FORCE_INSTALL=$(( ${#force[@]} > 0 ))
+
+# Set profile from CLI arg, falling back to environment variable
+if [[ ${#profile[@]} -gt 0 ]]; then
+    INSTALL_PROFILE="${profile[2]}"
+fi
+export INSTALL_PROFILE="${INSTALL_PROFILE:-full}"
 
 if [[ ${#help[@]} -gt 0 ]]; then
     echo "Usage: $0 [options]"
     echo ""
     echo "Options:"
-    echo "  -f, --force    : Force reinstallation of all components"
-    echo "  -h, --help     : Show this help message"
+    echo "  -f, --force       : Force reinstallation of all components"
+    echo "  -p, --profile NAME: Installation profile (default: full)"
+    echo "                      Profiles: full, minimal, work, embedded"
+    echo "  -h, --help        : Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  $0                    # Full installation (default)"
+    echo "  $0 --profile work     # Work profile"
+    echo "  $0 -p embedded        # Embedded/minimal systems"
+    echo "  INSTALL_PROFILE=work $0  # Using environment variable"
     echo ""
     exit 0
 fi
@@ -56,6 +71,7 @@ load_install_modules "$install_dir"
 main() {
     echo "Starting modular dotfiles installation..."
     echo "Operating System: $DOTFILES_OS"
+    echo "Install Profile: $INSTALL_PROFILE"
     echo ""
 
     # Execute modules in filename order (collected during loading)

@@ -14,9 +14,16 @@ install_dir=$(find_dotfiles_install_directory)
 # Parse opts
 zmodload zsh/zutil
 zparseopts -D -E - f=force -force=force \
-                   h=help -help=help
+                   h=help -help=help \
+                   p:=profile -profile:=profile
 
 FORCE_INSTALL=$(( ${#force[@]} > 0 ))
+
+# Set profile from CLI arg, falling back to environment variable
+if [[ ${#profile[@]} -gt 0 ]]; then
+    INSTALL_PROFILE="${profile[2]}"
+fi
+export INSTALL_PROFILE="${INSTALL_PROFILE:-full}"
 
 # Global array for final instructions (same as install.sh)
 final_instructions=()
@@ -27,16 +34,18 @@ add_final_instruction() {
 }
 
 if [[ $# -eq 0 || ${#help[@]} -gt 0 ]]; then
-    echo "Usage: $0 <module_name> [function_name]"
+    echo "Usage: $0 [options] <module_name> [function_name]"
     echo ""
-    echo "  -f, --force   : Force reinstallation of all components"
-    echo "  -h, --help    : Show this help message"
-    echo "  module_name   : Name of the module to run"
-    echo "  function_name : Optional specific function to run (defaults to main module function)"
+    echo "  -f, --force       : Force reinstallation of all components"
+    echo "  -p, --profile NAME: Installation profile (default: full)"
+    echo "  -h, --help        : Show this help message"
+    echo "  module_name       : Name of the module to run"
+    echo "  function_name     : Optional specific function to run (defaults to main module function)"
     echo ""
     echo "Examples:"
-    echo "  $0 development-tools                    # Run all development tools"
-    echo "  $0 development-tools install_github_cli # Run only GitHub CLI installation"
+    echo "  $0 development-tools                    # Run all development tools (respects profile)"
+    echo "  $0 --profile work applications          # Run applications module with work profile"
+    echo "  $0 development-tools install_github_cli # Run specific function (bypasses profile)"
     echo ""
     list_available_modules "$install_dir"
     exit 1
