@@ -1,7 +1,4 @@
 #!/bin/zsh
-# Package manager setup
-# Module self-identification
-module_filename="${(%):-%x}"
 
 # Module identification
 module_name="package-manager"
@@ -37,10 +34,10 @@ setup_fonts() {
             tar xvf Meslo.tar.xz -C ~/.local/share/fonts/
             pushd ~/.local/share/fonts
             fc-cache -fv
-            popd  # Back to /tmp
-            popd  # Back to original directory
+            popd # Back to /tmp
+            popd # Back to original directory
         else
-            info "Nerd Fonts already installed."
+            verbose "Nerd Fonts already installed."
         fi
     fi
 }

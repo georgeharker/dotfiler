@@ -39,6 +39,38 @@ print_subsection() {
     echo "--- $1 ---"
 }
 
+## Profile-based installation filtering
+
+# Default to 'full' if not specified
+INSTALL_PROFILE="${INSTALL_PROFILE:-full}"
+
+# Check if current profile matches any of the given profiles
+# Returns 0 (success) if profile matches, 1 otherwise
+# Usage: check_profile full work && install_something
+check_profile() {
+    local target_profiles="$@"
+
+    for profile in $target_profiles; do
+        if [[ "$INSTALL_PROFILE" == "$profile" ]]; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+# Check if current profile does NOT match any of the given profiles
+# Returns 0 (success) if profile doesn't match, 1 if it does
+# Usage: check_profile_not embedded minimal && install_gui_app
+check_profile_not() {
+    ! check_profile "$@"
+}
+
+# Helper to display current profile (for debugging)
+show_profile() {
+    echo "Current install profile: $INSTALL_PROFILE"
+}
+
 ## package based installs
 
 ensure_homebrew() {
@@ -87,7 +119,7 @@ install_package() {
                         brew install --cask "$package"
                     fi
                 else
-                    info "Package $package already installed"
+                    verbose "Package $package already installed"
                 fi
             done
         else
@@ -100,7 +132,7 @@ install_package() {
                         brew install "$package"
                     fi
                 else
-                    info "Package $package already installed"
+                    verbose "Package $package already installed"
                 fi
             done
         fi
@@ -114,7 +146,7 @@ install_package() {
                     sudo apt-get install -y "$package"
                 fi
             else
-                info "Package $package already installed"
+                verbose "Package $package already installed"
             fi
         done
     fi
@@ -137,14 +169,14 @@ ensure_git() {
         action "Installing git dependency..."
         install_package git 
     else
-        info "git already installed"
+        verbose "git already installed"
     fi
     if ! check_command git-lfs; then
         action "Installing git-lfs dependency..."
         install_package git-lfs
         git-lfs install
     else
-        info "git-lfs already installed"
+        verbose "git-lfs already installed"
     fi
 }
 
@@ -176,27 +208,81 @@ install_using_git() {
         [[ -n "${post_install}" ]] && "${post_install}"
         info "${package_name} installed from git"
     else
-        info "${package_name} already installed"
+        verbose "${package_name} already installed"
     fi
 }
 
 ## node based installs
 
-# Smart dependency helpers - ensure prerequisites are met
-ensure_nodejs() {
-    if ! check_command node && ! check_command nodejs; then
-        action "Installing Node.js dependency..."
-        if [[ "$DOTFILES_OS" == "Darwin" ]]; then
-            install_package nodejs npm
-        else
-            curl -fsSL https://deb.nodesource.com/setup_25.x | sudo bash -
-            # Via nodesource npm will be installed by nodejs
-            install_package nodejs
+activate_nvm() {
+    if [[ -s "${NVM_DIR}/nvm.sh" ]]; then
+        export NVM_DIR="${HOME}/.local/share/nvm"
+        source "${NVM_DIR}/nvm.sh"
+        if ! nvm use node &> /dev/null; then
+            nvm install node && source "${NVM_DIR}/nvm.sh"
         fi
     fi
 }
 
+uninstall_nodesource_js() {
+    if [[ -f /etc/apt/sources.list.d/nodesource.list ]] || check_package nodejs; then
+        activate_nvm
+        if check_command nvm; then
+            nvm use system &> /dev/null || return 0
+        fi
+        sudo rm /etc/apt/sources.list.d/nodesource.list
+        local post_install_cmd=$(npm list -g -p | \
+                                 tail -n +2 | \
+                                 sed -e "s|^$(npm prefix -g)/lib/node_modules/||g" \
+                                     -e "s/^npm$//g" -e "s/^tls-test$//g" | \
+                                 xargs echo "sudo npm uninstall -g")
+        if [[ ! "${post_install_cmd}" =~ " "* ]]; then
+            add_final_instruction "Clean up old npm install:\n    ${post_install_cmd}"
+            add_final_instruction "sudo apt-get remove nodejs npm"
+        fi
+    fi
+}
+
+uninstall_brew_nodejs() {
+    if check_command npm; then
+        activate_nvm
+        if check_command nvm; then
+            nvm use system &> /dev/null || return 0
+        fi
+        local post_install_cmd=$(npm list -g -p | \
+                                 tail -n +2 | \
+                                 sed -e "s|^$(npm prefix -g)/lib/node_modules/||g" \
+                                     -e "s/^npm$//g" -e "s/^tls-test$//g" | \
+                                 xargs echo "sudo npm uninstall -g")
+        if [[ ! "${post_install_cmd}" =~ " "* ]]; then
+            add_final_instruction "Clean up old npm install:\n    ${post_install_cmd}"
+            add_final_instruction "sudo apt-get remove nodejs npm"
+        fi
+        # brew remove node
+    fi
+}
+
+uninstall_system_nodejs() {
+    if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+        uninstall_brew_nodejs
+    else
+        uninstall_nodesource_js
+    fi
+}
+
+# Smart dependency helpers - ensure prerequisites are met
+ensure_nodejs() {
+    export NVM_DIR="${HOME}/.local/share/nvm"
+    mkdir -p "${NVM_DIR}"
+    if [[ ! -s "${NVM_DIR}/nvm.sh" ]]; then
+        action "Installing Node.js dependency..."
+        PROFILE=/dev/null curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+    fi
+    activate_nvm
+}
+
 npm_package_installed() {
+    ensure_nodejs
     npm list -g --depth=0 "$1" &> /dev/null
 }
 
@@ -212,12 +298,12 @@ install_npm_package() {
     if ! check_npm_package "$package_name"; then
         action "Installing npm package: $package_name"
         if npm_package_installed "${package_name}"; then
-            sudo npm install -f -g "$package_name"
+            npm install -f -g "$package_name"
         else
-            sudo npm install -g "$package_name"
+            npm install -g "$package_name"
         fi
     else
-        info "npm package $package_name already installed"
+        verbose "npm package $package_name already installed"
     fi
 }
 
@@ -237,16 +323,19 @@ ensure_uv() {
         echo "Installing uv dependency..."
         curl -LsSf https://astral.sh/uv/install.sh | sh
     fi
-    source "$HOME/.local/bin/env"
+    [[ -f "$HOME/.local/bin/env" ]] && source "$HOME/.local/bin/env"
+    return 0
 }
 
 ensure_python3() {
     ensure_uv
-    if ! check_command python3; then
+    if ! check_command "python${brew_python_version}"; then
         echo "Installing Python3 dependency..."
         if [[ "$DOTFILES_OS" == "Darwin" ]]; then
             # On OSX prefer homebrew installs to ensure library compatibility
             install_package "python@${brew_python_version}"
+            rehash
+            python_version=`which "python${brew_python_version}"`
         fi
         uv python install "${managed_python}" --preview-features python-install-default --default "${python_version}"
     fi
@@ -287,14 +376,14 @@ pip_install() {
             uv pip install "$@"
         fi
     else
-        info "python packages $@ already installed"
+        verbose "python packages $@ already installed"
     fi
 }
 
 ## cargo based
 
 ensure_rust() {
-    if ! check_command cargo; then
+    if ! (check_command cargo && check_command rustc); then
         action "Installing Rust dependency..."
         curl https://sh.rustup.rs -sSf | sh -s -- --no-modify-path --default-toolchain stable --profile minimal -y
         source ~/.cargo/env
@@ -304,6 +393,7 @@ ensure_rust() {
 }
 
 ensure_deb_packages() {
+    ensure_git
     if [[ ! -d ~/ext/debian-packages ]]; then
         if [[ "$DOTFILES_OS" == "Darwin" ]]; then
             action "Skipping deb package installation on macOS"
@@ -312,6 +402,7 @@ ensure_deb_packages() {
             install_using_git debian-packages git@github.com:georgeharker/debian-packages.git ~/ext/debian-packages
         fi
     fi
+    git -C ~/ext/debian-packages/ pull
 }
 
 install_deb_package() {
@@ -351,7 +442,7 @@ check_cargo_crate() {
 
 install_cargo_package() {
     local package_name="$1"
-    if ! check_cargo_crate "${package_name}"; then
+    if ! ( check_command cargo && check_cargo_crate "${package_name}" ); then
         if ! install_deb_package "${package_name}"; then
             action "Installing cargo package: ${package_name}"
             if cargo_crate_installed "${package_name}"; then
@@ -361,7 +452,7 @@ install_cargo_package() {
             fi
         fi
     else
-        info "Cargo package ${package_name} already installed"
+        verbose "Cargo package ${package_name} already installed"
     fi
 }
 

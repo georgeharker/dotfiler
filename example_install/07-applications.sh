@@ -8,7 +8,8 @@ module_main_function="run_applications_module"
 
 # Main function for this module
 run_applications_module() {
-    install_tailscale
+    # Tailscale: skip for embedded systems and work environments
+    check_profile_not work && install_tailscale
     install_network_utils
 }
 
@@ -21,7 +22,7 @@ install_tailscale() {
             curl -fsSL https://tailscale.com/install.sh | sh
         fi
     else
-        info "Tailscale already installed"
+        verbose "Tailscale already installed"
     fi
 }
 
@@ -30,7 +31,20 @@ install_network_utils() {
     if [[ "$DOTFILES_OS" == "Darwin" ]]; then
         install_package iproute2mac
     else
-        info "iproute2 already available on Linux systems"
+        verbose "iproute2 already available on Linux systems"
     fi
 }
 
+install_karabiner() {
+    if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+        action "Installing Karabiner-Elements..."
+        install_package karabiner-elements
+    fi
+}
+
+install_terminal_notifier() {
+    if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+        action "Installing terminal-notifier..."
+        install_package terminal-notifier
+    fi
+}

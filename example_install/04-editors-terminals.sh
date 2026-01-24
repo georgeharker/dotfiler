@@ -25,11 +25,12 @@ install_terminal_apps() {
 }
 
 install_custom_tmux() {
+    install_package libutempter-dev
     if ! install_deb_package tmux; then
         action "Building custom tmux..."
         mkdir -p ~/ext
         mkdir -p ~/ext/deb
-        
+
         sudo dpkg -r tmux || echo "No local tmux installed"
         if [[ ! -f ~/ext/tmux-deb/tmux_3.5a-1_arm64.deb ]] || force_install; then
             info "Building tmux from source..."
@@ -91,6 +92,8 @@ install_ohmyposh() {
         mkdir -p ~/bin
         if ! check_command oh-my-posh; then
             curl -s https://ohmyposh.dev/install.sh | bash -s -- -d ~/bin
+        else
+            verbose "oh-my-posh already installed"
         fi
     fi
 }

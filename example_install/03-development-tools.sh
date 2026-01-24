@@ -17,7 +17,7 @@ run_development_tools_module() {
 install_git_delta() {
     action "Installing git-delta..."
     ensure_rust
-    
+
     if [[ "$DOTFILES_OS" == "Darwin" ]]; then
         install_package git-delta
     else
@@ -29,7 +29,7 @@ install_development_tools() {
     action "Installing development tools..."
     # Common tools for both platforms
     install_package cmake autoconf automake pkg-config gettext bison unzip
-    
+
     # Language and core tools
     install_package python3 jq
 
@@ -42,15 +42,15 @@ install_development_tools() {
         install_package ninja-build
         # xsel is Linux-only (X11 clipboard utility)
         install_package xsel
-        
+
         # Linux-specific packages
         install_package python3-pip
-        install_package libevent-2.1-7 libevent-dev
+        install_package libevent-dev
         install_package libncurses6 libncurses-dev
         install_package curl build-essential
 
         install_package lua5.1 luarocks
-        
+
         # git-delta eza will be installed via cargo in rust section
     fi
 }
@@ -72,6 +72,6 @@ install_github_cli() {
             && sudo apt install gh -y
         fi
     else
-        info "GitHub CLI already installed"
+        verbose "GitHub CLI already installed"
     fi
 }

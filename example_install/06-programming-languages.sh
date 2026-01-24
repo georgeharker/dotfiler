@@ -10,11 +10,15 @@ module_main_function="run_programming_languages_module"
 run_programming_languages_module() {
     install_python_environment
     ensure_rust
+    uninstall_system_nodejs
     ensure_nodejs
     install_claude
     install_copilot
-    install_treesitter
+    install_gemini
+    install_opencode
     install_jupyter
+    install_mcphub
+    install_opsdk
 }
 
 install_python_environment() {
@@ -22,7 +26,7 @@ install_python_environment() {
     ensure_uv
     # Ensure Python3 is available
     ensure_python3
-    
+
     # Python virtual environment
     ensure_global_python_venv
 
@@ -32,11 +36,12 @@ install_python_environment() {
 install_basic_python_packages() {
     action "Installing Python packages..."
 
+    ensure_uv
     activate_global_or_local_python_venv
     pip_install mypy pynvim neovim
     pip_install 'python-lsp-server[all]' pylsp-mypy
     pip_install flake8 flake8-bugbear flake8-comprehensions flake8-builtins flake8-import-order
-    
+
     deactivate
 }
 
@@ -51,6 +56,21 @@ install_copilot() {
     install_npm_package @github/copilot
 }
 
+install_opencode() {
+    action "Installing opencode Node.js packages..."
+    install_npm_package opencode-ai
+}
+
+install_gemini() {
+    action "Installing gemini-cli Node.js packages..."
+    install_npm_package @google/gemini-cli
+}
+
+install_mcphub() {
+    action "Install mcphub Node.js packages..."
+    install_npm_package mcp-hub
+}
+
 install_treesitter() {
     action "Installing tree-sitter Node.js packages..."
     install_npm_package tree-sitter-cli
@@ -59,7 +79,7 @@ install_treesitter() {
 install_jupyter() {
     action "Installing jupyter packages..."
     install_package jupyter
-    
+
     ensure_global_python_venv
     activate_global_or_local_python_venv
 
@@ -76,7 +96,7 @@ install_pytorch() {
     activate_global_or_local_python_venv
 
     pip_install torch torchvision torchaudio torchcodec
-    
+
     deactivate
 }
 
@@ -87,7 +107,7 @@ install_datascience() {
     activate_global_or_local_python_venv
 
     pip_install matplotlib pandas numpy scipy
-    
+
     deactivate
 }
 
@@ -98,6 +118,6 @@ install_opsdk() {
     activate_global_or_local_python_venv
 
     pip_install onepassword-sdk
-    
+
     deactivate
 }

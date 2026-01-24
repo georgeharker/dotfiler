@@ -10,12 +10,12 @@ module_main_function="run_post_install_module"
 run_post_install_module() {
     configure_neovim
     configure_system
-    
+
     # Add final instructions
-    add_final_instruction "Run 'claude setup-token' to configure Claude CLI" 
+    add_final_instruction "Run 'claude setup-token' to configure Claude CLI"
     add_final_instruction "Restart your shell or run 'source ~/.zshrc'"
     add_final_instruction "Configure your terminal to use the installed Nerd Font"
-    
+
     if [[ "$DOTFILES_OS" != "Darwin" ]]; then
         add_final_instruction "Enable X11Forwarding in /etc/ssh/sshd_config if needed"
     fi

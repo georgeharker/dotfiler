@@ -25,7 +25,7 @@ install_eza() {
             install_cargo_package eza
         fi
     else
-        info "eza already installed"
+        verbose "eza already installed"
     fi
 }
 
@@ -48,7 +48,7 @@ install_onepassword() {
             sudo gpg --dearmor --output /usr/share/debsig/keyrings/AC2D62742012EA22/debsig.gpg && \
             sudo apt update && sudo apt install 1password-cli
         else
-            info "1Password CLI already installed"
+            verbose "1Password CLI already installed"
         fi
     fi
 }
@@ -83,7 +83,7 @@ install_zoxide() {
             curl -sSfL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh
         fi
     else
-        info "zoxide already installed"
+        verbose "zoxide already installed"
     fi
 }
 
