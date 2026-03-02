@@ -1,266 +1,563 @@
 # Dotfiler
 
-A comprehensive zsh based dotfiles management system with automatic updates, git integration, modular installation, and both command-line and GUI interfaces.
+Keep your shell, editor, and tool config in sync across every machine you use.
+
+Dotfiler manages a git repository of your dotfiles, unpacking them as symlinks
+into your home directory. When you edit `~/.vimrc`, you're editing the file in
+your repo — commit and push, and every other machine can pull and instantly get
+the update. On a new machine, clone your repo and run one command to recreate
+every symlink.
+
+On top of that, dotfiler auto-checks for updates at login and offers to pull
+them in — so your dotfiles stay current without you having to think about it.
+
+**Why not GNU Stow?** Stow does the symlink-tree part fine. Dotfiler adds the
+auto-update-on-login loop, a modular install system for bootstrapping new
+machines (packages, languages, apps), and a GUI for exploring and managing
+tracked files. If you just want symlinks, Stow is simpler. If you want a full
+dotfile lifecycle — track, sync, install, update — dotfiler has you covered.
+
+---
 
 ## Quick Start
 
 ```bash
-# Add as git subtree to your dotfiles repository
-git subtree add --prefix=.nounpack/scripts \
-    https://github.com/your-username/dotfiler.git main --squash
-chmod +x .nounpack/scripts/dotfiler
+# Clone your dotfiles repo (or create one)
+git clone <your-repo> ~/.dotfiles && cd ~/.dotfiles
 
-# Track and link dotfiles
-.nounpack/scripts/dotfiler setup -i ~/.bashrc ~/.vimrc ~/.gitconfig
-.nounpack/scripts/dotfiler setup -u
+# Add dotfiler as a git submodule inside the repo
+git submodule add https://github.com/georgeharker/dotfiler .nounpack/dotfiler
+chmod +x .nounpack/dotfiler/dotfiler
 
-# Set up exclusions (recommended)
-cp .nounpack/scripts/dotfiles_exclude ./
+# Copy exclusionn rules
+cp ~/.dotfiles/.nounpack/dotfiler/dotfiles_exclude ~/.dotfiles/
 
-# Enable automatic updates (optional)
-echo 'source ~/.dotfiles/.nounpack/scripts/check_update.sh' >> ~/.zshrc
-```
+# Track some dotfiles and create symlinks
+.nounpack/dotfiler/dotfiler setup -i ~/.zshrc ~/.vimrc ~/.gitconfig
+.nounpack/dotfiler/dotfiler setup -u
+
+# Enable auto-update on login (add to your .zshrc)
+echo '[[ -f ~/.dotfiles/.nounpack/dotfiler/check_update.sh ]] && source ~/.dotfiles/.nounpack/dotfiler/check_update.sh' >> ~/.zshrc
+
 # Enable shell completions (optional)
-echo 'source ~/.dotfiles/.nounpack/scripts/completions.zsh' >> ~/.zshrc
+echo 'source ~/.dotfiles/.nounpack/dotfiler/completions.zsh' >> ~/.zshrc
+```
+
+---
 
 ## Installation
 
-### Git Subtree Integration (Recommended)
+### Option 1: Git Submodule (Recommended)
+
+Keeps dotfiler as a versioned dependency inside your dotfiles repo.
 
 ```bash
 cd ~/.dotfiles
-git subtree add --prefix=.nounpack/scripts \
-    https://github.com/your-username/dotfiler.git main --squash
-chmod +x .nounpack/scripts/dotfiler
+git submodule add https://github.com/georgeharker/dotfiler .nounpack/dotfiler
+chmod +x .nounpack/dotfiler/dotfiler
+git commit -m "Add dotfiler as submodule"
 ```
 
-Updates:
+To update dotfiler later:
+
 ```bash
-git subtree pull --prefix=.nounpack/scripts \
-    https://github.com/your-username/dotfiler.git main --squash
+cd ~/.dotfiles/.nounpack/dotfiler
+git pull
+cd ~/.dotfiles
+git add .nounpack/dotfiler
+git commit -m "Update dotfiler"
 ```
 
-## Main Commands
+On a new machine, after cloning your dotfiles repo:
 
 ```bash
-# Track and manage dotfiles
-dotfiler setup -i ~/.bashrc ~/.vimrc     # Track files
-dotfiler setup -u                        # Create symlinks  
-dotfiler setup -t .old-config            # Remove from tracking
-
-# Updates and GUI
-dotfiler update                          # Update from git
-dotfiler check_update -f                 # Force update check
-dotfiler gui                             # Launch GUI
-
-# Installation modules
-dotfiler install                         # Run full installation
-install_module.sh development-tools     # Run specific module
+git submodule update --init --recursive
 ```
 
-## Modular Installation System
+### Option 2: Git Subtree
 
-Set up development environments with modular components:
+Embeds dotfiler's history directly into your dotfiles repo — no submodule
+dependency at clone time.
 
 ```bash
-# Copy templates and customize (if needed)
-cp -r .nounpack/scripts/example_install/ .nounpack/scripts/install/
-vim .nounpack/scripts/install/02-shell-utils.sh
-
-# Run installation  
-.nounpack/scripts/install.sh                        # All modules
-.nounpack/scripts/install_module.sh shell-utils     # Specific module
+cd ~/.dotfiles
+git subtree add --prefix=.nounpack/dotfiler \
+    https://github.com/georgeharker/dotfiler.git main --squash
+chmod +x .nounpack/dotfiler/dotfiler
 ```
 
-Available modules:
-- `install/00-dotfiler-install.sh` - Install dotfiler command to ~/bin
-- `install/01-package-manager.sh` - Package managers and fonts
-- `install/02-shell-utils.sh` - Shell environment tools (eza, fzf, zoxide, antidote)
-- `install/03-development-tools.sh` - Development tools (git, delta, cmake)
-- `install/04-editors-terminals.sh` - Editors and shell enhancements (tmux, neovim)
-- `install/05-programming-languages.sh` - Language runtimes and tools
-- `install/06-applications.sh` - End-user applications
-- `install/07-post-install.sh` - Final configuration and cleanup
-
-**See `install/README.md` for detailed documentation of the installation system and helper functions.**
-
-**Note**: Copy templates from `example_install/` to `install/` before customizing.
-
-### Force Installation
-
-All install commands support a `-f` or `--force` flag to reinstall components:
+To update:
 
 ```bash
-# Force reinstall all modules
-.nounpack/scripts/install.sh --force
-
-# Force reinstall specific module
-.nounpack/scripts/install_module.sh shell-utils --force
+git subtree pull --prefix=.nounpack/dotfiler \
+    https://github.com/georgeharker/dotfiler.git main --squash
 ```
 
-When `--force` is not specified, installation scripts will skip items that are already installed, making subsequent runs fast and safe.
+### Option 3: Standalone Clone
 
-## Configuration Options (zstyle)
+Simplest option: just clone dotfiler somewhere and point your dotfiles at it.
 
 ```bash
-# Directory and update settings
+git clone https://github.com/georgeharker/dotfiler ~/.dotfiler
+chmod +x ~/.dotfiler/dotfiler
+```
+
+Then configure your dotfiles repo to find the scripts:
+
+```bash
+# In your .zshrc, before sourcing check_update.sh:
+zstyle ':dotfiles:scripts' path "$HOME/.dotfiler"
+```
+
+---
+
+## New Machine Setup
+
+Clone your repo and restore all symlinks in one go:
+
+```bash
+git clone <your-repo> ~/.dotfiles
+cd ~/.dotfiles
+git submodule update --init --recursive   # if using submodule
+chmod +x .nounpack/dotfiler/dotfiler .nounpack/dotfiler/*.sh
+.nounpack/dotfiler/dotfiler setup -u
+```
+
+Then optionally bootstrap your full environment:
+
+```bash
+.nounpack/dotfiler/dotfiler install
+```
+
+---
+
+## Commands
+
+### `dotfiler setup` — Track and link dotfiles
+
+```
+dotfiler setup [options]
+```
+
+| Flag | Long form | Description |
+|------|-----------|-------------|
+| `-s` | `--setup` | Auto-ingest dotfiles found under `~/` |
+| `-i path …` | `--ingest path …` | Track specific files and create symlinks |
+| `-u [file …]` | `--unpack [file …]` | Create/restore symlinks (respects exclusions) |
+| `-U [file …]` | `--force-unpack [file …]` | Force-unpack, ignoring exclusions |
+| `-t path …` | `--track path …` | Track without creating a symlink |
+| `-x path …` | `--untrack path …` | Untrack (remove from repo management) |
+| `-d` | `--diff` | Show diff between repo and home |
+| `-D` | `--dry-run` | Show what would happen without doing it |
+| `-q` | `--quiet` | Suppress non-error output |
+| `-y` | `--yes` | Default yes to all prompts |
+| `-n` | `--no` | Default no to all prompts |
+
+Examples:
+
+```bash
+dotfiler setup -i ~/.zshrc ~/.gitconfig  # Track and link specific files
+dotfiler setup -u                        # Restore all symlinks
+dotfiler setup -u -D                     # Dry run: show what unpack would do
+dotfiler setup -s -y                     # Auto-ingest, answer yes to all prompts
+dotfiler setup -x ~/.old-secret          # Stop tracking a file
+```
+
+### `dotfiler check-updates` — Check for upstream changes
+
+Usually sourced automatically at login (see [Auto-Update on Login](#auto-update-on-login)),
+but can also be run directly:
+
+```
+dotfiler check-updates [options]
+```
+
+| Flag | Long form | Description |
+|------|-----------|-------------|
+| `-f` | `--force` | Force check, ignoring the timestamp cache |
+| `-d` | `--debug` | Print debug output to stderr |
+
+```bash
+dotfiler check-updates           # Check against git remote
+dotfiler check-updates --force   # Ignore cache, check now
+dotfiler check-updates --debug   # Show what the update check is doing
+```
+
+### `dotfiler update` — Pull updates and re-link
+
+```
+dotfiler update [options]
+```
+
+| Flag | Long form | Description |
+|------|-----------|-------------|
+| `-q` | `--quiet` | Suppress non-error output |
+| `-v` | `--verbose` | Verbose output |
+| `-D` | `--dry-run` | Show what would happen without doing it |
+| `-c hash` | `--commit-hash hash` | Replay a specific commit (manual use — no `git pull`) |
+| `-r range` | `--range range` | Replay an arbitrary revision range (manual use — no `git pull`) |
+
+```bash
+dotfiler update                  # Default: fetch → diff pending commits → git pull → re-unpack
+dotfiler update -D               # Dry run — print what would change, touch nothing
+dotfiler update -c abc1234       # Replay a single commit's file changes into $HOME (no pull)
+dotfiler update -r HEAD~3..HEAD  # Replay an arbitrary range's file changes (no pull)
+```
+
+**Default mode** (`dotfiler update` with no flags) is the normal upgrade path:
+it fetches the tracked remote, computes the diff of all incoming commits, runs
+`git pull`, then re-unpacks only the files that changed. Nothing is re-linked
+unnecessarily.
+
+**`-c` / `-r` modes** are strictly for manual, surgical use — replaying a
+specific commit (or range) into `$HOME` without touching git history. They are
+never called by the auto-update machinery.
+
+`--dry-run` suppresses the pull and all filesystem writes in every mode.
+
+Only files that changed in the relevant commits get re-unpacked — fast and safe.
+If any `.nounpack/install/*.sh` scripts changed, dotfiler warns you to re-run
+`dotfiler install`.
+
+### `dotfiler install` — Bootstrap a new machine
+
+```
+dotfiler install [--force]
+dotfiler install-module <name> [--force]
+```
+
+```bash
+dotfiler install                             # Run all install modules in order
+dotfiler install --force                     # Reinstall even if already present
+dotfiler install-module shell-utils          # Run one module by name
+dotfiler install-module shell-utils --force  # Force reinstall one module
+```
+
+### `dotfiler gui` — Graphical interface
+
+```bash
+pip install -r .nounpack/dotfiler/requirements.txt
+dotfiler gui
+```
+
+GUI features:
+- **Add Mode**: Browse the filesystem and track config files
+- **Manage Mode**: View status (linked, broken, conflicted) of tracked files
+- **Batch Operations**: Select multiple files for tracking or unlinking
+
+Controls: `↑↓←→` navigate, `Space/Enter` select, `I` track, `F` file info, `Q` quit.
+
+---
+
+## Auto-Update on Login
+
+### Integration
+
+`check_update.sh` must be **sourced** (not executed) so it can interact with
+the current shell — prompt the user, run `zsh` hooks, etc.
+
+Add this to your `.zshrc`, after any `zstyle` configuration:
+
+```bash
+[[ -f ~/.dotfiles/.nounpack/dotfiler/check_update.sh ]] && \
+    source ~/.dotfiles/.nounpack/dotfiler/check_update.sh
+```
+
+That's all that's required. On each new login shell, dotfiler checks whether
+the remote has new commits, then acts based on your configured mode.
+
+If you're using the standalone install, point to the script directly:
+
+```bash
+[[ -f ~/.dotfiler/check_update.sh ]] && source ~/.dotfiler/check_update.sh
+```
+
+### Update modes
+
+Control the behaviour with `zstyle` (set this **before** the `source` line):
+
+```bash
+zstyle ':dotfiles:update' mode 'prompt'    # ask [Y/n] at login — default
+zstyle ':dotfiles:update' mode 'auto'      # pull silently, no interaction
+zstyle ':dotfiles:update' mode 'reminder'  # print a reminder only, never update
+zstyle ':dotfiles:update' mode 'disabled'  # skip the check entirely
+```
+
+| Mode | Behaviour |
+|------|-----------|
+| `prompt` | Asks `[Y/n]` at login. Default is Y. If you have already typed input when the prompt fires, shows a reminder instead. |
+| `auto` | Fetches and applies updates silently in the foreground. |
+| `reminder` | Prints a message but never pulls. Useful if you prefer manual control. |
+| `disabled` | Does nothing. No network activity. |
+
+Oh-My-Zsh users: dotfiler falls back to reading `:omz:update mode` if no
+`:dotfiles:update` mode is set. The legacy env vars `DISABLE_UPDATE_PROMPT=true`
+(→ `auto`) and `DISABLE_AUTO_UPDATE=true` (→ `disabled`) are still honoured.
+
+### Check frequency
+
+By default, dotfiler checks at most once per hour (3600 seconds). Override with:
+
+```bash
+zstyle ':dotfiles:update' frequency 86400   # once per day
+zstyle ':dotfiles:update' frequency 3600    # once per hour (default)
+```
+
+The timestamp is stored in `${XDG_CACHE_DIR:-$HOME/.cache}/dotfiles/dotfiles_update`.
+Delete that file or run `dotfiler check-updates --force` to trigger an immediate check.
+
+### How the check works
+
+1. Attempts a `git fetch` of the tracked remote and branch (silent).
+2. Compares local `HEAD` against `remote/branch` — if they differ, updates are available.
+3. If `git fetch` fails (e.g. no network): falls back to the GitHub REST API
+   (`curl`/`wget`) to compare SHAs.
+4. If no network tools are available at all: assumes updates are available (fail-open).
+
+A lock file (`~/.cache/dotfiles/update.lock`) prevents concurrent update runs.
+Locks older than 24 hours are automatically removed.
+
+#### Authenticated GitHub API requests
+
+Set `GH_TOKEN` in your environment to use an authenticated request for the
+GitHub API fallback (step 3 above). This raises the rate limit from 60 to
+5 000 requests per hour and avoids throttling on shared IP addresses:
+
+```bash
+export GH_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxx   # in .zshenv or similar
+```
+
+#### `background-alpha` mode and typed-input fallback
+
+When `mode` is `prompt`, dotfiler checks for updates in a background subshell
+so the prompt is not blocked. The result is surfaced on the **next prompt** via
+a `precmd` hook.
+
+If you have already typed input into the prompt when the result arrives,
+dotfiler will not interrupt you with an interactive `[Y/n]` question. Instead
+it falls back to a reminder message (same as `reminder` mode) and lets you
+decide when to run `dotfiler update` manually.
+
+### Skipped silently when
+
+- Mode is `disabled`
+- The dotfiles directory is not owned or writable by the current user
+- Not running in an interactive terminal (`tty` check)
+- `git` is not installed
+- The dotfiles directory is not a git repo
+
+---
+
+## Modular Install System
+
+Dotfiler includes a numbered module system for bootstrapping a full development
+environment on a new machine. Copy the example templates, customise them, then
+commit them to your dotfiles repo alongside your config.
+
+```bash
+# Copy templates into your dotfiles repo
+cp -r .nounpack/dotfiler/example_install/ .nounpack/install/
+
+# Customise as needed
+vim .nounpack/install/02-shell-utils.sh
+
+# Run all modules
+dotfiler install
+
+# Or run a single module
+dotfiler install-module shell-utils
+```
+
+Available modules (in run order):
+
+| Module | Purpose |
+|--------|---------|
+| `00-dotfiler-install.sh` | Symlink `dotfiler` command to `~/bin` |
+| `01-package-manager.sh` | Homebrew (macOS) / APT + extras (Linux), fonts |
+| `02-shell-utils.sh` | `eza`, `fzf`, `zoxide`, `antidote`, etc. |
+| `03-development-tools.sh` | `git`, `delta`, `cmake`, and friends |
+| `04-editors-terminals.sh` | `tmux`, `neovim`, terminal emulators |
+| `05-programming-languages.sh` | Language runtimes and version managers |
+| `06-applications.sh` | End-user applications |
+| `07-post-install.sh` | Final configuration and cleanup |
+
+Install scripts are idempotent by default — already-installed items are skipped.
+`--force` triggers reinstall (`brew reinstall`, `cargo install -f`, etc.).
+
+See `example_install/README.md` for full documentation of the helper functions
+available inside install modules.
+
+---
+
+## Configuration
+
+All configuration is via `zstyle`. Add these to your `.zshrc` before sourcing
+`check_update.sh`:
+
+```bash
+# Override the dotfiles repo path (default: auto-detected)
 zstyle ':dotfiles:directory' path '/path/to/dotfiles'
-zstyle ':dotfiles:scripts' directory '/path/to/scripts'     # Custom script location, may be relative to dotfiles:directory
-zstyle ':dotfiles:install' directory '/path/to/install'     # Custom install modules location, may be relative to dotfiles:directory
-zstyle ':dotfiles:exclude' path '/path/to/exclude/file'    # Override exclusions file (default: dotfiles_exclude), may be relative to dotfiles:directory
-zstyle ':dotfiles:update' mode 'auto|prompt|reminder|disabled'
-zstyle ':dotfiles:update' frequency 86400  # seconds
 
-# Shell integration - add to .zshrc/.bashrc
-[[ -f ~/.dotfiles/.nounpack/scripts/check_update.sh ]] && source ~/.dotfiles/.nounpack/scripts/check_update.sh
+# Override the scripts directory (default: .nounpack/dotfiler inside the dotfiles repo)
+# Can be an absolute path or relative to ':dotfiles:directory' path
+zstyle ':dotfiles:scripts' path '/path/to/scripts'
+
+# Override the install modules directory
+# Can be absolute or relative to ':dotfiles:directory' path
+zstyle ':dotfiles:install' directory '/path/to/install'
+
+# Override the exclusions file
+# Can be absolute or relative to ':dotfiles:directory' path
+zstyle ':dotfiles:exclude' path '/path/to/dotfiles_exclude'
+
+# Update behaviour
+zstyle ':dotfiles:update' mode 'prompt'   # auto | prompt | reminder | disabled
+zstyle ':dotfiles:update' frequency 86400 # check interval in seconds
 ```
 
-## Shell Completions
-
-Dotfiler includes zsh completions for tab completion of commands and options.
-
-### Enable Completions
-
-Add to your `.zshrc`:
-
-```bash
-# Enable dotfiler completions
-source ~/.dotfiles/.nounpack/scripts/completions.zsh
-```
-
-### Completion Features
-
-The completions provide:
-
-- **Command completion**: `dotfiler <TAB>` shows available commands (gui, setup, check_update, update)
-- **Option completion**: `dotfiler setup -<TAB>` shows available options with descriptions
-- **File completion**: Options like `-i`, `-u`, `-t` provide intelligent file completion
-- **Help integration**: All completions include help text for options
-
-### Examples
-
-```bash
-dotfiler <TAB>                    # Lists: gui, setup, check_update, update
-dotfiler setup -<TAB>             # Shows: -i, -s, -u, -U, -t, -d, -q, -D, -y, -n
-dotfiler setup -i <TAB>           # File completion for tracking
-dotfiler check_update --<TAB>     # Shows: --force, --debug, --help
-```
+---
 
 ## File Exclusions
 
-Dotfiler uses exclusion patterns to prevent tracking certain files and directories. The exclusion system supports gitignore-style patterns.
-
-### Default Exclusion File
-
-By default, exclusions are read from `dotfiles_exclude` in your dotfiles directory:
+Dotfiler uses gitignore-style patterns to decide which files to skip during
+auto-ingest and unpack. The default exclusion file is `dotfiles_exclude` in
+your dotfiles repo root.
 
 ```bash
-# Example dotfiles_exclude file
-.git/                    # Version control
-.nounpack/              # Dotfiler system files
-dotfiles_exclude       # Exclude the exclusion file itself
-node_modules/           # Dependencies
-.vscode/                # IDE files
-*.swp                   # Temporary files
-.DS_Store              # System files
-.codecompanion/*       # Progress tracking files
+# Copy the example exclusion file into your repo root
+cp ~/.dotfiles/.nounpack/dotfiler/dotfiles_exclude ~/.dotfiles/
 ```
 
-**Important**: Copy `dotfiles_exclude` to your dotfiles root directory and ensure it includes `dotfiles_exclude` in its patterns to prevent tracking the exclusion file itself.
+Example patterns:
 
-```bash
-# Copy exclusion file to dotfiles root
-cp .nounpack/scripts/dotfiles_exclude ~/.dotfiles/
+```
+.git/              # Never track version control internals
+.nounpack/         # Never track dotfiler itself
+dotfiles_exclude   # Never track the exclusion file
+node_modules/      # Dependencies
+.DS_Store          # macOS metadata
+*.swp              # Vim swap files
+.vscode/           # IDE state
 ```
 
-### Custom Exclusion File
+Pattern types:
 
-Override the exclusion file location using zstyle:
+- **Directory**: ends with `/` — matches the directory and all its contents
+- **Path**: contains `/` — matched against the full relative path
+- **Name**: no `/` — matched against the filename only
+- **Glob**: standard shell wildcards apply
+
+Override the file location:
 
 ```bash
-# Use custom exclusion file
 zstyle ':dotfiles:exclude' path '/path/to/my-exclusions.txt'
 ```
 
-### Pattern Types
+---
 
-- **Directory patterns**: End with `/` (e.g., `node_modules/`)
-- **Path patterns**: Contain `/` (e.g., `.git/hooks/pre-commit`)
-- **Name patterns**: No `/` (e.g., `*.swp`, `.DS_Store`)
-- **Glob patterns**: Use standard shell wildcards
-
-The exclusion system processes both directory names and their contents, so `node_modules/` excludes both the directory and all files within it.
-
-## GUI Application
+## Shell Completions
 
 ```bash
-# Install dependencies and run
-pip install -r .nounpack/scripts/requirements.txt
-.nounpack/scripts/dotfiler gui
+# Add to .zshrc
+source ~/.dotfiles/.nounpack/dotfiler/completions.zsh
 ```
 
-Features:
-- **Add Mode**: Browse filesystem and track configuration files
-- **Manage Mode**: View status of tracked files, handle conflicts
-- **File Status**: Visual indicators for linked, broken, or conflicted files
-- **Batch Operations**: Select multiple files for tracking or unlinking
+Provides tab completion for all commands and options:
 
-Controls:
-- `↑↓←→`: Navigate  
-- `Space/Enter`: Select files
-- `I`: Track selected files
-- `F`: Show detailed file info
-- `Q`: Quit
+```bash
+dotfiler <TAB>                  # gui, setup, check-updates, update, install, …
+dotfiler setup -<TAB>           # -i, -s, -u, -U, -t, -x, -D, … with descriptions
+dotfiler setup -i <TAB>         # file completion
+dotfiler check-updates --<TAB>  # --force, --debug, --help
+```
+
+---
 
 ## Directory Structure
 
 ```
 ~/.dotfiles/
-├── .nounpack/scripts/     # Dotfiler system (git subtree)
-│   ├── dotfiler          # Main command
-│   ├── setup.sh          # File management
-│   ├── update.sh         # Git operations
-│   ├── install/          # Active modules (customized)
-│   └── example_install/  # Template modules
-├── .bashrc              # Your tracked dotfiles
+├── .nounpack/
+│   ├── scripts/           # Dotfiler (submodule, subtree, or symlink)
+│   │   ├── dotfiler       # Main command dispatcher
+│   │   ├── setup.sh
+│   │   ├── update.sh
+│   │   ├── check_update.sh
+│   │   ├── install.sh
+│   │   ├── helpers.sh
+│   │   ├── completions.zsh
+│   │   ├── dotfiles_exclude
+│   │   └── example_install/
+│   └── install/           # Your customised install modules (committed to repo)
+│       ├── 00-dotfiler-install.sh
+│       └── …
+├── dotfiles_exclude       # Your exclusion patterns
+├── .zshrc                 # Tracked dotfiles (symlinked to ~/)
 ├── .vimrc
 └── .config/
     └── nvim/init.lua
 ```
 
-## Basic Workflows
+---
+
+## Typical Workflows
+
+### Track a new config file
 
 ```bash
-# New machine setup
-git clone <your-repo> ~/.dotfiles && cd ~/.dotfiles
-chmod +x .nounpack/scripts/dotfiler .nounpack/scripts/*.sh
-.nounpack/scripts/dotfiler setup -u
-
-# Track new config file
-.nounpack/scripts/dotfiler setup -i ~/.config/newsoftware/config.toml
-git add -A && git commit -m "Add newsoftware config"
-
-# Edit existing config (changes go directly to dotfiles via symlink)
-vim ~/.vimrc
-git add .vimrc && git commit -m "Update vim config"
+dotfiler setup -i ~/.config/newsoftware/config.toml
+git add -A && git commit -m "Track newsoftware config"
+git push
 ```
 
-## Troubleshooting
+### Edit a tracked config
+
+Because tracked files are symlinks, edits go directly into your repo:
 
 ```bash
-# Make scripts executable
-chmod +x ~/.dotfiles/.nounpack/scripts/dotfiler ~/.dotfiles/.nounpack/scripts/*.sh
+vim ~/.vimrc
+cd ~/.dotfiles
+git add .vimrc && git commit -m "Update vim config"
+git push
+```
 
-# Check git status  
-cd ~/.dotfiles && git status
+### Pull updates on another machine
 
-# Force update check
-.nounpack/scripts/dotfiler check_update -f
+```bash
+# Manually:
+dotfiler update
 
-# Debug symlink issues
-.nounpack/scripts/dotfiler setup -u  # Recreate symlinks
+# Or just open a new shell — check_update.sh handles it at login
+```
+
+### Restore everything on a new machine
+
+```bash
+git clone <your-repo> ~/.dotfiles
+cd ~/.dotfiles
+git submodule update --init --recursive
+chmod +x .nounpack/dotfiler/dotfiler .nounpack/dotfiler/*.sh
+.nounpack/dotfiler/dotfiler setup -u
+.nounpack/dotfiler/dotfiler install
 ```
 
 ---
 
-This system provides automated dotfiles management with git integration, modular installations, and both CLI and GUI interfaces. The git subtree approach ensures your dotfiles repository is self-contained and works offline.
+## Troubleshooting
+
+```bash
+# Scripts not executable after clone
+chmod +x ~/.dotfiles/.nounpack/dotfiler/dotfiler ~/.dotfiles/.nounpack/dotfiler/*.sh
+
+# Re-create all symlinks
+dotfiler setup -u
+
+# Force update check
+dotfiler check-updates --force
+
+# See what setup would do without making changes
+dotfiler setup -u -D
+
+# Inspect git state
+cd ~/.dotfiles && git status
+```
