@@ -235,8 +235,8 @@ _dotfiles_files() {
 compdef _dotfiler dotfiler
 
 # Also provide completion for the script name when called directly
-compdef _dotfiler .nounpack/scripts/dotfiler 2>/dev/null
-compdef _dotfiler ~/.dotfiles/.nounpack/scripts/dotfiler 2>/dev/null
+compdef _dotfiler .nounpack/dotfiler/dotfiler 2>/dev/null
+compdef _dotfiler ~/.dotfiles/.nounpack/dotfiler/dotfiler 2>/dev/null
 
 # Completion hints
 zstyle ':completion:*:dotfiler:*' group-name ''

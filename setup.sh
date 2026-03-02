@@ -14,7 +14,7 @@ untrack=()
 diff=()
 
 function usage(){
-  echo "Usage: $script_name ([-ingest path | -i path ...] | [-setup | -s]) [-unpack [file ...] | -u [file ...]] [-force-unpack [file ...] | -U [file ...]] [--untrack path | -t path ...] [--diff | -d] [--dry-run | -D] [--yes | y] [--no | -n]"
+  echo "Usage: $script_name ([-ingest path | -i path ...] | [-setup | -s]) [-unpack [file ...] | -u [file ...]] [-force-unpack [file ...] | -U [file ...]] [--untrack path | -t path ...] [--diff | -d] [--dry-run | -D] [--yes | y] [--no | -n] [--repo-dir <path>] [--link-dest <path>]"
   echo "  -s, --setup         Auto ingest dotfiles from ~/"
   echo "  -i, --ingest        Ingest files (track then link)"
   echo "  -t, --track         Track files"
@@ -22,11 +22,14 @@ function usage(){
   echo "  -u, --unpack        Unpack files (respects exclusions)"
   echo "  -U, --force-unpack  Force unpack files (ignores exclusions)"
   echo "  -D, --dry-run       Show what actions would be taken without making changes"
+  echo "  --repo-dir <path>     Source repo root (default: auto-detected dotfiles dir)"
+  echo "  --link-dest <path>    Where symlinks are planted (default: \$HOME)"
   echo ""
   echo "Examples:"
   echo "  $script_name -s -D           # Show what setup would do (dry run)"
   echo "  $script_name -u .vimrc -D    # Show what unpacking .vimrc would do"
   echo "  $script_name -i ~/.bashrc -D # Show what ingesting ~/.bashrc would do"
+  echo "  $script_name --repo-dir /path/to/zdot --link-dest ~/.config/zdot -u somefile"
 }
 
 zmodload zsh/zutil
@@ -40,8 +43,16 @@ zparseopts -D -E - i+:=ingest -ingest+:=ingest \
                    q=quiet -q=quiet \
                    D=dry_run -dry-run=dry_run \
                    y=yes -y=defyes \
-                   n=no -n=defno || \
+                   n=no -n=defno \
+                   -repo-dir:=opt_repo_dir \
+                   -link-dest:=opt_link_dest || \
   { usage; exit 1; }
+
+# --repo-dir: source repo root (defaults to dotfiles_dir from find_dotfiles_directory)
+# --link-dest: where symlinks are planted (defaults to $HOME)
+# These are set here as sentinels; actual values assigned after dotfiles_dir is detected below.
+_setup_link_dest="${opt_link_dest[-1]:-}"
+_setup_repo_dir_override="${opt_repo_dir[-1]:-}"
 
 # Set quiet mode for helpers
 [[ ${#quiet[@]} -gt 0 ]] && quiet_mode=true
@@ -52,6 +63,7 @@ read_exclusion_patterns() {
     local exclusion_file="$1"
     local -a path_patterns=()
     local -a name_patterns=()
+    local -a anchored_patterns=()
     
     # Default exclusions if no file provided or file doesn't exist
     if [[ -z "$exclusion_file" ]] || [[ ! -f "$exclusion_file" ]]; then
@@ -87,7 +99,11 @@ read_exclusion_patterns() {
                 # Remove trailing slash and add both directory and contents
                 local path_pattern="${line%/}"
                 path_patterns+=("$path_pattern" "$path_pattern/*")
-            # Handle patterns with path separators
+            # Handle anchored patterns (leading / — root-anchored, like gitignore)
+            elif [[ "$line" =~ ^/ ]]; then
+                # Strip leading slash; matched only against depth-1 entries
+                anchored_patterns+=("${line#/}")
+            # Handle patterns with interior path separators
             elif [[ "$line" =~ / ]]; then
                 path_patterns+=("$line")
             # Handle name patterns (no path separators)
@@ -100,6 +116,7 @@ read_exclusion_patterns() {
     # Set global arrays
     excluded_paths=("${path_patterns[@]}")
     excluded_names=("${name_patterns[@]}")
+    excluded_anchored=("${anchored_patterns[@]}")
 }
 
 # Function to build find exclusion arguments
@@ -114,6 +131,14 @@ build_find_exclusion_args() {
         excludes+=("-path" "$dotfiles_dir/$pattern")
     done
     
+    # Build anchored exclusions (root-level only — match the entry itself, not descendants)
+    for pattern in ${excluded_anchored[@]}; do
+        if [[ ${#excludes[@]} -gt 0 ]]; then
+            excludes+=("-or")
+        fi
+        excludes+=("-path" "$dotfiles_dir/$pattern")
+    done
+
     # Build name exclusions  
     for pattern in ${excluded_names[@]}; do
         if [[ ${#excludes[@]} -gt 0 ]]; then
@@ -161,6 +186,12 @@ fi
 # Detect script directory
 dotfiles_dir=$(find_dotfiles_directory)
 
+# Apply --repo-dir override if supplied; dotfiles_dir is the canonical name used throughout
+[[ -n "$_setup_repo_dir_override" ]] && dotfiles_dir="$_setup_repo_dir_override"
+
+# Apply --link-dest override; default is $HOME (backward-compatible)
+[[ -z "$_setup_link_dest" ]] && _setup_link_dest="$HOME"
+
 # Must be after dotfiles_dir detection
 # Initialize exclusion patterns (can be called with custom file path)
 # Usage: read_exclusion_patterns [/path/to/exclusion/file]
@@ -175,13 +206,14 @@ fi
 
 pretty_dotfiles_dir=`print -D $dotfiles_dir:P`
 
-# Normalize paths to be relative to home directory
-# Takes a path (absolute or relative) and returns path relative to $HOME
-# Returns empty string if path is not under $HOME
-function normalize_path_to_home_relative(){
+# Normalize paths to be relative to the link destination directory
+# (historically $HOME, now configurable via --link-dest / _setup_link_dest)
+# Takes a path (absolute or relative) and returns path relative to _setup_link_dest
+# Returns empty string if path is not under _setup_link_dest
+function normalize_path_to_dest_relative(){
   local input_path="$1"
-  local force_home_rel="${2:-0}"
-  local fullpath_home="${HOME:A}"
+  local force_dest_rel="${2:-0}"
+  local fullpath_dest="${_setup_link_dest:A}"
   local abs_path
 
   # Skip empty paths
@@ -195,9 +227,9 @@ function normalize_path_to_home_relative(){
     # Already absolute
     abs_path="${input_path:a}"
   else
-    if [ $force_home_rel -eq 1 ]; then
-      # Force relative to home directory
-      abs_path="${fullpath_home}/${input_path}"
+    if [ $force_dest_rel -eq 1 ]; then
+      # Force relative to dest directory
+      abs_path="${fullpath_dest}/${input_path}"
       abs_path="${abs_path:a}"
     else
       # Relative path - resolve relative to CWD
@@ -214,18 +246,19 @@ function normalize_path_to_home_relative(){
     fi
   fi
 
-  # Check if path is under home directory
-  if [[ "$abs_path" == "$fullpath_home/"* ]]; then
-    # Return relative path from home (without leading /)
-    local rel_path="${abs_path#$fullpath_home/}"
+  # Check if path is under dest directory
+  if [[ "$abs_path" == "$fullpath_dest/"* ]]; then
+    # Return relative path from dest (without leading /)
+    local rel_path="${abs_path#$fullpath_dest/}"
     print -r -- "$rel_path"
     return 0
   else
-    # Path is not under home directory
-    warn "Path $input_path (resolves to $abs_path) is not under home directory ($fullpath_home)" > /dev/stderr
+    # Path is not under dest directory
+    warn "Path $input_path (resolves to $abs_path) is not under dest directory ($fullpath_dest)" > /dev/stderr
     return 1
   fi
 }
+
 
 function prompt_yes_no(){
   [[ ${#defno[@]} -ge 1 ]] && exit 0
@@ -303,9 +336,9 @@ function dolink(){
 }
 
 function link_if_needed(){
-  src=$1:A
+  src=$1:a
   fullpath_dotfiles_dir=$dotfiles_dir:A
-  dest="$HOME/"${1#$fullpath_dotfiles_dir/}
+  dest="${_setup_link_dest}/"${1#$fullpath_dotfiles_dir/}
   info_nonl "checking $src to $dest .."
   if [[ -L "$dest" ]]; then
     linkfile=`readlink $dest`
@@ -351,12 +384,12 @@ function link_if_needed(){
 }
 
 function copy_in_if_needed(){
-  # Input is now expected to be a path relative to HOME (already normalized)
+  # Input is now expected to be a path relative to _setup_link_dest (already normalized)
   local home_relative_path="$1"
-  local fullpath_home="${HOME:A}"
+  local fullpath_home="${_setup_link_dest:A}"
   local fullpath_dotfiles_dir="${dotfiles_dir:A}"
 
-  # Construct absolute source path from home-relative path
+  # Construct absolute source path from dest-relative path
   src="${fullpath_home}/${home_relative_path}"
   src="${src:A}"
 
@@ -442,10 +475,10 @@ function untrack_if_needed(){
   local home_relative_path="$1"
   local fullpath_dotfiles_dir="${dotfiles_dir:A}"
 
-  # Construct paths from home-relative path
+  # Construct paths from dest-relative path
   src="${dotfiles_dir}/${home_relative_path}"
   src="${src:A}"
-  home_path="${HOME}/${home_relative_path}"
+  home_path="${_setup_link_dest}/${home_relative_path}"
   home_path="${home_path:A}"
   
   info_nonl "untracking $src (home: $home_path) .."
@@ -506,6 +539,17 @@ function should_exclude_file(){
     fi
   done
   
+    # Check against anchored patterns (only match at depth-1 inside dotfiles root)
+    # A relative_path with no '/' means the file is directly inside the dotfiles root.
+    if [[ -n "$relative_path" ]] && [[ "$relative_path" != */* ]]; then
+        local basename_for_anchored="${abs_file_path:t}"
+        for pattern in ${excluded_anchored[@]}; do
+            if [[ "$basename_for_anchored" == ${~pattern} ]]; then
+                return 0  # Should exclude
+            fi
+        done
+    fi
+
     # Check against excluded name patterns
     local basename="${abs_file_path:t}"  # Get just the filename
     for pattern in ${excluded_names[@]}; do
@@ -537,7 +581,7 @@ if [[ ${#ingest[@]} -gt 0 ]]; then
   local normalized_ingest=()
   local pwd_rel_path
   for pwd_rel_path in "${ingest[@]}"; do
-    local normalized=$(normalize_path_to_home_relative "$pwd_rel_path")
+    local normalized=$(normalize_path_to_dest_relative "$pwd_rel_path")
     if [[ $? -eq 0 ]]; then
       normalized_ingest+=("$normalized")
     else
@@ -552,7 +596,7 @@ if [[ ${#track[@]} -gt 0 ]]; then
   local normalized_track=()
   local pwd_rel_path
   for pwd_rel_path in "${track[@]}"; do
-    local normalized=$(normalize_path_to_home_relative "$pwd_rel_path")
+    local normalized=$(normalize_path_to_dest_relative "$pwd_rel_path")
     if [[ $? -eq 0 ]]; then
       normalized_track+=("$normalized")
     else
@@ -567,7 +611,7 @@ if [[ ${#untrack[@]} -gt 0 ]]; then
   local normalized_untrack=()
   local pwd_rel_path
   for pwd_rel_path in "${untrack[@]}"; do
-    local normalized=$(normalize_path_to_home_relative "$pwd_rel_path")
+    local normalized=$(normalize_path_to_dest_relative "$pwd_rel_path")
     if [[ $? -eq 0 ]]; then
       normalized_untrack+=("$normalized")
     else
@@ -583,7 +627,7 @@ if [[ ${#unpack_files[@]} -gt 0 ]]; then
   local pwd_rel_path
   for pwd_rel_path in "${unpack_files[@]}"; do
     # NOTE: unpack is an implicitly home relative path
-    local normalized=$(normalize_path_to_home_relative "$pwd_rel_path" 1)
+    local normalized=$(normalize_path_to_dest_relative "$pwd_rel_path" 1)
     if [[ $? -eq 0 ]]; then
       normalized_unpack+=("$normalized")
     else
@@ -599,7 +643,7 @@ if [[ ${#force_unpack_files[@]} -gt 0 ]]; then
   local pwd_rel_path
   for pwd_rel_path in "${force_unpack_files[@]}"; do
     # NOTE: unpack is an implicitly home relative path
-    local normalized=$(normalize_path_to_home_relative "$pwd_rel_path" 1)
+    local normalized=$(normalize_path_to_dest_relative "$pwd_rel_path" 1)
     if [[ $? -eq 0 ]]; then
       normalized_force_unpack+=("$normalized")
     else
@@ -632,13 +676,13 @@ fi
 if [[ ${#setup[@]} -gt 0 ]]; then
   info "Copying files in"
   local find_output files
-  find_output=$(find $findoptd $HOME $findopt -name "\.[a-zA-Z]*" -maxdepth 1 -mindepth 1 $exclude_args)
+  find_output=$(find $findoptd $_setup_link_dest $findopt -name "\.[a-zA-Z]*" -maxdepth 1 -mindepth 1 $exclude_args)
   files=(${(f)find_output})
   for file in "${files[@]}"; do
     [[ -n "$file" ]] || continue
     # Normalize the path to be home-relative
     local normalized
-    if normalized=$(normalize_path_to_home_relative "$file"); then
+    if normalized=$(normalize_path_to_dest_relative "$file"); then
       copy_in_if_needed "$normalized" || exit 1
       # For link_if_needed, we need the full dotfiles path
       link_if_needed "${dotfiles_dir}/${normalized}" || exit 1
@@ -688,7 +732,7 @@ if [[ ${#unpack[@]} -gt 0 ]]; then
       link_if_needed "$file" || exit 1
   done
   info "creating directory links"
-    find_output=$(find $findoptd $dotfiles_dir $findopt -mindepth 2 -and -type f $exclude_args)
+    find_output=$(find $findoptd $dotfiles_dir $findopt -mindepth 2 \( -type f -or -type l \) $exclude_args)
     files=(${(f)find_output})
     for file in "${files[@]}"; do
       [[ -n "$file" ]] || continue
@@ -730,7 +774,7 @@ if [[ ${#force_unpack[@]} -gt 0 ]]; then
       link_if_needed "$file" || exit 1
     done
     info "creating directory links (force)"
-    find_output=$(find $findoptd $dotfiles_dir $findopt -mindepth 2 -and -type f)
+    find_output=$(find $findoptd $dotfiles_dir $findopt -mindepth 2 \( -type f -or -type l \))
     files=(${(f)find_output})
     for file in "${files[@]}"; do
       [[ -n "$file" ]] || continue
