@@ -54,7 +54,8 @@ zstyle -s ':dotfiler:update' frequency _self_freq 2>/dev/null || _self_freq=3600
 _update_core_detect_deployment "$script_dir" "$_subtree_spec"
 local _topology=$REPLY
 
-info "update_self: topology=$_topology script_dir=$script_dir"
+verbose "update_self: topology=$_topology script_dir=$script_dir"
+
 
 # ---------------------------------------------------------------------------
 # Dispatch by topology
