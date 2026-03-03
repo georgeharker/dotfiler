@@ -334,9 +334,11 @@ _update_core_check_foreign_staged() {
     local -a _staged
     _staged=( ${(f)"$(git -C "$_parent" diff --cached --name-only 2>/dev/null)"} )
     [[ ${#_staged} -eq 0 ]] && return 0
+    # Also allow the SHA marker file that update_core itself stages alongside the subtree.
+    local _marker="${_rel:h}/.${_rel:t}-subtree-sha"
     local _f
     for _f in "${_staged[@]}"; do
-        [[ "$_f" != "${_rel}/"* && "$_f" != "$_rel" ]] && return 1
+        [[ "$_f" != "${_rel}/"* && "$_f" != "$_rel" && "$_f" != "$_marker" ]] && return 1
     done
     return 0
 }
