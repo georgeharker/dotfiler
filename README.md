@@ -81,17 +81,26 @@ dependency at clone time.
 
 ```bash
 cd ~/.dotfiles
-git subtree add --prefix=.nounpack/dotfiler \
-    https://github.com/georgeharker/dotfiler.git main --squash
+git remote add dotfiler https://github.com/georgeharker/dotfiler.git
+git subtree add --prefix=.nounpack/dotfiler dotfiler main --squash
 chmod +x .nounpack/dotfiler/dotfiler
 ```
 
 To update:
 
 ```bash
-git subtree pull --prefix=.nounpack/dotfiler \
-    https://github.com/georgeharker/dotfiler.git main --squash
+git subtree pull --prefix=.nounpack/dotfiler dotfiler main --squash
 ```
+
+**Required:** Tell dotfiler which remote to track for self-updates. Add this
+to your `.zshrc` **before** sourcing `check_update.sh`:
+
+```bash
+zstyle ':dotfiler:update' subtree-remote 'dotfiler main'
+```
+
+Without this, dotfiler cannot detect that it is installed as a subtree and
+will silently skip self-update checks.
 
 ### Option 3: Standalone Clone
 
@@ -277,10 +286,10 @@ If you're using the standalone install, point to the script directly:
 Control the behaviour with `zstyle` (set this **before** the `source` line):
 
 ```bash
-zstyle ':dotfiles:update' mode 'prompt'    # ask [Y/n] at login — default
-zstyle ':dotfiles:update' mode 'auto'      # pull silently, no interaction
-zstyle ':dotfiles:update' mode 'reminder'  # print a reminder only, never update
-zstyle ':dotfiles:update' mode 'disabled'  # skip the check entirely
+zstyle ':dotfiler:update' mode 'prompt'    # ask [Y/n] at login — default
+zstyle ':dotfiler:update' mode 'auto'      # pull silently, no interaction
+zstyle ':dotfiler:update' mode 'reminder'  # print a reminder only, never update
+zstyle ':dotfiler:update' mode 'disabled'  # skip the check entirely
 ```
 
 | Mode | Behaviour |
