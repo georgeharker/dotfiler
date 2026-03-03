@@ -176,6 +176,8 @@ for line in ${(f)git_commits}; do
 }
 
 # ---------------------------------------------------------------------------
+# Submodule update (runs after pull, before apply)
+# ---------------------------------------------------------------------------
 # Pull (default mode only, not commit-hash or range mode)
 # ---------------------------------------------------------------------------
 
@@ -187,6 +189,24 @@ function _update_pull(){
         warn "Update failed, likely modified files in the way"
         exit 1
     }
+}
+
+# ---------------------------------------------------------------------------
+# Component hooks (default mode only, runs after pull)
+# ---------------------------------------------------------------------------
+
+function _update_hooks(){
+    # Skip in commit-hash or range mode — hooks operate on tip, not a range.
+    [[ ${#commit_hash[@]} -gt 0 || ${#range[@]} -gt 0 ]] && return 0
+    local _hooks_dir
+    zstyle -s ':dotfiler:hooks' dir _hooks_dir \
+        || _hooks_dir="${XDG_CONFIG_HOME:-$HOME/.config}/dotfiler/hooks"
+    [[ -d "$_hooks_dir" ]] || return 0
+    local _hook
+    for _hook in "$_hooks_dir"/*.zsh(N); do
+        [[ -x "$_hook" ]] || continue
+        "$_hook" apply-update ${${(j. .)${dry_run:+--dry-run}}}
+    done
 }
 
 # ---------------------------------------------------------------------------
@@ -263,6 +283,7 @@ files_to_remove=()
 _update_compute_range || exit 0
 _update_build_file_lists "$_update_diff_range"
 _update_pull
+_update_hooks
 _update_apply
 _update_warn_install_scripts
 
@@ -272,6 +293,7 @@ unset -f \
     _update_compute_range \
     _update_build_file_lists \
     _update_pull \
+    _update_hooks \
     _update_delete_if_needed \
     _update_apply \
     _update_warn_install_scripts \

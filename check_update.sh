@@ -72,10 +72,28 @@ fi
 function is_update_available() {
     # Check the parent dotfiles repo itself
     _update_core_is_available "$dotfiles_dir" && return 0
-    # Also check registered submodules — their remotes may have advanced
-    # beyond the SHA the parent currently records, even when the parent
-    # repo itself has no new commits from its own remote.
-    _update_core_is_available_submodules "$dotfiles_dir" && return 0
+    # Delegate to registered component hooks — each hook knows how to check
+    # its own repo (e.g. zdot as a submodule) without dotfiler needing to
+    # understand the topology of each managed component.
+    _check_update_invoke_hooks check-update && return 0
+    return 1
+}
+
+# _check_update_invoke_hooks <verb>
+# Enumerates *.zsh executables in the dotfiler hooks directory and calls
+# each with <verb>.  Returns 0 as soon as any hook returns 0.
+# Hooks dir: zstyle ':dotfiler:hooks' dir  (default ~/.config/dotfiler/hooks)
+function _check_update_invoke_hooks() {
+    local _verb=$1
+    local _hooks_dir
+    zstyle -s ':dotfiler:hooks' dir _hooks_dir \
+        || _hooks_dir="${XDG_CONFIG_HOME:-$HOME/.config}/dotfiler/hooks"
+    [[ -d "$_hooks_dir" ]] || return 1
+    local _hook
+    for _hook in "$_hooks_dir"/*.zsh(N); do
+        [[ -x "$_hook" ]] || continue
+        "$_hook" "$_verb" && return 0
+    done
     return 1
 }
 

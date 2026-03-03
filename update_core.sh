@@ -185,36 +185,8 @@ _update_core_list_submodule_paths() {
 }
 
 # ---------------------------------------------------------------------------
-# Submodule-aware update availability check
+# Parent root helper
 # ---------------------------------------------------------------------------
-
-# _update_core_is_available_submodules <repo_dir>
-# Checks each registered submodule in <repo_dir> for upstream changes beyond
-# what the parent's recorded pointer refers to.
-# Returns:
-#   0 — at least one submodule has upstream commits the parent hasn't recorded
-#   1 — all submodules are up to date with their remotes (or no submodules)
-#   2 — error reading submodule list
-#
-# Strategy: for each submodule, delegate to _update_core_is_available on the
-# submodule directory (API-first, fetch fallback — same logic as the parent).
-# That comparison is against the submodule's own remote HEAD, not the SHA the
-# parent has recorded, so it correctly detects commits the parent hasn't
-# pointer-bumped to yet.
-_update_core_is_available_submodules() {
-    local _repo_dir=$1
-    local _path
-
-    _update_core_list_submodule_paths "$_repo_dir" || return 1
-
-    for _path in "${reply[@]}"; do
-        local _sub_dir="${_repo_dir}/${_path}"
-        [[ -d "$_sub_dir" ]] || continue
-        _update_core_is_available "$_sub_dir" && return 0
-    done
-
-    return 1
-}
 
 # _update_core_get_parent_root <repo_dir>
 # Resolves the effective parent repo root for <repo_dir>, setting REPLY to
@@ -673,7 +645,6 @@ _update_core_cleanup() {
         _update_core_is_available \
         _update_core_is_available_fetch \
         _update_core_is_available_subtree \
-        _update_core_is_available_submodules \
         _update_core_get_parent_root \
         _update_core_list_submodule_paths \
         _update_core_resolve_remote_sha \
