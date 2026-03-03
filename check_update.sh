@@ -106,18 +106,26 @@ function update_dotfiles() {
     quiet="-q"
   fi
 
-  if [[ "$update_mode" != background-alpha ]] \
-    && LANG= "${script_dir}/update.sh" "$quiet"; then
-    _update_core_write_timestamp "$dotfiles_timestamp"
-    return $?
+  # Non-background mode: run update.sh interactively; only write timestamp on success.
+  if [[ "$update_mode" != background-alpha ]]; then
+    if LANG= "${script_dir}/update.sh" "$quiet"; then
+      _update_core_write_timestamp "$dotfiles_timestamp"
+      return 0
+    else
+      local _rc=$?
+      error "Update failed (exit ${_rc})."
+      return $_rc
+    fi
   fi
 
-  local exit_status error
-  if error=$(LANG= "${script_dir}/update.sh" -q 2>&1); then
+  # Background mode: capture stderr so it can be stored in the timestamp file.
+  local exit_status error_out
+  if error_out=$(LANG= "${script_dir}/update.sh" -q 2>&1); then
     _update_core_write_timestamp "$dotfiles_timestamp" 0 "Update successful"
+    return 0
   else
     exit_status=$?
-    _update_core_write_timestamp "$dotfiles_timestamp" $exit_status "$error"
+    _update_core_write_timestamp "$dotfiles_timestamp" $exit_status "$error_out"
     return $exit_status
   fi
 }
@@ -125,128 +133,158 @@ function update_dotfiles() {
 function handle_self_update() {
   emulate -L zsh
 
-    if ! _update_core_acquire_lock "$dotfiler_cache_dir/self_update.lock"; then
-        return
-    fi
+  if ! _update_core_acquire_lock "$dotfiler_cache_dir/self_update.lock"; then
+    return 0
+  fi
 
-    trap "
-        ret=\$?
-        _update_core_release_lock '$dotfiler_cache_dir/self_update.lock'
-        unset dotfiler_cache_dir 2>/dev/null
-        unset -f handle_self_update 2>/dev/null
-        return \$ret
-    " EXIT INT QUIT
+  # Release the lock on any exit, including signals.  For INT/QUIT propagate
+  # the signal's exit status so the outer shell knows we were interrupted;
+  # for a normal EXIT always return 0 (self-update is best-effort).
+  trap "
+    _update_core_release_lock '$dotfiler_cache_dir/self_update.lock'
+    unset -f handle_self_update 2>/dev/null
+    return 0
+  " EXIT
+  trap "
+    ret=\$?
+    _update_core_release_lock '$dotfiler_cache_dir/self_update.lock'
+    unset -f handle_self_update 2>/dev/null
+    return \$ret
+  " INT QUIT
 
-    local _self_stamp="${dotfiler_cache_dir}/dotfiler_scripts_update"
-    local _self_freq
-    zstyle -s ':dotfiler:update' frequency _self_freq || _self_freq=${UPDATE_DOTFILE_SECONDS:-3600}
+  local _self_stamp="${dotfiler_cache_dir}/dotfiler_scripts_update"
+  local _self_freq
+  zstyle -s ':dotfiler:update' frequency _self_freq || _self_freq=${UPDATE_DOTFILE_SECONDS:-3600}
 
-    if ! _update_core_should_update "$_self_stamp" "$_self_freq" "$force_update"; then
-        return
-    fi
+  if ! _update_core_should_update "$_self_stamp" "$_self_freq" "$force_update"; then
+    return 0
+  fi
 
-    local _subtree_spec
-    zstyle -s ':dotfiler:update' subtree-remote _subtree_spec 2>/dev/null || _subtree_spec=""
-    _update_core_detect_deployment "$script_dir" "$_subtree_spec"
-    local _topology=$REPLY
+  local _subtree_spec
+  zstyle -s ':dotfiler:update' subtree-remote _subtree_spec 2>/dev/null || _subtree_spec=""
+  _update_core_detect_deployment "$script_dir" "$_subtree_spec"
+  local _topology=$REPLY
 
-    local _avail
-    case $_topology in
-        standalone|submodule)
-            _update_core_is_available "$script_dir"
-            _avail=$? ;;
-        subtree)
-            local _remote_url _remote _branch
-            _remote="${_subtree_spec%% *}"
-            _branch="${_subtree_spec#* }"
-            [[ "$_branch" == "$_remote" ]] && _branch=""
-            [[ -z "$_branch" ]] && \
-                _branch=$(_update_core_get_default_branch "$script_dir" "$_remote")
-            _remote_url=$(git -C "$script_dir" config "remote.${_remote}.url" 2>/dev/null)
-            _update_core_is_available_subtree "$script_dir" "$_remote_url" "$_branch"
-            _avail=$? ;;
-        subdir|none|*)
-            return 0 ;;
-    esac
+  local _avail
+  case $_topology in
+    standalone|submodule)
+      _update_core_is_available "$script_dir"
+      _avail=$? ;;
+    subtree)
+      local _remote_url _remote _branch
+      _remote="${_subtree_spec%% *}"
+      _branch="${_subtree_spec#* }"
+      [[ "$_branch" == "$_remote" ]] && _branch=""
+      [[ -z "$_branch" ]] && \
+        _branch=$(_update_core_get_default_branch "$script_dir" "$_remote")
+      _remote_url=$(git -C "$script_dir" config "remote.${_remote}.url" 2>/dev/null)
+      _update_core_is_available_subtree "$script_dir" "$_remote_url" "$_branch"
+      _avail=$? ;;
+    subdir|none|*)
+      return 0 ;;
+  esac
 
-    # _avail==1 means up to date or indeterminate skip -- write stamp and return
-    if (( _avail == 1 )); then
-        _update_core_write_timestamp "$_self_stamp"
-        return
-    fi
+  # _avail==1 means up to date or indeterminate — write stamp and return cleanly.
+  if (( _avail == 1 )); then
+    _update_core_write_timestamp "$_self_stamp"
+    return 0
+  fi
 
-    "${script_dir}/update_self.sh" --force \
-        && _update_core_write_timestamp "$_self_stamp"
+  # _avail==0 means an update is available — run update_self.sh.
+  if "${script_dir}/update_self.sh" --force; then
+    _update_core_write_timestamp "$_self_stamp"
+    return 0
+  else
+    local _rc=$?
+    error "Self-update failed (exit ${_rc})."
+    return $_rc
+  fi
 }
 
 function handle_update() {
-    emulate -L zsh
+  emulate -L zsh
 
-    local mtime option
+  local option
 
-    if ! _update_core_acquire_lock "$dotfiles_cache_dir/update.lock"; then
-      return
-    fi
+  if ! _update_core_acquire_lock "$dotfiles_cache_dir/update.lock"; then
+    return 0
+  fi
 
-    # Remove lock directory on exit. `return $ret` is important for when trapping a SIGINT:
-    #  The return status from the function is handled specially. If it is zero, the signal is
-    #  assumed to have been handled, and execution continues normally. Otherwise, the shell
-    #  will behave as interrupted except that the return status of the trap is retained.
-    #  This means that for a CTRL+C, the trap needs to return the same exit status so that
-    #  the shell actually exits what it's running.
-    trap "
-      ret=\$?
-      unset update_mode
-      unset dotfiles_dir dotfiles_cache_dir dotfiles_timestamp 2>/dev/null
-        unset -f is_update_available update_dotfiles handle_update 2>/dev/null
-     cleanup_helpers 2>/dev/null
-        cleanup_logging 2>/dev/null
-        _update_core_release_lock '$dotfiles_cache_dir/update.lock'
-      return \$ret
-    " EXIT INT QUIT
+  # Clean up on any exit.  Signal traps propagate the signal's status so that
+  # an INT/QUIT is not swallowed.  Normal EXIT always returns 0: update checks
+  # are best-effort from the caller's perspective; only update_dotfiles itself
+  # reports a meaningful failure.
+  trap "
+    unset update_mode 2>/dev/null
+    unset dotfiles_dir dotfiles_cache_dir dotfiles_timestamp 2>/dev/null
+    unset -f is_update_available update_dotfiles handle_update 2>/dev/null
+    cleanup_helpers 2>/dev/null
+    cleanup_logging 2>/dev/null
+    _update_core_release_lock '$dotfiles_cache_dir/update.lock'
+    return 0
+  " EXIT
+  trap "
+    ret=\$?
+    unset update_mode 2>/dev/null
+    unset dotfiles_dir dotfiles_cache_dir dotfiles_timestamp 2>/dev/null
+    unset -f is_update_available update_dotfiles handle_update 2>/dev/null
+    cleanup_helpers 2>/dev/null
+    cleanup_logging 2>/dev/null
+    _update_core_release_lock '$dotfiles_cache_dir/update.lock'
+    return \$ret
+  " INT QUIT
 
-    local _dotfiles_freq
-    zstyle -s ':dotfiler:update' frequency _dotfiles_freq || _dotfiles_freq=${UPDATE_DOTFILE_SECONDS:-3600}
-    if ! _update_core_should_update "$dotfiles_timestamp" "$_dotfiles_freq" "$force_update"; then
-        return
-    fi
+  local _dotfiles_freq
+  zstyle -s ':dotfiler:update' frequency _dotfiles_freq || _dotfiles_freq=${UPDATE_DOTFILE_SECONDS:-3600}
+  if ! _update_core_should_update "$dotfiles_timestamp" "$_dotfiles_freq" "$force_update"; then
+    return 0
+  fi
 
-    # Test if dotfiler directory is a git repository
-    if ! (builtin cd -q "$dotfiles_dir" && LANG= git rev-parse &>/dev/null); then
-        error "Can't update: not a git repository."
-      return
-    fi
+  # Verify the dotfiles directory is still a git repository.
+  if ! (builtin cd -q "$dotfiles_dir" && LANG= git rev-parse &>/dev/null); then
+    error "Can't update: '${dotfiles_dir}' is not a git repository."
+    return 1
+  fi
 
-    # Check if there are updates available before proceeding
-    if ! is_update_available; then
-        _update_core_write_timestamp "$dotfiles_timestamp"
-      return
-    fi
+  # Check if there are updates available before proceeding.
+  if ! is_update_available; then
+    _update_core_write_timestamp "$dotfiles_timestamp"
+    return 0
+  fi
 
-    # If in reminder mode or user has typed input, show reminder and exit
-    if [[ "$update_mode" = reminder ]] || { [[ "$update_mode" != background-alpha ]] && _update_core_has_typed_input }; then
-      printf '\r\e[0K' # move cursor to first column and clear whole line
-        info "It's time to update! You can do that by running \`${script_dir}/dotfiler update\`"
-      return 0
-    fi
+  # Reminder mode, or user has already typed input: show a nudge and exit.
+  if [[ "$update_mode" = reminder ]] || { [[ "$update_mode" != background-alpha ]] && _update_core_has_typed_input }; then
+    printf '\r\e[0K' # move cursor to first column and clear whole line
+    info "It's time to update! You can do that by running \`${script_dir}/dotfiler update\`"
+    return 0
+  fi
 
-    # Don't ask for confirmation before updating if in auto mode
-    if [[ "$update_mode" = (auto|background-alpha) ]]; then
+  # Auto / background mode: update without prompting.
+  if [[ "$update_mode" = (auto|background-alpha) ]]; then
+    update_dotfiles
+    return $?
+  fi
+
+  # Prompt mode: ask the user.
+  info_nonl "Would you like to update? [Y/n] "
+  read -r -k 1 option
+  [[ "$option" = $'\n' ]] || echo
+  case "$option" in
+    [yY$'\n'])
       update_dotfiles
       return $?
-    fi
-
-    # Ask for confirmation and only update on 'y', 'Y' or Enter
-    # Otherwise just show a reminder for how to update
-    info_nonl "Would you like to update? [Y/n] "
-    read -r -k 1 option
-    [[ "$option" = $'\n' ]] || echo
-    case "$option" in
-      [yY$'\n']) update_dotfiles ;;
-        [nN]) _update_core_write_timestamp "$dotfiles_timestamp" ;&
-        *) info "You can update manually by running \`${dotfiles_dir}/dotfiler update\`" ;;
-    esac
-  }
+      ;;
+    [nN])
+      _update_core_write_timestamp "$dotfiles_timestamp"
+      info "You can update manually by running \`${dotfiles_dir}/dotfiler update\`"
+      return 0
+      ;;
+    *)
+      info "You can update manually by running \`${dotfiles_dir}/dotfiler update\`"
+      return 0
+      ;;
+  esac
+}
 
 case "$update_mode" in
   background-alpha)

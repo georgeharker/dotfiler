@@ -137,14 +137,22 @@ _update_core_release_lock() {
 # _update_core_write_timestamp <ts_file> [exit_status [error]]
 # Writes LAST_EPOCH (always), EXIT_STATUS and ERROR (when provided and
 # non-zero/non-empty).  Creates parent directory if needed.
+# Always returns 0; a failed write is warned but never poisons the caller's $?.
 _update_core_write_timestamp() {
     local _ts=$1 _exit_status=${2:-} _error=${3:-}
     mkdir -p "${_ts:h}" 2>/dev/null
     {
         print "LAST_EPOCH=$(_update_core_current_epoch)"
-        [[ -n "$_exit_status" && "$_exit_status" != 0 ]] && print "EXIT_STATUS=$_exit_status"
-        [[ -n "$_error" ]] && print "ERROR=${_error//\'/\'}"
-    } >| "$_ts"
+        if [[ -n "$_exit_status" && "$_exit_status" != 0 ]]; then
+            print "EXIT_STATUS=$_exit_status"
+        fi
+        if [[ -n "$_error" ]]; then
+            print "ERROR=${_error//\'/\'}"
+        fi
+    } >| "$_ts" || {
+        print "update_core: warning: failed to write timestamp file: $_ts" >&2
+    }
+    return 0
 }
 
 # ---------------------------------------------------------------------------

@@ -12,7 +12,10 @@
 # Flags are forwarded to the exec'd update.sh unchanged.
 
 emulate -L zsh
-setopt ERR_EXIT PIPE_FAIL NO_UNSET
+# PIPE_FAIL and NO_UNSET are useful hardening; ERR_EXIT is intentionally
+# omitted — this script does deliberate error recovery (subtree pull can fail
+# and we continue) so ERR_EXIT would abort those paths prematurely.
+setopt PIPE_FAIL NO_UNSET
 
 # ---------------------------------------------------------------------------
 # Bootstrap
@@ -64,6 +67,9 @@ verbose "update_self: topology=$_topology script_dir=$script_dir"
 _update_self_exec_update() {
     info "update_self: re-execing update.sh"
     exec "${script_dir}/update.sh" "${_forward_args[@]}"
+    # exec only returns on failure
+    error "update_self: exec of update.sh failed."
+    return 1
 }
 
 local _force_str="false"
@@ -71,7 +77,7 @@ local _force_str="false"
 if ! _update_core_should_update "$_self_stamp" "$_self_freq" "$_force_str"; then
     info "update_self: scripts checked recently -- skipping (use -f to force)"
     _update_self_exec_update
-    return
+    return $?  # propagate exec failure if it occurs
 fi
 
 case $_topology in
@@ -91,8 +97,10 @@ case $_topology in
                 local _remote _branch
                 _remote=$(_update_core_get_default_remote "$script_dir")
                 _branch=$(_update_core_get_default_branch "$script_dir" "$_remote")
-                git -C "$script_dir" pull --ff-only "$_remote" "$_branch" \
-                    || warn "update_self: git pull failed — continuing with existing scripts"
+                if ! git -C "$script_dir" pull --ff-only "$_remote" "$_branch"; then
+                    error "update_self: git pull failed."
+                    return 1
+                fi
                 _update_core_write_timestamp "$_self_stamp"
             fi
         else
@@ -100,6 +108,7 @@ case $_topology in
             (( _dry_run )) || _update_core_write_timestamp "$_self_stamp"
         fi
         _update_self_exec_update
+        return $?
         ;;
 
     # -----------------------------------------------------------------------
@@ -107,13 +116,14 @@ case $_topology in
     # The scripts dir is a submodule inside the user's dotfiles repo.  Update
     # the submodule, optionally commit the parent, then re-exec update.sh.
     # -----------------------------------------------------------------------
-        # git -C script_dir --show-toplevel gives script_dir's own git root
-        # (the submodule root).  Walk up from there to find the parent repo.
         local _submod_root _parent _rel
         _submod_root=$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null)
         # Find the parent repo by walking up from _submod_root
-        _parent=$(git -C "${_submod_root}/.." rev-parse --show-toplevel 2>/dev/null) \
-            || { warn "update_self: cannot find parent repo"; _update_self_exec_update; return }
+        if ! _parent=$(git -C "${_submod_root}/.." rev-parse --show-toplevel 2>/dev/null); then
+            error "update_self: cannot find parent repo for submodule."
+            _update_self_exec_update
+            return $?
+        fi
         _rel=${_submod_root#${_parent}/}
 
         local _mode
@@ -122,8 +132,11 @@ case $_topology in
         if (( _dry_run )); then
             info "update_self: [dry-run] would: git -C $_parent submodule update --remote -- $_rel"
         else
-            git -C "$_parent" submodule update --remote -- "$_rel" \
-                || warn "update_self: submodule update failed — continuing"
+            if ! git -C "$_parent" submodule update --remote -- "$_rel"; then
+                error "update_self: submodule update failed."
+                _update_self_exec_update
+                return $?
+            fi
             _update_core_commit_parent \
                 "$_parent" "$_rel" \
                 "dotfiler submodule updated" \
@@ -132,6 +145,7 @@ case $_topology in
             _update_core_write_timestamp "$_self_stamp"
         fi
         _update_self_exec_update
+        return $?
         ;;
 
     # -----------------------------------------------------------------------
@@ -140,8 +154,11 @@ case $_topology in
     # repo.  Pull the subtree, optionally commit, then re-exec update.sh.
     # -----------------------------------------------------------------------
         local _parent _rel
-        _parent=$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null) \
-            || { warn "update_self: cannot find parent repo"; _update_self_exec_update; return }
+        if ! _parent=$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null); then
+            error "update_self: cannot find parent repo for subtree."
+            _update_self_exec_update
+            return $?
+        fi
         local _parent_real _script_real
         _parent_real=${_parent:A}
         _script_real=${script_dir:A}
@@ -187,11 +204,14 @@ case $_topology in
                     "dotfiler: update scripts subtree" \
                     "$_mode"
             else
-                warn "update_self: subtree pull failed — continuing"
+                error "update_self: subtree pull failed (working tree may have uncommitted changes)."
+                # Continue to re-exec update.sh with existing scripts rather
+                # than failing hard — the user's dotfiles can still be updated.
             fi
             _update_core_write_timestamp "$_self_stamp"
         fi
         _update_self_exec_update
+        return $?
         ;;
 
     # -----------------------------------------------------------------------
@@ -201,6 +221,7 @@ case $_topology in
     # -----------------------------------------------------------------------
         info "update_self: subdir topology — parent repo manages scripts, skipping self-update"
         _update_self_exec_update
+        return $?
         ;;
 
     # -----------------------------------------------------------------------
@@ -209,5 +230,6 @@ case $_topology in
     # -----------------------------------------------------------------------
         warn "update_self: scripts directory is not a git repo — skipping self-update"
         _update_self_exec_update
+        return $?
         ;;
 esac
