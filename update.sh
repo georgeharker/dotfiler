@@ -187,7 +187,7 @@ function _update_pull(){
     git -C "$dotfiles_dir" pull -q \
         "$_update_default_remote" "$_update_default_branch" || {
         warn "Update failed, likely modified files in the way"
-        exit 1
+        return 1
     }
 }
 
@@ -202,11 +202,15 @@ function _update_hooks(){
     zstyle -s ':dotfiler:hooks' dir _hooks_dir \
         || _hooks_dir="${XDG_CONFIG_HOME:-$HOME/.config}/dotfiler/hooks"
     [[ -d "$_hooks_dir" ]] || return 0
-    local _hook
+    local _hook _rc=0
     for _hook in "$_hooks_dir"/*.zsh(N); do
         [[ -x "$_hook" ]] || continue
-        "$_hook" apply-update ${${(j. .)${dry_run:+--dry-run}}}
+        "$_hook" apply-update ${${(j. .)${dry_run:+--dry-run}}} || {
+            warn "update: hook '${_hook:t}' apply-update failed (exit $?)"
+            _rc=1
+        }
     done
+    return $_rc
 }
 
 # ---------------------------------------------------------------------------

@@ -88,13 +88,14 @@ _update_core_has_typed_input() {
     emulate -L zsh
     zmodload zsh/zselect 2>/dev/null || return 1
     local _saved
-    _saved=$(stty --save 2>/dev/null) || return 1
+    # stty -g is POSIX; stty --save is GNU/Linux only and fails on macOS.
+    _saved=$(stty -g 2>/dev/null) || return 1
     {
         stty -icanon
         zselect -t 0 -r 0
         return $?
     } always {
-        stty $_saved
+        stty "$_saved"
     }
 }
 
@@ -159,18 +160,35 @@ _update_core_write_timestamp() {
 # Update availability check (no GitHub API fallback — stays in check_update.sh)
 # ---------------------------------------------------------------------------
 
-# _update_core_is_available_fetch <repo_dir>
-# Returns 0 if an update is available, 1 if up to date, 2 on fetch/parse error.
+# _update_core_is_available_fetch <repo_dir> [allow_diverged]
+# Returns 0 if an update is available (local is behind, or diverged and
+# allow_diverged=1), 1 to skip (up to date or local is ahead), 2 on error.
+# When diverged and allow_diverged is unset/0, warns and returns 1.
 _update_core_is_available_fetch() {
-    local _repo_dir=$1
-    local _remote _branch _local_sha _remote_sha
+    local _repo_dir=$1 _allow_diverged=${2:-0}
+    local _remote _branch _local_sha _remote_sha _base
     _remote=$(_update_core_get_default_remote "$_repo_dir")
     _branch=$(_update_core_get_default_branch "$_repo_dir" "$_remote")
     git -C "$_repo_dir" fetch "$_remote" "$_branch" --quiet 2>/dev/null || return 2
     _local_sha=$(git -C "$_repo_dir" rev-parse HEAD 2>/dev/null) || return 2
     _remote_sha=$(git -C "$_repo_dir" rev-parse "${_remote}/${_branch}" 2>/dev/null) || return 2
-    [[ "$_local_sha" != "$_remote_sha" ]] && return 0
-    return 1
+    [[ "$_local_sha" == "$_remote_sha" ]] && return 1   # up to date
+    _base=$(git -C "$_repo_dir" merge-base "$_local_sha" "$_remote_sha" 2>/dev/null) \
+        || return 2   # merge-base failed — can't determine relationship
+    if [[ "$_base" == "$_remote_sha" ]]; then
+        return 1   # local is ahead of remote — skip
+    elif [[ "$_base" == "$_local_sha" ]]; then
+        return 0   # local is behind remote — update available
+    else
+        # Diverged: local and remote have independent commits.
+        if (( _allow_diverged )); then
+            warn "update_core: '${_repo_dir:t}' has diverged from ${_remote}/${_branch} — proceeding (merge may result)"
+            return 0
+        else
+            warn "update_core: '${_repo_dir:t}' has diverged from ${_remote}/${_branch} — skipping (resolve manually or use prompt mode)"
+            return 1
+        fi
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -476,13 +494,18 @@ _update_core_should_update() {
 # Returns:
 #   0 — update is available
 #   1 — up to date or indeterminate (skip — conservative)
+# _update_core_is_available <repo_dir> [remote_url_override] [allow_diverged]
+# Returns:
+#   0 — update is available (local is behind, or diverged with allow_diverged=1)
+#   1 — up to date, local is ahead, or diverged with allow_diverged=0 (skip)
 #
 # For GitHub remotes: calls the GitHub API only (no git fetch).
 # On API failure returns 1 (conservative skip — do not assume update available).
 # For non-GitHub remotes: falls back to _update_core_is_available_fetch (git fetch).
 # <remote_url_override>: if non-empty, used instead of reading git config.
+# <allow_diverged>: 1 = warn and proceed on diverged; 0 = warn and skip (default).
 _update_core_is_available() {
-    local _repo_dir=$1 _remote_url_override=${2:-}
+    local _repo_dir=$1 _remote_url_override=${2:-} _allow_diverged=${3:-0}
     local _remote _branch _remote_url
 
     _remote=$(_update_core_get_default_remote "$_repo_dir")
@@ -492,7 +515,7 @@ _update_core_is_available() {
         _remote_url=$_remote_url_override
     else
         _remote_url=$(git -C "$_repo_dir" config "remote.${_remote}.url" 2>/dev/null) || {
-            _update_core_is_available_fetch "$_repo_dir"
+            _update_core_is_available_fetch "$_repo_dir" "$_allow_diverged"
             return $?
         }
     fi
@@ -509,8 +532,9 @@ _update_core_is_available() {
         local _api_url="https://api.github.com/repos/${_repo}/commits/${_branch}"
         local _local_head _remote_head
 
-        # Get local HEAD for the tracked branch
-        _local_head=$(git -C "$_repo_dir" rev-parse "$_branch" 2>/dev/null) || return 0
+        # Use HEAD directly — rev-parse "$_branch" fails in detached-HEAD state
+        # (e.g. freshly updated submodule), whereas HEAD always resolves.
+        _local_head=$(git -C "$_repo_dir" rev-parse HEAD 2>/dev/null) || return 1
 
         # Call GitHub API — on failure, skip update (conservative, per ohmyzsh pattern)
         local _curl_auth=() _wget_auth=()
@@ -537,19 +561,30 @@ _update_core_is_available() {
 
         verbose "update_core: local=${_local_head:0:8} remote(API)=${_remote_head:0:8}"
 
-        # If SHAs match → up to date
-        [[ "$_local_head" == "$_remote_head" ]] && return 1
+        [[ "$_local_head" == "$_remote_head" ]] && return 1   # up to date
 
-        # Use merge-base to confirm local is behind (not just diverged)
+        # Three-way merge-base check: behind / ahead / diverged
         local _base
         _base=$(git -C "$_repo_dir" merge-base "$_local_head" "$_remote_head" 2>/dev/null) \
-            || return 0   # merge-base failed → assume update available
-        [[ "$_base" != "$_remote_head" ]]   # 0 if local is behind, 1 if ahead/diverged
-        return $?
+            || return 0   # merge-base failed — assume update available
+        if [[ "$_base" == "$_remote_head" ]]; then
+            return 1   # local is ahead — skip
+        elif [[ "$_base" == "$_local_head" ]]; then
+            return 0   # local is behind — update available
+        else
+            # Diverged
+            if (( _allow_diverged )); then
+                warn "update_core: '${_repo_dir:t}' has diverged from ${_remote}/${_branch} — proceeding (merge may result)"
+                return 0
+            else
+                warn "update_core: '${_repo_dir:t}' has diverged from ${_remote}/${_branch} — skipping (resolve manually or use prompt mode)"
+                return 1
+            fi
+        fi
     fi
 
     # --- Non-GitHub remote: fall back to git fetch ---
-    _update_core_is_available_fetch "$_repo_dir"
+    _update_core_is_available_fetch "$_repo_dir" "$_allow_diverged"
     return $?
 }
 

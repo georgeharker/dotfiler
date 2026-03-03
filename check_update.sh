@@ -137,13 +137,13 @@ function handle_self_update() {
     return 0
   fi
 
-  # Release the lock on any exit, including signals.  For INT/QUIT propagate
-  # the signal's exit status so the outer shell knows we were interrupted;
-  # for a normal EXIT always return 0 (self-update is best-effort).
+  # Release the lock when the function exits normally.
+  # NOTE: do NOT use `return` in this EXIT trap — when the function is called
+  # at script top-level, the trap body executes in that scope and `return`
+  # becomes `exit`, which would terminate the script before handle_update runs.
   trap "
     _update_core_release_lock '$dotfiler_cache_dir/self_update.lock'
     unset -f handle_self_update 2>/dev/null
-    return 0
   " EXIT
   trap "
     ret=\$?
@@ -211,9 +211,9 @@ function handle_update() {
   fi
 
   # Clean up on any exit.  Signal traps propagate the signal's status so that
-  # an INT/QUIT is not swallowed.  Normal EXIT always returns 0: update checks
-  # are best-effort from the caller's perspective; only update_dotfiles itself
-  # reports a meaningful failure.
+  # an INT/QUIT is not swallowed.  Normal EXIT does only cleanup — no `return`
+  # here because this function is called at script top-level and `return`
+  # inside a trap body executes in the calling scope (= exit for top-level).
   trap "
     unset update_mode 2>/dev/null
     unset dotfiles_dir dotfiles_cache_dir dotfiles_timestamp 2>/dev/null
@@ -221,7 +221,6 @@ function handle_update() {
     cleanup_helpers 2>/dev/null
     cleanup_logging 2>/dev/null
     _update_core_release_lock '$dotfiles_cache_dir/update.lock'
-    return 0
   " EXIT
   trap "
     ret=\$?
