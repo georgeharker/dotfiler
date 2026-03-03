@@ -190,15 +190,136 @@ _update_core_detect_deployment() {
     # repo_dir is inside a parent repo
     _rel=${_repo_real#${_parent_real}/}
 
-    if git -C "$_parent_real" submodule status -- "$_rel" &>/dev/null; then
-        REPLY=submodule; return 0
-    fi
+    # git submodule status exits 0 for subtree paths too; check .gitmodules by
+    # path value (not section name, which may differ) to properly detect submodules.
+    local _gm_line _gm_path
+    while IFS= read -r _gm_line; do
+        _gm_path=${_gm_line##* }
+        if [[ "$_gm_path" == "$_rel" ]]; then
+            REPLY=submodule; return 0
+        fi
+    done < <(git -C "$_parent_real" config --file=.gitmodules --get-regexp '^submodule\..*\.path$' 2>/dev/null)
 
     if [[ -n "$_subtree_remote_val" ]]; then
         REPLY=subtree; return 0
     fi
 
     REPLY=subdir; return 0
+}
+
+# ---------------------------------------------------------------------------
+# SHA marker helpers  –  persistent last-updated SHA for subtree deployments
+# ---------------------------------------------------------------------------
+# When a project is deployed as a git-subtree, the parent repo's HEAD has no
+# relationship to the subtree source repo's commit history.  We maintain a
+# small marker file *adjacent to* the subtree directory (not inside it) that
+# records the last-known remote SHA we successfully pulled.
+#
+# The marker file name is derived from the subtree directory's basename so
+# that multiple subtrees under the same parent do not collide:
+#
+# Example layout:
+#   dotfiles/                        ← parent repo root
+#   ├── .nounpack/
+#   │   ├── .dotfiler-subtree-sha    ← marker for dotfiler subtree
+#   │   └── dotfiler/                ← dotfiler subtree prefix
+#   │       └── ...
+#   ├── .config/
+#   │   ├── .zdot-subtree-sha        ← marker for zdot subtree
+#   │   └── zdot/                    ← zdot subtree prefix
+#   │       └── ...
+#
+# When zstyle ':<project>:update' in-tree-commit is active, the marker is
+# included in the parent-repo commit so the state is tracked in version
+# control.
+
+# _update_core_sha_marker_path <subtree_dir>
+# Sets REPLY to the absolute path of the marker file for the given subtree.
+# The marker is placed in the subtree's parent directory with a name derived
+# from the subtree directory's basename: .<basename>-subtree-sha
+_update_core_sha_marker_path() {
+    local _subtree_dir=${1:?subtree directory required}
+    local _basename=${_subtree_dir:A:t}
+    REPLY="${_subtree_dir:A:h}/.${_basename}-subtree-sha"
+}
+
+# _update_core_read_sha_marker <subtree_dir>
+# Reads the stored SHA marker into REPLY.  Returns 0 on success, 1 if no
+# marker exists or is empty.
+_update_core_read_sha_marker() {
+    local _subtree_dir=${1:?subtree directory required}
+    _update_core_sha_marker_path "$_subtree_dir"
+    local _path=$REPLY
+    if [[ -r "$_path" ]]; then
+        REPLY="$(<"$_path")"
+        REPLY="${REPLY%%$'\n'}"          # strip trailing newline
+        [[ -n "$REPLY" ]] && return 0
+    fi
+    REPLY=""
+    return 1
+}
+
+# _update_core_write_sha_marker <subtree_dir> <sha>
+# Persists <sha> as the last-updated marker for the subtree.
+# Returns 0 on success, 1 on write failure.
+_update_core_write_sha_marker() {
+    local _subtree_dir=${1:?subtree directory required}
+    local _sha=${2:?sha required}
+    _update_core_sha_marker_path "$_subtree_dir"
+    local _path=$REPLY
+    if printf '%s\n' "$_sha" > "$_path" 2>/dev/null; then
+        return 0
+    fi
+    return 1
+}
+
+# _update_core_resolve_remote_sha <remote_url> <branch>
+# Fetches the HEAD SHA for <branch> from <remote_url>.
+# Prints the SHA to stdout.  Returns 0 on success, 1 on failure.
+# Tries the GitHub API first (lightweight), then falls back to git ls-remote.
+_update_core_resolve_remote_sha() {
+    local _remote_url=$1 _branch=${2:-main}
+    local _sha="" _repo=""
+
+    # --- GitHub API path ---
+    case "$_remote_url" in
+        https://github.com/*) _repo=${${_remote_url#https://github.com/}%.git} ;;
+        git@github.com:*)     _repo=${${_remote_url#git@github.com:}%.git} ;;
+    esac
+
+    if [[ -n "$_repo" ]]; then
+        local _api_url="https://api.github.com/repos/${_repo}/commits/${_branch}"
+        local _curl_auth=() _wget_auth=()
+        if [[ -n "$GH_TOKEN" ]]; then
+            _curl_auth=(-H "Authorization: Bearer ${GH_TOKEN}")
+            _wget_auth=(--header="Authorization: Bearer ${GH_TOKEN}")
+        fi
+
+        _sha=$(
+            if (( ${+commands[curl]} )); then
+                curl --connect-timeout 10 --max-time 30 -fsSL \
+                    -H 'Accept: application/vnd.github.v3.sha' \
+                    "${_curl_auth[@]}" "$_api_url" 2>/dev/null
+            elif (( ${+commands[wget]} )); then
+                wget --timeout=30 -O- \
+                    --header='Accept: application/vnd.github.v3.sha' \
+                    "${_wget_auth[@]}" "$_api_url" 2>/dev/null
+            fi
+        )
+        if [[ -n "$_sha" ]]; then
+            printf '%s' "$_sha"
+            return 0
+        fi
+    fi
+
+    # --- Fallback: git ls-remote ---
+    _sha=$(git ls-remote "$_remote_url" "$_branch" 2>/dev/null | awk '{print $1}')
+    if [[ -n "$_sha" ]]; then
+        printf '%s' "$_sha"
+        return 0
+    fi
+
+    return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -374,6 +495,86 @@ _update_core_is_available() {
 }
 
 # ---------------------------------------------------------------------------
+# Subtree-aware update availability check
+# ---------------------------------------------------------------------------
+
+# _update_core_is_available_subtree <subtree_dir> <remote_url> <branch>
+# Returns:
+#   0 — update is available
+#   1 — up to date or indeterminate (skip — conservative)
+#
+# For subtree deployments, the parent repo's HEAD/branch SHAs have no
+# relationship to the subtree source repo's commit history.  Instead of
+# rev-parse on a local branch, we compare the remote SHA against a cached
+# marker file that records the last-known SHA after a successful subtree pull.
+#
+# If no marker exists (first run or migration), we assume an update is
+# available to bootstrap the marker.
+_update_core_is_available_subtree() {
+    local _subtree_dir=$1 _remote_url=$2 _branch=${3:-main}
+    local _local_head _remote_head
+
+    # Read the cached SHA from the marker file adjacent to the subtree
+    if _update_core_read_sha_marker "$_subtree_dir"; then
+        _local_head=$REPLY
+    else
+        # No marker → first run; assume update available to bootstrap
+        verbose "update_core: no subtree SHA marker found — assuming update available"
+        return 0
+    fi
+
+    # --- GitHub API path (API-first, no git fetch) ---
+    local _repo
+    case "$_remote_url" in
+        https://github.com/*) _repo=${${_remote_url#https://github.com/}%.git} ;;
+        git@github.com:*)     _repo=${${_remote_url#git@github.com:}%.git} ;;
+        *)                    _repo="" ;;
+    esac
+
+    if [[ -n "$_repo" ]]; then
+        local _api_url="https://api.github.com/repos/${_repo}/commits/${_branch}"
+
+        local _curl_auth=() _wget_auth=()
+        if [[ -n "$GH_TOKEN" ]]; then
+            _curl_auth=(-H "Authorization: Bearer ${GH_TOKEN}")
+            _wget_auth=(--header="Authorization: Bearer ${GH_TOKEN}")
+        fi
+
+        _remote_head=$(
+            if (( ${+commands[curl]} )); then
+                curl --connect-timeout 10 --max-time 30 -fsSL \
+                    -H 'Accept: application/vnd.github.v3.sha' \
+                    "${_curl_auth[@]}" "$_api_url" 2>/dev/null
+            elif (( ${+commands[wget]} )); then
+                wget --timeout=30 -O- \
+                    --header='Accept: application/vnd.github.v3.sha' \
+                    "${_wget_auth[@]}" "$_api_url" 2>/dev/null
+            else
+                exit 1
+            fi
+        ) || return 1   # API failure → skip (conservative)
+
+        [[ -z "$_remote_head" ]] && return 1   # empty response → skip
+
+        verbose "update_core: subtree marker=${_local_head:0:8} remote(API)=${_remote_head:0:8}"
+
+        # Simple equality check — no merge-base (parent repo has no
+        # knowledge of the subtree source history)
+        [[ "$_local_head" == "$_remote_head" ]] && return 1
+        return 0
+    fi
+
+    # --- Non-GitHub remote: fall back to git ls-remote ---
+    _remote_head=$(git ls-remote "$_remote_url" "$_branch" 2>/dev/null | awk '{print $1}')
+    [[ -z "$_remote_head" ]] && return 1   # ls-remote failed → skip
+
+    verbose "update_core: subtree marker=${_local_head:0:8} remote(ls-remote)=${_remote_head:0:8}"
+
+    [[ "$_local_head" == "$_remote_head" ]] && return 1
+    return 0
+}
+
+# ---------------------------------------------------------------------------
 # Cleanup
 # ---------------------------------------------------------------------------
 
@@ -393,10 +594,15 @@ _update_core_cleanup() {
         _update_core_write_timestamp \
         _update_core_is_available \
         _update_core_is_available_fetch \
+        _update_core_is_available_subtree \
+        _update_core_resolve_remote_sha \
         _update_core_should_update \
         _update_core_detect_deployment \
         _update_core_check_foreign_staged \
         _update_core_commit_parent \
+        _update_core_sha_marker_path \
+        _update_core_read_sha_marker \
+        _update_core_write_sha_marker \
         2>/dev/null
     unset -f _update_core_cleanup 2>/dev/null
 }

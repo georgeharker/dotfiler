@@ -64,7 +64,7 @@ zstyle -s ':dotfiler:update' mode update_mode || {
 if [[ "$update_mode" = disabled ]] \
    || [[ ! -w "$dotfiles_dir" || ! -O "$dotfiles_dir" ]] \
    || ! command git --version 2>&1 >/dev/null \
-   || (builtin cd -q "$ZSH"; ! command git rev-parse --is-inside-work-tree &>/dev/null); then
+   || ! command git -C "$dotfiles_dir" rev-parse --is-inside-work-tree &>/dev/null; then
   unset update_mode
   return
 fi
@@ -83,13 +83,13 @@ function update_dotfiles() {
   fi
 
   if [[ "$update_mode" != background-alpha ]] \
-    && LANG= ZSH="$ZSH" "${script_dir}/update.sh" "$quiet"; then
+    && LANG= "${script_dir}/update.sh" "$quiet"; then
     _update_core_write_timestamp "$dotfiles_timestamp"
     return $?
   fi
 
   local exit_status error
-  if error=$(LANG= ZSH="$ZSH" "${script_dir}/update.sh" -q 2>&1); then
+  if error=$(LANG= "${script_dir}/update.sh" -q 2>&1); then
     _update_core_write_timestamp "$dotfiles_timestamp" 0 "Update successful"
   else
     exit_status=$?
@@ -132,9 +132,14 @@ function handle_self_update() {
             _update_core_is_available "$script_dir"
             _avail=$? ;;
         subtree)
-            local _remote_url _remote="${_subtree_spec%% *}"
+            local _remote_url _remote _branch
+            _remote="${_subtree_spec%% *}"
+            _branch="${_subtree_spec#* }"
+            [[ "$_branch" == "$_remote" ]] && _branch=""
+            [[ -z "$_branch" ]] && \
+                _branch=$(_update_core_get_default_branch "$script_dir" "$_remote")
             _remote_url=$(git -C "$script_dir" config "remote.${_remote}.url" 2>/dev/null)
-            _update_core_is_available "$script_dir" "$_remote_url"
+            _update_core_is_available_subtree "$script_dir" "$_remote_url" "$_branch"
             _avail=$? ;;
         subdir|none|*)
             return 0 ;;

@@ -141,7 +141,10 @@ case $_topology in
         local _parent _rel
         _parent=$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null) \
             || { warn "update_self: cannot find parent repo"; _update_self_exec_update; return }
-        _rel=${script_dir:A#${_parent:A}/}
+        local _parent_real _script_real
+        _parent_real=${_parent:A}
+        _script_real=${script_dir:A}
+        _rel=${_script_real#${_parent_real}/}
 
         # Parse subtree-remote zstyle: "<remote> [<branch>]"
         local _remote _branch
@@ -157,14 +160,34 @@ case $_topology in
         if (( _dry_run )); then
             info "update_self: [dry-run] would: git subtree pull --prefix=$_rel $_remote $_branch --squash"
         else
-            git -C "$_parent" subtree pull \
-                --prefix="$_rel" "$_remote" "$_branch" --squash \
-                || warn "update_self: subtree pull failed — continuing"
-            _update_core_commit_parent \
-                "$_parent" "$_rel" \
-                "dotfiler subtree updated" \
-                "dotfiler: update scripts subtree" \
-                "$_mode"
+            if git -C "$_parent" subtree pull \
+                --prefix="$_rel" "$_remote" "$_branch" --squash; then
+
+                # Record the remote SHA we just pulled so future
+                # _update_core_is_available_subtree can compare against it.
+                local _remote_url _pulled_sha
+                _remote_url=$(git -C "$script_dir" config "remote.${_remote}.url" 2>/dev/null)
+                _pulled_sha=$(_update_core_resolve_remote_sha "$_remote_url" "$_branch" 2>/dev/null)
+                if [[ -n "$_pulled_sha" ]]; then
+                    _update_core_write_sha_marker "$script_dir" "$_pulled_sha"
+                fi
+
+                # Stage the SHA marker alongside the subtree when committing
+                # to the parent repo.
+                _update_core_sha_marker_path "$script_dir"
+                local _marker_path=$REPLY
+                if [[ "$_mode" != "none" && -f "$_marker_path" ]]; then
+                    git -C "$_parent" add "$_marker_path" 2>/dev/null
+                fi
+
+                _update_core_commit_parent \
+                    "$_parent" "$_rel" \
+                    "dotfiler subtree updated" \
+                    "dotfiler: update scripts subtree" \
+                    "$_mode"
+            else
+                warn "update_self: subtree pull failed — continuing"
+            fi
             _update_core_write_timestamp "$_self_stamp"
         fi
         _update_self_exec_update
