@@ -177,28 +177,40 @@ _update_core_detect_deployment() {
     local _repo_dir=$1 _subtree_remote_val=${2:-}
     local _repo_real _root _parent_real _rel
 
+    _repo_real=${_repo_dir:A}
+
+    # --show-superproject-working-tree prints the parent repo's working tree
+    # root when repo_dir is a registered git submodule, and prints nothing
+    # otherwise.  Check this first because git -C <submodule> rev-parse
+    # --show-toplevel returns the *submodule's* own root, making it
+    # indistinguishable from a standalone repo at that point.
+    _parent_real=$(git -C "$_repo_dir" rev-parse --show-superproject-working-tree 2>/dev/null)
+    if [[ -n "$_parent_real" ]]; then
+        _parent_real=${_parent_real:A}
+        _rel=${_repo_real#${_parent_real}/}
+        # Verify the path is listed in .gitmodules (sanity check)
+        local _gm_line _gm_path
+        while IFS= read -r _gm_line; do
+            _gm_path=${_gm_line##* }
+            if [[ "$_gm_path" == "$_rel" ]]; then
+                REPLY=submodule; return 0
+            fi
+        done < <(git -C "$_parent_real" config --file=.gitmodules --get-regexp '^submodule\..*\.path$' 2>/dev/null)
+        # Superproject exists but path not in .gitmodules — treat as subdir
+        REPLY=subdir; return 0
+    fi
+
     _root=$(git -C "$_repo_dir" rev-parse --show-toplevel 2>/dev/null) || {
         REPLY=none; return 0
     }
-    _repo_real=${_repo_dir:A}
     _parent_real=${_root:A}
 
     if [[ "$_repo_real" == "$_parent_real" ]]; then
         REPLY=standalone; return 0
     fi
 
-    # repo_dir is inside a parent repo
+    # repo_dir is inside a parent repo (subtree or plain subdir)
     _rel=${_repo_real#${_parent_real}/}
-
-    # git submodule status exits 0 for subtree paths too; check .gitmodules by
-    # path value (not section name, which may differ) to properly detect submodules.
-    local _gm_line _gm_path
-    while IFS= read -r _gm_line; do
-        _gm_path=${_gm_line##* }
-        if [[ "$_gm_path" == "$_rel" ]]; then
-            REPLY=submodule; return 0
-        fi
-    done < <(git -C "$_parent_real" config --file=.gitmodules --get-regexp '^submodule\..*\.path$' 2>/dev/null)
 
     if [[ -n "$_subtree_remote_val" ]]; then
         REPLY=subtree; return 0
