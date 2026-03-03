@@ -70,7 +70,13 @@ if [[ "$update_mode" = disabled ]] \
 fi
 
 function is_update_available() {
-    _update_core_is_available "$dotfiles_dir"
+    # Check the parent dotfiles repo itself
+    _update_core_is_available "$dotfiles_dir" && return 0
+    # Also check registered submodules — their remotes may have advanced
+    # beyond the SHA the parent currently records, even when the parent
+    # repo itself has no new commits from its own remote.
+    _update_core_is_available_submodules "$dotfiles_dir" && return 0
+    return 1
 }
 
 function update_dotfiles() {

@@ -166,56 +166,120 @@ _update_core_is_available_fetch() {
 }
 
 # ---------------------------------------------------------------------------
-# Deployment topology detection
+# Submodule path helpers
 # ---------------------------------------------------------------------------
 
-# _update_core_detect_deployment <repo_dir> <subtree_remote_val>
+# _update_core_list_submodule_paths <repo_dir>
+# Sets the zsh array `reply` to the list of submodule paths registered in
+# <repo_dir>/.gitmodules.  Returns 0 if at least one path was found, 1 if
+# .gitmodules is absent or empty.
+_update_core_list_submodule_paths() {
+    local _repo_dir=$1
+    local _line
+    reply=()
+    while IFS= read -r _line; do
+        reply+=( "${_line##* }" )
+    done < <(git -C "$_repo_dir" config --file=.gitmodules \
+        --get-regexp '^submodule\..*\.path$' 2>/dev/null)
+    [[ ${#reply} -gt 0 ]]
+}
+
+# ---------------------------------------------------------------------------
+# Submodule-aware update availability check
+# ---------------------------------------------------------------------------
+
+# _update_core_is_available_submodules <repo_dir>
+# Checks each registered submodule in <repo_dir> for upstream changes beyond
+# what the parent's recorded pointer refers to.
+# Returns:
+#   0 — at least one submodule has upstream commits the parent hasn't recorded
+#   1 — all submodules are up to date with their remotes (or no submodules)
+#   2 — error reading submodule list
+#
+# Strategy: for each submodule, delegate to _update_core_is_available on the
+# submodule directory (API-first, fetch fallback — same logic as the parent).
+# That comparison is against the submodule's own remote HEAD, not the SHA the
+# parent has recorded, so it correctly detects commits the parent hasn't
+# pointer-bumped to yet.
+_update_core_is_available_submodules() {
+    local _repo_dir=$1
+    local _path
+
+    _update_core_list_submodule_paths "$_repo_dir" || return 1
+
+    for _path in "${reply[@]}"; do
+        local _sub_dir="${_repo_dir}/${_path}"
+        [[ -d "$_sub_dir" ]] || continue
+        _update_core_is_available "$_sub_dir" && return 0
+    done
+
+    return 1
+}
+
+# _update_core_get_parent_root <repo_dir>
+# Resolves the effective parent repo root for <repo_dir>, setting REPLY to
+# the absolute path.  Returns:
+#   0 — superproject found: <repo_dir> is a registered git submodule;
+#         REPLY is the parent (superproject) working-tree root.
+#   1 — no superproject: <repo_dir> is its own git root or is inside a
+#         parent via subtree/subdir; REPLY is the git --show-toplevel root.
+#   2 — not inside any git repo; REPLY is empty.
+#
+# Always prefer --show-superproject-working-tree over --show-toplevel for
+# submodule detection: inside a submodule, --show-toplevel returns the
+# submodule's own root, making it indistinguishable from a standalone repo.
+_update_core_get_parent_root() {
+    local _repo_dir=$1
+    local _root
+
+    _root=$(git -C "$_repo_dir" rev-parse --show-superproject-working-tree 2>/dev/null)
+    if [[ -n "$_root" ]]; then
+        REPLY=${_root:A}; return 0
+    fi
+
+    _root=$(git -C "$_repo_dir" rev-parse --show-toplevel 2>/dev/null) || {
+        REPLY=""; return 2
+    }
+    REPLY=${_root:A}; return 1
+}
+
+
 # Sets REPLY to: standalone | submodule | subtree | subdir | none
 # <subtree_remote_val> is the resolved value of the caller's subtree-remote
 # zstyle (empty string if unset); the function never calls zstyle itself.
 _update_core_detect_deployment() {
     local _repo_dir=$1 _subtree_remote_val=${2:-}
-    local _repo_real _root _parent_real _rel
+    local _repo_real _parent_real _rel
 
     _repo_real=${_repo_dir:A}
 
-    # --show-superproject-working-tree prints the parent repo's working tree
-    # root when repo_dir is a registered git submodule, and prints nothing
-    # otherwise.  Check this first because git -C <submodule> rev-parse
-    # --show-toplevel returns the *submodule's* own root, making it
-    # indistinguishable from a standalone repo at that point.
-    _parent_real=$(git -C "$_repo_dir" rev-parse --show-superproject-working-tree 2>/dev/null)
-    if [[ -n "$_parent_real" ]]; then
-        _parent_real=${_parent_real:A}
+    _update_core_get_parent_root "$_repo_dir"
+    local _rc=$? _parent_real=$REPLY
+
+    if (( _rc == 2 )); then
+        REPLY=none; return 0
+    fi
+
+    if (( _rc == 0 )); then
+        # superproject found — repo_dir is a submodule; verify via .gitmodules
         _rel=${_repo_real#${_parent_real}/}
-        # Verify the path is listed in .gitmodules (sanity check)
-        local _gm_line _gm_path
-        while IFS= read -r _gm_line; do
-            _gm_path=${_gm_line##* }
-            if [[ "$_gm_path" == "$_rel" ]]; then
-                REPLY=submodule; return 0
-            fi
-        done < <(git -C "$_parent_real" config --file=.gitmodules --get-regexp '^submodule\..*\.path$' 2>/dev/null)
+        _update_core_list_submodule_paths "$_parent_real"
+        local _gm_path
+        for _gm_path in "${reply[@]}"; do
+            [[ "$_gm_path" == "$_rel" ]] && { REPLY=submodule; return 0; }
+        done
         # Superproject exists but path not in .gitmodules — treat as subdir
         REPLY=subdir; return 0
     fi
 
-    _root=$(git -C "$_repo_dir" rev-parse --show-toplevel 2>/dev/null) || {
-        REPLY=none; return 0
-    }
-    _parent_real=${_root:A}
-
+    # rc==1: no superproject; _parent_real is the --show-toplevel root
     if [[ "$_repo_real" == "$_parent_real" ]]; then
         REPLY=standalone; return 0
     fi
 
     # repo_dir is inside a parent repo (subtree or plain subdir)
     _rel=${_repo_real#${_parent_real}/}
-
-    if [[ -n "$_subtree_remote_val" ]]; then
-        REPLY=subtree; return 0
-    fi
-
+    [[ -n "$_subtree_remote_val" ]] && { REPLY=subtree; return 0; }
     REPLY=subdir; return 0
 }
 
@@ -609,6 +673,9 @@ _update_core_cleanup() {
         _update_core_is_available \
         _update_core_is_available_fetch \
         _update_core_is_available_subtree \
+        _update_core_is_available_submodules \
+        _update_core_get_parent_root \
+        _update_core_list_submodule_paths \
         _update_core_resolve_remote_sha \
         _update_core_should_update \
         _update_core_detect_deployment \
