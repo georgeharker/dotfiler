@@ -80,8 +80,8 @@ case $_topology in
     # The scripts dir is its own standalone git repo.  Pull if an update is
     # available, then re-exec update.sh.
     # -----------------------------------------------------------------------
-        _update_core_is_available "$script_dir"
-        local _avail=$?
+        local _avail
+        _update_core_is_available "$script_dir" && _avail=0 || _avail=$?
         if (( _avail == 0 )); then
             info "update_self: update available — pulling scripts"
             if (( _dry_run )); then

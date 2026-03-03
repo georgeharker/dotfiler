@@ -189,13 +189,13 @@ _update_core_list_submodule_paths() {
 # ---------------------------------------------------------------------------
 
 # _update_core_get_parent_root <repo_dir>
-# Resolves the effective parent repo root for <repo_dir>, setting REPLY to
-# the absolute path.  Returns:
-#   0 — superproject found: <repo_dir> is a registered git submodule;
-#         REPLY is the parent (superproject) working-tree root.
-#   1 — no superproject: <repo_dir> is its own git root or is inside a
-#         parent via subtree/subdir; REPLY is the git --show-toplevel root.
-#   2 — not inside any git repo; REPLY is empty.
+# Resolves the effective parent repo root for <repo_dir>.
+# Always returns 0.  Sets reply[] array:
+#   reply[1] — absolute path of the parent root (empty string if not in any git repo)
+#   reply[2] — one of:
+#                superproject  — <repo_dir> is a registered git submodule
+#                toplevel      — no superproject; reply[1] is git --show-toplevel root
+#                none          — not inside any git repo
 #
 # Always prefer --show-superproject-working-tree over --show-toplevel for
 # submodule detection: inside a submodule, --show-toplevel returns the
@@ -203,16 +203,17 @@ _update_core_list_submodule_paths() {
 _update_core_get_parent_root() {
     local _repo_dir=$1
     local _root
+    reply=()
 
     _root=$(git -C "$_repo_dir" rev-parse --show-superproject-working-tree 2>/dev/null)
     if [[ -n "$_root" ]]; then
-        REPLY=${_root:A}; return 0
+        reply=( ${_root:A} superproject ); return 0
     fi
 
     _root=$(git -C "$_repo_dir" rev-parse --show-toplevel 2>/dev/null) || {
-        REPLY=""; return 2
+        reply=( "" none ); return 0
     }
-    REPLY=${_root:A}; return 1
+    reply=( ${_root:A} toplevel ); return 0
 }
 
 
@@ -226,13 +227,13 @@ _update_core_detect_deployment() {
     _repo_real=${_repo_dir:A}
 
     _update_core_get_parent_root "$_repo_dir"
-    local _rc=$? _parent_real=$REPLY
+    local _kind=${reply[2]} _parent_real=${reply[1]}
 
-    if (( _rc == 2 )); then
+    if [[ "$_kind" == none ]]; then
         REPLY=none; return 0
     fi
 
-    if (( _rc == 0 )); then
+    if [[ "$_kind" == superproject ]]; then
         # superproject found — repo_dir is a submodule; verify via .gitmodules
         _rel=${_repo_real#${_parent_real}/}
         _update_core_list_submodule_paths "$_parent_real"
@@ -244,7 +245,7 @@ _update_core_detect_deployment() {
         REPLY=subdir; return 0
     fi
 
-    # rc==1: no superproject; _parent_real is the --show-toplevel root
+    # toplevel: no superproject; _parent_real is the --show-toplevel root
     if [[ "$_repo_real" == "$_parent_real" ]]; then
         REPLY=standalone; return 0
     fi
