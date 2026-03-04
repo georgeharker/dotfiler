@@ -37,6 +37,9 @@ _dotfiler() {
                 update)
                     _dotfiler_update_args
                     ;;
+                update-self)
+                    _dotfiler_update_self_args
+                    ;;
                install)
                    _dotfiler_install_args
                    ;;
@@ -56,8 +59,9 @@ _dotfiler_commands() {
         'setup:Run dotfile setup and management operations'
         'check-updates:Check for updates to dotfiles repository'
         'update:Update dotfiles from remote repository'
-       'install:Run modular installation system (all modules)'
-       'install-module:Run specific installation module'
+        'update-self:Update dotfiler scripts themselves'
+        'install:Run modular installation system (all modules)'
+        'install-module:Run specific installation module'
     )
     _describe 'dotfiler commands' commands
 }
@@ -94,6 +98,16 @@ _dotfiler_check_update_args() {
         '(-d --debug)'{-d,--debug}'[Enable debug output for troubleshooting]'
 }
 
+# Complete update-self command arguments
+_dotfiler_update_self_args() {
+    _arguments \
+        '(- *)--help[Show help message]' \
+        '(-f --force)'{-f,--force}'[Force update even if timestamp is recent]' \
+        '(-q --quiet)'{-q,--quiet}'[Suppress informational output]' \
+        '(-v --verbose)'{-v,--verbose}'[Enable verbose output]' \
+        '--dry-run[Show what would be updated without making changes]'
+}
+
 # Complete update command arguments
 _dotfiler_update_args() {
     _arguments \
@@ -108,14 +122,14 @@ _dotfiler_update_args() {
 _dotfiler_install_args() {
     _arguments \
         '(- *)--help[Show help message]' \
-        '(-f)'-f'[Force operation]'
+        '(-f --force)'{-f,--force}'[Force operation]'
 }
 
 # Complete install-module command arguments
 _dotfiler_install_module_args() {
     _arguments \
         '(- *)--help[Show help message]' \
-        '(-f)'-f'[Force operation]' \
+        '(-f --force)'{-f,--force}'[Force operation]' \
         '1: :_dotfiler_modules' \
         '2: :_dotfiler_module_functions'
 }

@@ -286,30 +286,53 @@ If you're using the standalone install, point to the script directly:
 Control the behaviour with `zstyle` (set this **before** the `source` line):
 
 ```bash
-zstyle ':dotfiler:update' mode 'prompt'    # ask [Y/n] at login — default
-zstyle ':dotfiler:update' mode 'auto'      # pull silently, no interaction
-zstyle ':dotfiler:update' mode 'reminder'  # print a reminder only, never update
-zstyle ':dotfiler:update' mode 'disabled'  # skip the check entirely
+zstyle ':dotfiler:update' mode 'prompt'      # ask [Y/n] at login — default
+zstyle ':dotfiler:update' mode 'auto'        # pull silently, no interaction
+zstyle ':dotfiler:update' mode 'background'  # fetch and apply in background subshell
+zstyle ':dotfiler:update' mode 'reminder'    # print a reminder only, never update
+zstyle ':dotfiler:update' mode 'disabled'    # skip the check entirely
 ```
 
 | Mode | Behaviour |
 |------|-----------|
 | `prompt` | Asks `[Y/n]` at login. Default is Y. If you have already typed input when the prompt fires, shows a reminder instead. |
-| `auto` | Fetches and applies updates silently in the foreground. |
+| `auto` | Fetches and applies updates silently in the foreground at login. |
+| `background` | Launches the update check and apply in background subshells. The result (success or error) is surfaced on the **next prompt** via a `precmd` hook, so the login shell is never blocked. |
 | `reminder` | Prints a message but never pulls. Useful if you prefer manual control. |
 | `disabled` | Does nothing. No network activity. |
 
 Oh-My-Zsh users: dotfiler falls back to reading `:omz:update mode` if no
-`:dotfiles:update` mode is set. The legacy env vars `DISABLE_UPDATE_PROMPT=true`
+`:dotfiler:update` mode is set. The legacy env vars `DISABLE_UPDATE_PROMPT=true`
 (→ `auto`) and `DISABLE_AUTO_UPDATE=true` (→ `disabled`) are still honoured.
+
+### Debugging the update check
+
+To see exactly what `check_update.sh` is doing at login, enable debug output
+in any of these ways:
+
+```bash
+# 1. Environment variable — set before opening a shell (e.g. in .zshenv)
+export DOTFILES_DEBUG=1
+
+# 2. zstyle — set before sourcing check_update.sh
+zstyle ':dotfiler:update' verbose silent   # suppress all non-error output
+#   (omit the zstyle to get the default — informational messages only)
+
+# 3. Flag — when running check-updates directly
+dotfiler check-updates --debug
+```
+
+With `DOTFILES_DEBUG` set, every phase is printed with a `[debug]` prefix so
+you can trace exactly which branch is taken, what lock files are acquired, and
+whether an update is detected.
 
 ### Check frequency
 
 By default, dotfiler checks at most once per hour (3600 seconds). Override with:
 
 ```bash
-zstyle ':dotfiles:update' frequency 86400   # once per day
-zstyle ':dotfiles:update' frequency 3600    # once per hour (default)
+zstyle ':dotfiler:update' frequency 86400   # once per day
+zstyle ':dotfiler:update' frequency 3600    # once per hour (default)
 ```
 
 The timestamp is stored in `${XDG_CACHE_DIR:-$HOME/.cache}/dotfiles/dotfiles_update`.
@@ -336,11 +359,11 @@ GitHub API fallback (step 3 above). This raises the rate limit from 60 to
 export GH_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxx   # in .zshenv or similar
 ```
 
-#### `background-alpha` mode and typed-input fallback
+#### `background` mode and typed-input fallback
 
-When `mode` is `prompt`, dotfiler checks for updates in a background subshell
-so the prompt is not blocked. The result is surfaced on the **next prompt** via
-a `precmd` hook.
+When `mode` is `background`, the update check and apply run in background
+subshells so the login shell is never blocked. The result is surfaced on the
+**next prompt** via a `precmd` hook.
 
 If you have already typed input into the prompt when the result arrives,
 dotfiler will not interrupt you with an interactive `[Y/n]` question. Instead
@@ -420,8 +443,14 @@ zstyle ':dotfiles:install' directory '/path/to/install'
 zstyle ':dotfiles:exclude' path '/path/to/dotfiles_exclude'
 
 # Update behaviour
-zstyle ':dotfiles:update' mode 'prompt'   # auto | prompt | reminder | disabled
-zstyle ':dotfiles:update' frequency 86400 # check interval in seconds
+zstyle ':dotfiler:update' mode 'prompt'   # auto | prompt | background | reminder | disabled
+zstyle ':dotfiler:update' frequency 86400 # check interval in seconds
+
+# Subtree remote (required when dotfiler is embedded as a git subtree)
+zstyle ':dotfiler:update' subtree-remote 'dotfiler main'
+
+# Hooks directory (optional — for component check-update / update hooks)
+zstyle ':dotfiler:hooks' dir "$HOME/.config/dotfiler/hooks"
 ```
 
 ---

@@ -144,7 +144,9 @@ _update_core_write_timestamp() {
     mkdir -p "${_ts:h}" 2>/dev/null
     {
         print "LAST_EPOCH=$(_update_core_current_epoch)"
-        if [[ -n "$_exit_status" && "$_exit_status" != 0 ]]; then
+        # Write EXIT_STATUS whenever it is explicitly provided (including 0 for
+        # background success signalling — callers that only update the epoch omit arg 2).
+        if [[ -n "$_exit_status" ]]; then
             print "EXIT_STATUS=$_exit_status"
         fi
         if [[ -n "$_error" ]]; then
