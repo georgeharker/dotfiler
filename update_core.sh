@@ -113,12 +113,18 @@ _update_core_acquire_lock() {
     if mkdir "$_lock" 2>/dev/null; then
         return 0
     fi
-    # Stale lock: remove if older than 24 h
+    # Stale lock recovery: remove if older than 10 minutes.
+    # 24h was too conservative — a crashed/killed run would block checks for a
+    # full day.  Dotfiler update runs are expected to finish in well under a
+    # minute, so 600 s is a safe threshold.
     zmodload zsh/stat 2>/dev/null
     zmodload zsh/datetime 2>/dev/null
-    local _mtime
+    local _mtime _age
     _mtime=$(zstat +mtime "$_lock" 2>/dev/null) || _mtime=0
-    if (( EPOCHSECONDS - _mtime > 86400 )); then
+    _age=$(( EPOCHSECONDS - _mtime ))
+    verbose "update_core: lock ${_lock} held (age ${_age}s)"
+    if (( _age > 600 )); then
+        verbose "update_core: stale lock (>${_age}s) — removing and retaking"
         rm -rf "$_lock" && mkdir "$_lock" 2>/dev/null && return 0
     fi
     return 1
