@@ -1,5 +1,6 @@
 #!/bin/zsh
 
+if [[ $ZSH_EVAL_CONTEXT != *:file* ]]; then
 # Capture script name early before functions change context
 script_name="${${(%):-%x}:A}"
 helper_script_dir="${script_name:h}"
@@ -12,6 +13,7 @@ unpack=()
 force_unpack=()
 untrack=()
 diff=()
+fi # not sourced
 
 function usage(){
   echo "Usage: $script_name ([-ingest path | -i path ...] | [-setup | -s]) [-unpack [file ...] | -u [file ...]] [-force-unpack [file ...] | -U [file ...]] [--untrack path | -t path ...] [--diff | -d] [--dry-run | -D] [--yes | y] [--no | -n] [--repo-dir <path>] [--link-dest <path>]"
@@ -22,6 +24,7 @@ function usage(){
   echo "  -u, --unpack        Unpack files (respects exclusions)"
   echo "  -U, --force-unpack  Force unpack files (ignores exclusions)"
   echo "  -D, --dry-run       Show what actions would be taken without making changes"
+  echo "  -g, --debug         Enable debug logging (one line per file traversed)"
   echo "  --repo-dir <path>     Source repo root (default: auto-detected dotfiles dir)"
   echo "  --link-dest <path>    Where symlinks are planted (default: \$HOME)"
   echo ""
@@ -32,6 +35,7 @@ function usage(){
   echo "  $script_name --repo-dir /path/to/zdot --link-dest ~/.config/zdot -u somefile"
 }
 
+if [[ $ZSH_EVAL_CONTEXT != *:file* ]]; then
 zmodload zsh/zutil
 zparseopts -D -E - i+:=ingest -ingest+:=ingest \
                    s=setup -setup=setup \
@@ -42,6 +46,7 @@ zparseopts -D -E - i+:=ingest -ingest+:=ingest \
                    d=diff -d=diff \
                    q=quiet -q=quiet \
                    D=dry_run -dry-run=dry_run \
+                   g=debug_flag -debug=debug_flag \
                    y=yes -y=defyes \
                    n=no -n=defno \
                    -repo-dir:=opt_repo_dir \
@@ -56,106 +61,352 @@ _setup_repo_dir_override="${opt_repo_dir[-1]:-}"
 
 # Set quiet mode for helpers
 [[ ${#quiet[@]} -gt 0 ]] && quiet_mode=true
+[[ ${#debug_flag[@]} -gt 0 ]] && export DOTFILER_DEBUG=1
+fi # not sourced
 
-# Develop an expression for exclusion
-# Function to read exclusion patterns from file or use defaults
+# ---------------------------------------------------------------------------
+# Exclusion system — gitignore-style semantics
+#
+# Global state:
+#   _gitignore_rules  — array of "FLAG:PATTERN" entries, in order.
+#                       FLAG is either "enforce" (baked-in, immune to negation)
+#                       or "user" (from a file, may be negated).
+#   _prune_dir_names  — plain dir names to prune during find traversal
+#                       (performance only; should_exclude_file is authoritative)
+# ---------------------------------------------------------------------------
+
+# _gitignore_rules and _prune_dir_names are module-level globals.
+_gitignore_rules=()
+_prune_dir_names=()
+
+# read_exclusion_patterns [--enforce] [file]
+#
+#   Accumulates patterns from a file (or baked-in defaults) into
+#   _gitignore_rules.  May be called multiple times.
+#
+#   --enforce  patterns from this call cannot be overridden by user negation
+#
+#   If no file is given (or the file does not exist) and --enforce is set,
+#   the baked-in minimal ruleset is loaded instead.
 read_exclusion_patterns() {
+    local enforce=0
+    [[ "$1" == "--enforce" ]] && { enforce=1; shift; }
     local exclusion_file="$1"
-    local -a path_patterns=()
-    local -a name_patterns=()
-    local -a anchored_patterns=()
+    local flag="user"
+    (( enforce )) && flag="enforce"
     
-    # Default exclusions if no file provided or file doesn't exist
     if [[ -z "$exclusion_file" ]] || [[ ! -f "$exclusion_file" ]]; then
-        # Default path patterns (relative to dotfiles root)
-        path_patterns=(
-            ".git"
-            ".git/*"
-            ".nounpack"
-            ".nounpack/*"
-        )
-        
-        # Default name patterns (filenames to exclude anywhere)
-        name_patterns=(
-            "*.swp"
-            "*.swo"
-            ".DS_Store"
-            "*~"
-            ".git"
-        )
-    else
-        # Read file contents into array, splitting on newlines
-        # (f) splits by line, (u) makes patterns unique, (ND) prevents globbing
-        local -a raw_patterns=(${(fu)"$(<$exclusion_file)"}(ND))
-        
-        # Process each pattern
-        for line in "${raw_patterns[@]}"; do
-            # Skip comments and empty lines
-            [[ "$line" =~ ^#.* ]] && continue
-            [[ -z "$line" ]] && continue
-            
-            # Convert patterns similar to gitignore logic
-            # Handle directory patterns (ending with /)
-            if [[ "$line" =~ /$ ]]; then
-                # Remove trailing slash and add both directory and contents
-                local path_pattern="${line%/}"
-                path_patterns+=("$path_pattern" "$path_pattern/*")
-            # Handle anchored patterns (leading / — root-anchored, like gitignore)
-            elif [[ "$line" =~ ^/ ]]; then
-                # Strip leading slash; matched only against depth-1 entries
-                anchored_patterns+=("${line#/}")
-            # Handle patterns with interior path separators
-            elif [[ "$line" =~ / ]]; then
-                path_patterns+=("$line")
-            # Handle name patterns (no path separators)
-            else
-                name_patterns+=("$line")
+        if (( enforce )); then
+            # Minimal baked-in rules — only things that break dotfiler if linked.
+            # These are stored as enforce rules so user negation cannot un-exclude them.
+            _gitignore_rules+=("${flag}:.git/" "${flag}:.nounpack/")
+            _prune_dir_names+=(".git" ".nounpack")
+        fi
+        return 0
+    fi
+
+    # Read file line-by-line; (f) splits on newlines, (@) preserves array form.
+    local line
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        # Strip inline comments (not standard gitignore but harmless)
+        # Skip blank lines and comment-only lines
+        [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+
+        _gitignore_rules+=("${flag}:${line}")
+
+        # Collect plain directory names for find -prune (performance).
+        # Only add if: no path separator, no glob chars, and either has a
+        # trailing / (explicit dir marker) or starts with a dot and has no
+        # extension (e.g. .git, .venv) or is a plain word with no extension.
+        local bare="${line#!}"      # strip possible leading !
+        local has_trailing_slash=0
+        [[ "$bare" == */ ]] && has_trailing_slash=1
+        bare="${bare%/}"            # strip trailing /
+        if [[ "$bare" != */* ]] && [[ "$bare" != "/"* ]] && [[ "$bare" != *[\*\?\[]* ]]; then
+            if (( has_trailing_slash )) || [[ "$bare" != *.* ]]; then
+                _prune_dir_names+=("$bare")
             fi
-        done
-    fi
-    
-    # Set global arrays
-    excluded_paths=("${path_patterns[@]}")
-    excluded_names=("${name_patterns[@]}")
-    excluded_anchored=("${anchored_patterns[@]}")
+        fi
+    done < "$exclusion_file"
 }
 
-# Function to build find exclusion arguments
-build_find_exclusion_args() {
-    local -a excludes=()
-    
-    # Build path exclusions
-    for pattern in ${excluded_paths[@]}; do
-        if [[ ${#excludes[@]} -gt 0 ]]; then
-            excludes+=("-or")
+# build_find_prune_args
+#
+#   Builds the global `find_prune_args` array used to prune excluded
+#   directories during traversal for performance.  This is NOT authoritative;
+#   should_exclude_file() is the single source of truth.
+#
+#   Result: find_prune_args — expression of the form:
+#     -type d ( -name A -or -name B ... ) -prune
+#   suitable for use as: \( "${find_prune_args[@]}" \) -o \( ... -print \)
+build_find_prune_args() {
+    local -a unique_names=("${(@u)_prune_dir_names}")
+    local -a name_expr=()
+
+    for name in "${unique_names[@]}"; do
+        [[ -z "$name" ]] && continue
+        if [[ ${#name_expr[@]} -gt 0 ]]; then
+            name_expr+=("-or")
         fi
-        excludes+=("-path" "$dotfiles_dir/$pattern")
-    done
-    
-    # Build anchored exclusions (root-level only — match the entry itself, not descendants)
-    for pattern in ${excluded_anchored[@]}; do
-        if [[ ${#excludes[@]} -gt 0 ]]; then
-            excludes+=("-or")
-        fi
-        excludes+=("-path" "$dotfiles_dir/$pattern")
+        name_expr+=("-name" "$name")
     done
 
-    # Build name exclusions  
-    for pattern in ${excluded_names[@]}; do
-        if [[ ${#excludes[@]} -gt 0 ]]; then
-            excludes+=("-or")
-        fi
-        excludes+=("-name" "$pattern")
-    done
-    
-    # Set global exclude_args
-    if [[ ${#excludes[@]} -gt 0 ]]; then
-        exclude_args=("-and" "(" "-not" "(" ${excludes[@]} ")" ")")
+    if [[ ${#name_expr[@]} -gt 0 ]]; then
+        find_prune_args=("-type" "d" "(" "${name_expr[@]}" ")" "-prune")
     else
-        exclude_args=()
+        find_prune_args=()
     fi
 }
 
+# _gitignore_match_single PATTERN RELATIVE_PATH IS_DIR
+#
+#   Tests one gitignore pattern against a dotfiles-relative path.
+#   Returns 0 (exclude) or 1 (keep).  Does not handle negation.
+#   See gitignore_match.zsh for full semantics documentation.
+
+_gitignore_match_single() {
+    local pattern="$1"
+    local rel_path="$2"
+    local is_dir="${3:-0}"
+
+    # Guard: empty pattern or bare / matches nothing.
+    [[ -z "$pattern" || "$pattern" == "/" ]] && return 1
+
+    setopt local_options extendedglob
+
+    # --- strip trailing / → dir_only ---
+    local dir_only=0
+    local pat="$pattern"
+    if [[ "$pat" == */ ]]; then
+        dir_only=1
+        pat="${pat%/}"
+    fi
+
+    # --- determine anchoring ---
+    local anchored=0
+    if [[ "$pat" == /* ]]; then
+        anchored=1
+        pat="${pat#/}"
+    elif [[ "$pat" == */* ]]; then
+        anchored=1
+    fi
+
+    # Does the pattern contain glob chars?
+    local has_glob=0
+    [[ "$pat" == *'*'* || "$pat" == *'?'* || "$pat" == *'['* ]] && has_glob=1
+
+    # Glob-safe version for ${~...} expansion.
+    # In zsh extendedglob, # is a quantifier — escape it so patterns like
+    # "#*#" match the literal character # rather than triggering a syntax error.
+    local gpat="${pat//'#'/\#}"
+
+    # -----------------------------------------------------------------------
+    # FP1 — UNANCHORED  (no / in pattern after stripping trailing /)
+    #   Examples: .mypy_cache  *.swp  .DS_Store  node_modules
+    # -----------------------------------------------------------------------
+    if (( ! anchored )); then
+        if (( dir_only )); then
+            if (( has_glob )); then
+                # Glob: test each path component individually.
+                local _c _r="$rel_path"
+                while true; do
+                    _c="${_r%%/*}"
+                    [[ "$_c" == ${~gpat} ]] && return 0
+                    [[ "$_r" == "$_c" ]] && break
+                    _r="${_r#*/}"
+                done
+            else
+                # Literal dir: the component must appear with a path element
+                # AFTER it (i.e. rel_path has something under the dir).
+                # "/${path}/" =~ *"/pat/"?*  ensures content follows.
+                [[ "/${rel_path}/" == *"/${pat}/"?* ]] && return 0
+                # Also catch the dir itself when caller signals is_dir=1.
+                (( is_dir )) && [[ "${rel_path:t}" == "$pat" ]] && return 0
+            fi
+        else
+            # Match the basename.
+            [[ "${rel_path:t}" == ${~gpat} ]] && return 0
+            # For literal patterns, also match files inside a same-named dir
+            # (e.g. bare ".mypy_cache" excludes .mypy_cache/foo.py).
+            if (( ! has_glob )); then
+                [[ "/${rel_path}/" == *"/${pat}/"?* ]] && return 0
+            fi
+        fi
+        return 1
+    fi
+
+    # -----------------------------------------------------------------------
+    # FP2 — ANCHORED, NO WILDCARDS
+    #   Examples: /.nounpack  .config/karabiner  /dotfiles_exclude
+    # -----------------------------------------------------------------------
+    if (( ! has_glob )); then
+        [[ "$rel_path" == "$pat" || "$rel_path" == "$pat/"* ]] && return 0
+        return 1
+    fi
+
+    # -----------------------------------------------------------------------
+    # FP3 — ANCHORED, CONTAINS **
+    #   Examples: .codecompanion/**  foo/**/bar  **/foo
+    #
+    #   zsh ** in [[ == ]] crosses / but requires 1+ chars per ** segment.
+    #   We handle the zero-segment cases explicitly:
+    #
+    #   A: **/rest  → rest anchored at root (zero-prefix case)
+    #   B: prefix/** → everything strictly under prefix/ (not prefix itself)
+    #   C: a/**/b   → a/b  (zero middle segments, collapse /**/ → /)
+    # -----------------------------------------------------------------------
+    if [[ "$pat" == *'**'* ]]; then
+        # Primary zsh match (handles 1+ segments for **).
+        [[ "$rel_path" == ${~gpat} ]] && return 0
+        # Also match contents of a directory the pattern resolves to.
+        # Exception: trailing /** means contents only, not the dir itself,
+        # so we only add /* when the ** is NOT at the very end.
+        if [[ "$pat" != *'/**' ]]; then
+            [[ "$rel_path" == ${~gpat}/* ]] && return 0
+        fi
+
+        # Sub-case A: **/rest — rest matches at root (zero path prefix).
+        if [[ "$pat" == '**/'* ]]; then
+            local _rest="${pat#'**/'}"
+            local _gr="${_rest//'#'/\#}"
+            # Exact match at root.
+            [[ "$rel_path" == ${~_gr} ]] && return 0
+            # Contents under a literal dir named _rest at root.
+            [[ "$rel_path" == */${~_gr} ]] && return 0
+        fi
+
+        # Sub-case B: prefix/** — contents only (not the prefix dir itself).
+        if [[ "$pat" == *'/**' ]]; then
+            local _pfx="${pat%'/**'}"
+            local _gp="${_pfx//'#'/\#}"
+            [[ "$rel_path" == ${~_gp}/* ]] && return 0
+        fi
+
+        # Sub-case C: a/**/b — collapse /**/ → / for zero-middle-segments.
+        # This handles only the EXACT zero-match case (a/b from a/**/b).
+        # The /* suffix is intentionally absent — a/**/b does not match
+        # a/b/extra (b is the final component, not a directory).
+        if [[ "$pat" == *'/**/'* ]]; then
+            local _col="$pat" _prev="" _sl="/"
+            while [[ "$_col" != "$_prev" ]]; do
+                _prev="$_col"
+                _col="${_col/\/**\//$_sl}"
+            done
+            if [[ "$_col" != "$pat" ]]; then
+                local _gc="${_col//'#'/\#}"
+                [[ "$rel_path" == ${~_gc} ]] && return 0
+            fi
+        fi
+
+        return 1
+    fi
+
+    # -----------------------------------------------------------------------
+    # FP4 — ANCHORED, * or ? but NOT **  (iterative segment walk)
+    #   Examples: .codecompanion/*  src/?.c  build/*/output
+    #
+    #   In zsh [[ == ]], * crosses / — wrong for gitignore.
+    #   Walk segments with ${%%/*} / ${#*/}: each [[ seg == pat_seg ]] call
+    #   matches within one segment so * cannot cross a slash.
+    # -----------------------------------------------------------------------
+    local pat_rest="$pat" path_rest="$rel_path"
+
+    while true; do
+        local pat_seg="${pat_rest%%/*}"
+        local path_seg="${path_rest%%/*}"
+        local gpat_seg="${pat_seg//'#'/\#}"
+
+        [[ "$path_seg" == ${~gpat_seg} ]] || return 1
+
+        local pat_next="${pat_rest#*/}"
+        local path_next="${path_rest#*/}"
+
+        if [[ "$pat_next" == "$pat_rest" ]]; then
+            # Pattern exhausted.
+            [[ "$path_next" == "$path_rest" ]] && return 0   # exact match
+            # Path has more — include contents if dir_only or literal final seg.
+            local seg_is_glob=0
+            [[ "$pat_seg" == *'*'* || "$pat_seg" == *'?'* || "$pat_seg" == *'['* ]] \
+                && seg_is_glob=1
+            (( dir_only || ! seg_is_glob )) && return 0
+            return 1
+        fi
+
+        [[ "$path_next" == "$path_rest" ]] && return 1
+
+        pat_rest="$pat_next"
+        path_rest="$path_next"
+    done
+}
+
+# should_exclude_file PATH [is_dir]
+#
+#   Canonical exclusion predicate.  Applies all accumulated rules in order,
+#   with later rules overriding earlier ones (gitignore semantics).
+#   Enforce rules are immune to user negation.
+#
+#   Returns 0 = exclude, 1 = keep.
+function should_exclude_file() {
+    local file_path="$1"
+    local is_dir="${2:-0}"
+    local abs_file_path="${file_path:A}"
+    local dotfiles_dir_abs="${dotfiles_dir:A}"
+
+    # Compute path relative to dotfiles root.
+    local relative_path=""
+    if [[ "$abs_file_path" == "$dotfiles_dir_abs/"* ]]; then
+        relative_path="${abs_file_path#$dotfiles_dir_abs/}"
+    else
+        # Path outside dotfiles dir — cannot match
+        return 1
+    fi
+
+    # Walk rules in order; track current verdict and whether the current
+    # exclusion came from an enforce rule.
+    local verdict=1          # 1 = keep (default)
+    local verdict_enforced=0 # 1 if current verdict came from an enforce rule
+
+    local rule flag pattern negated
+    for rule in "${_gitignore_rules[@]}"; do
+        flag="${rule%%:*}"
+        pattern="${rule#*:}"
+        negated=0
+
+        if [[ "$pattern" == !* ]]; then
+            negated=1
+            pattern="${pattern#!}"
+        fi
+
+        if (( negated )); then
+            # Negation: if this pattern matches, override exclusion — but only
+            # if the current exclusion was NOT from an enforce rule.
+            if [[ "$flag" == "enforce" ]]; then
+                # Enforce negation re-includes even enforced exclusions.
+                # (Unlikely to be used, but consistent.)
+                _gitignore_match_single "$pattern" "$relative_path" "$is_dir" && \
+                    { verdict=1; verdict_enforced=0; }
+            else
+                # User negation cannot override an enforce exclusion.
+                if (( ! verdict_enforced )) || [[ "$verdict" == "1" ]]; then
+                    _gitignore_match_single "$pattern" "$relative_path" "$is_dir" && \
+                        { verdict=1; verdict_enforced=0; }
+                fi
+            fi
+        else
+            _gitignore_match_single "$pattern" "$relative_path" "$is_dir" && {
+                verdict=0
+                [[ "$flag" == "enforce" ]] && verdict_enforced=1 || verdict_enforced=0
+            }
+        fi
+    done
+
+    return $verdict
+}
+
+# When sourced (e.g. by tests) all function definitions above are available;
+# return here so the script body below does not execute.
+[[ $ZSH_EVAL_CONTEXT == *:file* ]] && return 0
 
 ingest=("${(@)ingest:#-i}")
 ingest=("${(@)ingest:#--ingest=}")
@@ -193,12 +444,13 @@ dotfiles_dir=$(find_dotfiles_directory)
 # Apply --link-dest override; default is $HOME (backward-compatible)
 [[ -z "$_setup_link_dest" ]] && _setup_link_dest="$HOME"
 
-# Must be after dotfiles_dir detection
-# Initialize exclusion patterns (can be called with custom file path)
-# Usage: read_exclusion_patterns [/path/to/exclusion/file]
+# Must be after dotfiles_dir detection.
+# Load exclusion rules.  Baked-in enforce rules first (immune to user negation),
+# then the user's dotfiles_exclude file.
 dotfiles_exclude_file=$(find_dotfiles_exclude_file)
+read_exclusion_patterns --enforce
 read_exclusion_patterns "$dotfiles_exclude_file"
-build_find_exclusion_args
+build_find_prune_args
 
 # Indicate dry run mode if active
 if [[ ${#dry_run[@]} -gt 0 ]]; then
@@ -262,8 +514,9 @@ function normalize_path_to_dest_relative(){
 
 
 function prompt_yes_no(){
-  [[ ${#defno[@]} -ge 1 ]] && exit 0
-  [[ ${#defyes[@]} -ge 1 ]] && exit 1
+  [[ ${#dry_run[@]} -ge 1 ]] && return 1
+  [[ ${#defno[@]} -ge 1 ]] && exit 1
+  [[ ${#defyes[@]} -ge 1 ]] && exit 0
   if read -qs "REPLY?$1? (N/y)"; then
     >&2 echo $REPLY; 
     exit 0
@@ -340,6 +593,7 @@ function link_if_needed(){
   src=$1:a
   fullpath_dotfiles_dir=$dotfiles_dir:A
   dest="${_setup_link_dest}/"${1#$fullpath_dotfiles_dir/}
+  log_debug "link_if_needed src=$src dest=$dest"
   info_nonl "checking $src to $dest .."
   if [[ -L "$dest" ]]; then
     linkfile=`readlink $dest`
@@ -511,59 +765,7 @@ function untrack_if_needed(){
   fi
 }
 
-# Enhanced exclusion checking function
-function should_exclude_file(){
-  local file_path="$1"
-  local abs_file_path="${file_path:A}"
-    local dotfiles_dir_abs="${dotfiles_dir:A}"
-    
-    # Get relative path from dotfiles directory for path pattern matching
-    local relative_path=""
-    if [[ "$abs_file_path" == "$dotfiles_dir_abs"* ]]; then
-        relative_path="${abs_file_path#$dotfiles_dir_abs/}"
-    fi
-    
-    # Check against excluded path patterns
-    for pattern in ${excluded_paths[@]}; do
-        # Check if pattern contains wildcards
-        if [[ "$pattern" == *"*"* ]] || [[ "$pattern" == *"?"* ]] || [[ "$pattern" == *"["* ]]; then
-            # Pattern contains wildcards - use glob matching against relative path
-            if [[ -n "$relative_path" ]] && [[ "$relative_path" == ${~pattern} ]]; then
-                return 0  # Should exclude
-            fi
-        else
-            # Literal path - do exact matching
-            local full_pattern_path="$dotfiles_dir_abs/$pattern"
-            if [[ "$abs_file_path" == "${full_pattern_path:A}" ]]; then
-                return 0  # Should exclude
-            fi
-    fi
-  done
-  
-    # Check against anchored patterns (only match at depth-1 inside dotfiles root)
-    # A relative_path with no '/' means the file is directly inside the dotfiles root.
-    if [[ -n "$relative_path" ]] && [[ "$relative_path" != */* ]]; then
-        local basename_for_anchored="${abs_file_path:t}"
-        for pattern in ${excluded_anchored[@]}; do
-            if [[ "$basename_for_anchored" == ${~pattern} ]]; then
-                return 0  # Should exclude
-            fi
-        done
-    fi
-
-    # Check against excluded name patterns
-    local basename="${abs_file_path:t}"  # Get just the filename
-    for pattern in ${excluded_names[@]}; do
-        # Use zsh pattern matching for name patterns
-        if [[ "$basename" == ${~pattern} ]]; then
-      return 0  # Should exclude
-    fi
-  done
-  
-  return 1  # Should not exclude
-}
-
-findopt=("-depth")
+findopt=()
 findoptd=()
 if [[ `uname` == "Darwin" ]]; then
   findoptd+=("-s")
@@ -677,7 +879,7 @@ fi
 if [[ ${#setup[@]} -gt 0 ]]; then
   info "Copying files in"
   local find_output files
-  find_output=$(find $findoptd $_setup_link_dest $findopt -name "\.[a-zA-Z]*" -maxdepth 1 -mindepth 1 $exclude_args)
+  find_output=$(find $findoptd $_setup_link_dest $findopt -mindepth 1 -maxdepth 1 -name "\.[a-zA-Z]*")
   files=(${(f)find_output})
   for file in "${files[@]}"; do
     [[ -n "$file" ]] || continue
@@ -726,17 +928,37 @@ if [[ ${#unpack[@]} -gt 0 ]]; then
     # Unpack all files (existing behavior)
     info "Linking all files"
     local find_output files
-    find_output=$(find $findoptd $dotfiles_dir $findopt -mindepth 1 -maxdepth 1 -name "\.[a-zA-Z]*" $exclude_args)
+    # Shallow: depth-1 dotfiles entries only.  No prune needed — maxdepth 1
+    # means find never descends anyway.  should_exclude_file() filters results.
+    log_debug "shallow find: find $findoptd $dotfiles_dir $findopt -mindepth 1 -maxdepth 1 -name .[a-zA-Z]*"
+    find_output=$(find $findoptd $dotfiles_dir $findopt -mindepth 1 -maxdepth 1 -name "\.[a-zA-Z]*")
     files=(${(f)find_output})
     for file in "${files[@]}"; do
       [[ -n "$file" ]] || continue
+        log_debug "shallow: considering $file"
+        should_exclude_file "$file" 0 && continue
       link_if_needed "$file" || exit 1
   done
   info "creating directory links"
-    find_output=$(find $findoptd $dotfiles_dir $findopt -mindepth 2 \( -type f -or -type l \) $exclude_args)
+    # Deep: prune excluded dirs then print all files/symlinks.
+    # -mindepth 1 as a global flag (before expression) skips the root itself
+    # but still lets -prune fire on depth-1 dirs like .git.  Works on both
+    # BSD and GNU find.  link_if_needed is idempotent so overlap with the
+    # shallow pass is harmless.
+    if [[ ${#find_prune_args[@]} -gt 0 ]]; then
+        log_debug "deep find (with prune): find $findoptd $dotfiles_dir -mindepth 1 $findopt ( ${find_prune_args[@]} ) -o ( -type f -o -type l ) -print"
+        find_output=$(find $findoptd $dotfiles_dir -mindepth 1 $findopt \
+            \( "${find_prune_args[@]}" \) -o \
+            \( -type f -o -type l \) -print)
+    else
+        log_debug "deep find (no prune): find $findoptd $dotfiles_dir -mindepth 1 $findopt ( -type f -o -type l )"
+        find_output=$(find $findoptd $dotfiles_dir -mindepth 1 $findopt \( -type f -o -type l \))
+    fi
     files=(${(f)find_output})
     for file in "${files[@]}"; do
       [[ -n "$file" ]] || continue
+        log_debug "deep: considering $file"
+        should_exclude_file "$file" 0 && continue
       link_if_needed "$file" || exit 1
   done
 fi
@@ -775,7 +997,13 @@ if [[ ${#force_unpack[@]} -gt 0 ]]; then
       link_if_needed "$file" || exit 1
     done
     info "creating directory links (force)"
-    find_output=$(find $findoptd $dotfiles_dir $findopt -mindepth 2 \( -type f -or -type l \))
+    if [[ ${#find_prune_args[@]} -gt 0 ]]; then
+        find_output=$(find $findoptd $dotfiles_dir -mindepth 1 $findopt \
+            \( "${find_prune_args[@]}" \) -o \
+            \( -type f -o -type l \) -print)
+    else
+        find_output=$(find $findoptd $dotfiles_dir -mindepth 1 $findopt \( -type f -o -type l \))
+    fi
     files=(${(f)find_output})
     for file in "${files[@]}"; do
       [[ -n "$file" ]] || continue
