@@ -462,6 +462,7 @@ _update_core_commit_parent() {
             ;;
         none|*)
             info "update_core: ${_label} — parent repo is dirty (commit manually)"
+            return 0
             ;;
     esac
 }
@@ -677,6 +678,193 @@ _update_core_is_available_subtree() {
 }
 
 # ---------------------------------------------------------------------------
+# File list builder (promoted from update.sh for use by hooks)
+# ---------------------------------------------------------------------------
+
+# _update_core_build_file_lists <repo_dir> <diff_range>
+# Walks commits in <diff_range> commit-by-commit (-m for merge awareness) and
+# populates two *caller-declared* unique arrays:
+#   _update_core_files_to_unpack  — files to add/update via setup.sh
+#   _update_core_files_to_remove  — deleted/renamed-away symlinks to remove
+# The arrays must be declared (typeset -aU) by the caller before this call.
+# Callers should copy them out immediately; they are overwritten on each call.
+_update_core_build_file_lists() {
+    local _repo_dir=$1 _diff_range=$2
+    local _git_commits _line _hash _message _git_log
+    local _update_type _file_refs
+
+    _update_core_files_to_unpack=()
+    _update_core_files_to_remove=()
+
+    _git_commits=$(git -C "$_repo_dir" log --reverse -m \
+        --diff-filter=ADMRC --no-decorate \
+        --pretty=format:"%H%x09%s" \
+        "${_diff_range}" 2>/dev/null)
+
+    for _line in ${(f)_git_commits}; do
+        _hash=${_line%%$'\t'*}
+        _message=${_line#*$'\t'}
+        verbose "update_core: commit ${_hash[1,12]}: ${_message}"
+
+        _git_log=$(git -C "$_repo_dir" log -m --name-status \
+            --diff-filter=ADMRC --no-decorate --pretty=format: \
+            "${_hash}...${_hash}^" 2>/dev/null)
+
+        for _line in ${(f)_git_log}; do
+            [[ "$_line" =~ "^[ADMRC][0-9]*"$'\t'".*$" ]] || continue
+            _update_type=${_line%%$'\t'*}
+            _file_refs=${_line#*$'\t'}
+
+            if [[ "$_update_type" == M ]]; then
+                local _file=$_file_refs
+                [[ -n "$_file" ]] || continue
+                verbose "  $_file modified"
+                _update_core_files_to_unpack+=("$_file")
+                _update_core_files_to_remove=(${_update_core_files_to_remove:#"$_file"})
+
+            elif [[ "$_update_type" == A ]]; then
+                local _file=$_file_refs
+                [[ -n "$_file" ]] || continue
+                verbose "  $_file added"
+                _update_core_files_to_unpack+=("$_file")
+                _update_core_files_to_remove=(${_update_core_files_to_remove:#"$_file"})
+
+            elif [[ "$_update_type" == C<-> ]]; then
+                local _dst_file=${_file_refs#*$'\t'}
+                [[ -n "$_dst_file" ]] || continue
+                verbose "  $_dst_file copied"
+                _update_core_files_to_remove=(${_update_core_files_to_remove:#"$_dst_file"})
+                _update_core_files_to_unpack+=("$_dst_file")
+
+            elif [[ "$_update_type" == R<-> ]]; then
+                local _src_file=${_file_refs%%$'\t'*}
+                local _dst_file=${_file_refs#*$'\t'}
+                [[ -n "$_dst_file" ]] || continue
+                verbose "  $_dst_file renamed (from $_src_file)"
+                _update_core_files_to_unpack=(${_update_core_files_to_unpack:#"$_src_file"})
+                _update_core_files_to_remove+=("$_src_file")
+                _update_core_files_to_unpack+=("$_dst_file")
+
+            elif [[ "$_update_type" == D ]]; then
+                local _file=$_file_refs
+                [[ -n "$_file" ]] || continue
+                verbose "  $_file deleted"
+                _update_core_files_to_unpack=(${_update_core_files_to_unpack:#"$_file"})
+                _update_core_files_to_remove+=("$_file")
+            fi
+        done
+    done
+}
+
+# ---------------------------------------------------------------------------
+# External (standalone) SHA marker
+# ---------------------------------------------------------------------------
+# Mirrors the subtree SHA marker pattern.
+# Marker file lives adjacent to where the component dir would be, named
+# .<basename>-ext-sha — tracked in the dotfiles repo so that any dotfiles
+# commit range can be used to determine what external component SHA was
+# in use at each end of the range.
+
+# _update_core_ext_marker_path <component_dir>
+# Sets REPLY to the path of the ext SHA marker file.
+_update_core_ext_marker_path() {
+    local _dir=${1:A}
+    REPLY="${_dir:h}/.${_dir:t}-ext-sha"
+}
+
+# _update_core_read_ext_marker <component_dir>
+# Sets REPLY to the SHA recorded in the ext marker file.
+# Returns 0 on success, 1 if file missing or empty.
+_update_core_read_ext_marker() {
+    _update_core_ext_marker_path "$1"
+    local _path="$REPLY" _sha
+    [[ -f "$_path" ]] || return 1
+    _sha=$(<"$_path")
+    _sha="${_sha//[[:space:]]}"
+    [[ -n "$_sha" ]] || return 1
+    REPLY="$_sha"
+}
+
+# _update_core_write_ext_marker <component_dir> <sha>
+# Writes <sha> to the ext marker file adjacent to <component_dir>.
+_update_core_write_ext_marker() {
+    _update_core_ext_marker_path "$1"
+    local _path="$REPLY" _sha="$2"
+    print -r -- "$_sha" >| "$_path"
+}
+
+# ---------------------------------------------------------------------------
+# Component range resolution
+# ---------------------------------------------------------------------------
+
+# _update_core_resolve_component_range \
+#     <dotfiles_dir> <old_sha> <new_sha> <component_dir> <topology>
+#
+# "What would the component have been if the dotfiles parent moved from
+#  <old_sha> to <new_sha>?"
+#
+# Sets REPLY to "old_comp_sha..new_comp_sha", or "" if unresolvable.
+# Returns 0 if a range was determined, 1 if not (caller falls back to
+# independent fetch-based detection).
+#
+# Topology is passed explicitly — determined at hook registration time via
+# _update_core_detect_deployment so all flows agree on the same value.
+#
+# Dispatch:
+#   submodule  — git ls-tree at old/new for the component path
+#   subtree    — git show old/new:<basename>-subtree-sha marker
+#   standalone — git show old/new:<basename>-ext-sha marker
+#   subdir     — component is part of dotfiles tree; not meaningful at
+#                component granularity — returns 1
+_update_core_resolve_component_range() {
+    local _dotfiles_dir="$1"
+    local _old_sha="$2"
+    local _new_sha="$3"
+    local _comp_dir="${4:A}"
+    local _topology="$5"
+    REPLY=""
+
+    local _dotfiles_root="${_dotfiles_dir:A}"
+    local _rel_path="${_comp_dir#${_dotfiles_root}/}"
+    local _old_comp _new_comp
+
+    case "$_topology" in
+        submodule)
+            _old_comp=$(git -C "$_dotfiles_dir" ls-tree "$_old_sha" -- "$_rel_path" \
+                2>/dev/null | awk '{print $3}')
+            _new_comp=$(git -C "$_dotfiles_dir" ls-tree "$_new_sha" -- "$_rel_path" \
+                2>/dev/null | awk '{print $3}')
+            ;;
+        subtree)
+            _update_core_sha_marker_path "$_comp_dir"
+            local _marker_rel="${REPLY#${_dotfiles_root}/}"
+            _old_comp=$(git -C "$_dotfiles_dir" show "${_old_sha}:${_marker_rel}" \
+                2>/dev/null | tr -d '[:space:]')
+            _new_comp=$(git -C "$_dotfiles_dir" show "${_new_sha}:${_marker_rel}" \
+                2>/dev/null | tr -d '[:space:]')
+            ;;
+        standalone)
+            _update_core_ext_marker_path "$_comp_dir"
+            local _ext_marker_rel="${REPLY#${_dotfiles_root}/}"
+            _old_comp=$(git -C "$_dotfiles_dir" show "${_old_sha}:${_ext_marker_rel}" \
+                2>/dev/null | tr -d '[:space:]')
+            _new_comp=$(git -C "$_dotfiles_dir" show "${_new_sha}:${_ext_marker_rel}" \
+                2>/dev/null | tr -d '[:space:]')
+            ;;
+        subdir|*)
+            # subdir: component is the dotfiles range — caller uses that directly
+            # unknown: cannot resolve
+            return 1
+            ;;
+    esac
+
+    [[ -z "$_old_comp" || -z "$_new_comp" ]] && return 1
+    [[ "$_old_comp" == "$_new_comp" ]] && return 1
+    REPLY="${_old_comp}..${_new_comp}"
+    return 0
+}
+
+# ---------------------------------------------------------------------------
 # Cleanup
 # ---------------------------------------------------------------------------
 
@@ -707,6 +895,11 @@ _update_core_cleanup() {
         _update_core_sha_marker_path \
         _update_core_read_sha_marker \
         _update_core_write_sha_marker \
+        _update_core_ext_marker_path \
+        _update_core_read_ext_marker \
+        _update_core_write_ext_marker \
+        _update_core_resolve_component_range \
+        _update_core_build_file_lists \
         2>/dev/null
     unset -f _update_core_cleanup 2>/dev/null
 }

@@ -97,16 +97,12 @@ fi
 
 function is_update_available() {
     verbose "check_update: is_update_available: checking main repo ${dotfiles_dir}"
-    # Check the parent dotfiles repo itself
     if _update_core_is_available "$dotfiles_dir"; then
         verbose "check_update: is_update_available: update available in main repo"
         return 0
     fi
-    # Delegate to registered component hooks — each hook knows how to check
-    # its own repo (e.g. zdot as a submodule) without dotfiler needing to
-    # understand the topology of each managed component.
     verbose "check_update: is_update_available: checking component hooks"
-    if _check_update_invoke_hooks check-update; then
+    if _check_update_invoke_hooks; then
         verbose "check_update: is_update_available: update available via hook"
         return 0
     fi
@@ -114,24 +110,78 @@ function is_update_available() {
     return 1
 }
 
-# _check_update_invoke_hooks <verb>
-# Enumerates *.zsh executables in the dotfiler hooks directory and calls
-# each with <verb>.  Returns 0 as soon as any hook returns 0.
-# Hooks dir: zstyle ':dotfiler:hooks' dir  (default ~/.config/dotfiler/hooks)
+# _check_update_invoke_hooks
+# Sources each *.zsh hook directly. Each hook calls _update_register_hook
+# (shim defined below) to register its phase functions into the local registry.
+# After all hooks are sourced, we iterate _dotfiler_registered_hooks and call
+# each check_fn. Registered cleanup_fns are called to unset hook impl functions.
+# Registry and all hook functions are torn down before returning.
 function _check_update_invoke_hooks() {
-    local _verb=$1
     local _hooks_dir
     zstyle -s ':dotfiler:hooks' dir _hooks_dir \
         || _hooks_dir="${XDG_CONFIG_HOME:-$HOME/.config}/dotfiler/hooks"
-    verbose "check_update: hooks dir=${_hooks_dir} verb=${_verb}"
+    verbose "check_update: hooks dir=${_hooks_dir}"
     [[ -d "$_hooks_dir" ]] || return 1
+
+    # Local registry — same shape as update.sh's global registry but
+    # scoped to this function so teardown is trivial.
+    local -a _dotfiler_registered_hooks
+    local -A _dotfiler_hook_check_fn
+    local -A _dotfiler_hook_plan_fn
+    local -A _dotfiler_hook_pull_fn
+    local -A _dotfiler_hook_unpack_fn
+    local -A _dotfiler_hook_post_fn
+    local -A _dotfiler_hook_cleanup_fn
+    local -A _dotfiler_hook_component_dir
+    local -A _dotfiler_hook_topology
+
+    # Shim: hooks call this to register. In check mode dotfiler-hook.zsh
+    # sources update-impl.zsh which calls _update_register_hook.
+    _update_register_hook() {
+        local _name=$1
+        _dotfiler_registered_hooks+=("$_name")
+        _dotfiler_hook_check_fn[$_name]=$2
+        _dotfiler_hook_plan_fn[$_name]=$3
+        _dotfiler_hook_pull_fn[$_name]=$4
+        _dotfiler_hook_unpack_fn[$_name]=$5
+        _dotfiler_hook_post_fn[$_name]=$6
+        _dotfiler_hook_cleanup_fn[$_name]=${7:-}
+        _dotfiler_hook_component_dir[$_name]=${8:-}
+        _dotfiler_hook_topology[$_name]=${9:-}
+    }
+
     local _hook
     for _hook in "$_hooks_dir"/*.zsh(N); do
-        [[ -x "$_hook" ]] || continue
-        verbose "check_update: invoking hook ${_hook} ${_verb}"
-        "$_hook" "$_verb" && return 0
+        [[ -f "$_hook" ]] || continue
+        verbose "check_update: sourcing hook ${_hook:t} (check mode)"
+        source "$_hook"
+        verbose "check_update: hook ${_hook:t} sourced; registered=(${_dotfiler_registered_hooks[*]})"
     done
-    return 1
+
+    # Call each registered check_fn, then clean up all hook functions
+    local _name _fn _rc
+    local _any_available=1
+    for _name in "${_dotfiler_registered_hooks[@]}"; do
+        _fn="${_dotfiler_hook_check_fn[$_name]:-}"
+        [[ -z "$_fn" ]] && continue
+        verbose "check_update: calling check_fn for ${_name}: ${_fn}"
+        "$_fn"
+        _rc=$?
+        verbose "check_update: ${_name} check rc=${_rc}"
+        (( _rc == 0 )) && _any_available=0
+    done
+
+    # Cleanup: call each hook's registered cleanup_fn to unset impl functions,
+    # then clean up shims/vars left by the sourced hooks.
+    for _name in "${_dotfiler_registered_hooks[@]}"; do
+        _fn="${_dotfiler_hook_cleanup_fn[$_name]:-}"
+        [[ -n "$_fn" ]] && "$_fn"
+    done
+    unset -f warn info error verbose 2>/dev/null
+    unset _zdot_dotfiler_scripts_dir ZDOT_DIR 2>/dev/null
+    unset -f _update_register_hook
+
+    return $_any_available
 }
 
 function update_dotfiles() {
@@ -275,7 +325,7 @@ function handle_update() {
     trap "
         unset update_mode 2>/dev/null
         unset dotfiles_dir dotfiles_cache_dir dotfiles_timestamp 2>/dev/null
-        unset -f is_update_available update_dotfiles handle_update 2>/dev/null
+        unset -f is_update_available update_dotfiles handle_update _check_update_invoke_hooks 2>/dev/null
         cleanup_helpers 2>/dev/null
         cleanup_logging 2>/dev/null
         _update_core_release_lock '$dotfiles_cache_dir/update.lock'
@@ -284,7 +334,7 @@ function handle_update() {
         ret=\$?
         unset update_mode 2>/dev/null
         unset dotfiles_dir dotfiles_cache_dir dotfiles_timestamp 2>/dev/null
-        unset -f is_update_available update_dotfiles handle_update 2>/dev/null
+        unset -f is_update_available update_dotfiles handle_update _check_update_invoke_hooks 2>/dev/null
         cleanup_helpers 2>/dev/null
         cleanup_logging 2>/dev/null
         _update_core_release_lock '$dotfiles_cache_dir/update.lock'
