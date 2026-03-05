@@ -78,9 +78,10 @@ read_exclusion_patterns() {
         # Default name patterns (filenames to exclude anywhere)
         name_patterns=(
             "*.swp"
-            "*.swo" 
+            "*.swo"
             ".DS_Store"
             "*~"
+            ".git"
         )
     else
         # Read file contents into array, splitting on newlines
