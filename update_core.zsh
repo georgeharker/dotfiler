@@ -184,7 +184,9 @@ _update_core_is_available_fetch() {
     _base=$(git -C "$_repo_dir" merge-base "$_local_sha" "$_remote_sha" 2>/dev/null) \
         || return 2   # merge-base failed — can't determine relationship
     if [[ "$_base" == "$_remote_sha" ]]; then
-        return 1   # local is ahead of remote — skip
+        # Local is strictly ahead of remote — nothing new to pull.
+        log_debug "update_core(fetch): local is ahead of remote — no update available"
+        return 1
     elif [[ "$_base" == "$_local_sha" ]]; then
         return 0   # local is behind remote — update available
     else
@@ -577,7 +579,9 @@ _update_core_is_available() {
         _base=$(git -C "$_repo_dir" merge-base "$_local_head" "$_remote_head" 2>/dev/null) \
             || return 0   # merge-base failed — assume update available
         if [[ "$_base" == "$_remote_head" ]]; then
-            return 1   # local is ahead — skip
+            # Local is strictly ahead of remote — nothing new to pull.
+            log_debug "update_core: local is ahead of remote — no update available"
+            return 1
         elif [[ "$_base" == "$_local_head" ]]; then
             return 0   # local is behind — update available
         else
