@@ -2,13 +2,11 @@
 
 # Global quiet mode setting - defaults to not quiet
 quiet_mode=false
-verbose_mode=false
 
 function cleanup_logging() {
 	unset quiet_mode 2>/dev/null
-	unset verbose_mode 2>/dev/null
 	unset -f cleanup_logging info info_nonl success report action error warn \
-		verbose 2>/dev/null
+		verbose log_debug 2>/dev/null
 }
 
 # Helper output functions.
@@ -16,8 +14,15 @@ function cleanup_logging() {
 # warn/error → stderr (diagnostics, never suppress)
 
 function verbose() {
-	{ [[ "$verbose_mode" = true ]] || [[ -n "${DOTFILES_DEBUG:-}" ]]; } &&
-		print -P "%F{cyan}[debug]%f $@"
+	{ [[ -n "${DOTFILER_VERBOSE:-}" ]] ||
+		[[ -n "${DOTFILER_DEBUG:-}" ]]; } &&
+		print -P "%F{cyan}[verbose]%f $@"
+	return 0
+}
+
+function log_debug() {
+	[[ -n "${DOTFILER_DEBUG:-}" ]] &&
+		print -P "%F{magenta}[debug]%f $@"
 	return 0
 }
 

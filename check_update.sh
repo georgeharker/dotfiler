@@ -14,11 +14,13 @@ force_update=false
 if ! is_script_sourced; then
     # Script is being executed directly, parse arguments
     zmodload zsh/zutil
-    local -a force debug
-    zparseopts -D -E - f=force -force=force d=debug -debug=debug || {
-        error "Usage: ${script_name} [-f|--force] [-d|--debug]"
+    local -a force verbose_flag debug
+    zparseopts -D -E - f=force -force=force v=verbose_flag -verbose=verbose_flag \
+        d=debug -debug=debug || {
+        error "Usage: ${script_name} [-f|--force] [-v|--verbose] [-d|--debug]"
         error "  -f, --force    Force update check even if timestamp is recent"
-        error "  -d, --debug    Enable debug output for troubleshooting"
+        error "  -v, --verbose  Enable verbose progress output"
+        error "  -d, --debug    Enable debug tracing (implies --verbose)"
         exit 1
     }
 
@@ -26,28 +28,31 @@ if ! is_script_sourced; then
         force_update=true
     fi
 
+    if [[ ${#verbose_flag[@]} -gt 0 ]]; then
+        export DOTFILER_VERBOSE=1
+    fi
+
     if [[ ${#debug[@]} -gt 0 ]]; then
-        export DOTFILES_DEBUG=1
-        verbose "Debug mode enabled via -d flag"
+        export DOTFILER_DEBUG=1
     fi
 fi
 
-verbose "check_update: sourced from ${script_name}"
-verbose "check_update: force_update=${force_update} DOTFILES_DEBUG=${DOTFILES_DEBUG:-}"
+log_debug "check_update: sourced from ${script_name}"
+log_debug "check_update: force_update=${force_update} DOTFILER_DEBUG=${DOTFILER_DEBUG:-} DOTFILER_VERBOSE=${DOTFILER_VERBOSE:-}"
 
 # Get dotfiles_dir directory using robust detection
 script_dir=$(find_dotfiles_script_directory)
 dotfiles_dir=$(find_dotfiles_directory)
 
-verbose "check_update: script_dir=${script_dir}"
-verbose "check_update: dotfiles_dir=${dotfiles_dir}"
+log_debug "check_update: script_dir=${script_dir}"
+log_debug "check_update: dotfiles_dir=${dotfiles_dir}"
 
 dotfiles_cache_dir="${XDG_CACHE_DIR:-$HOME/.cache}/dotfiles"
 dotfiles_timestamp="${dotfiles_cache_dir}/dotfiles_update"
 dotfiler_cache_dir="${XDG_CACHE_DIR:-$HOME/.cache}/dotfiler"
 
-verbose "check_update: dotfiles_cache_dir=${dotfiles_cache_dir}"
-verbose "check_update: dotfiler_cache_dir=${dotfiler_cache_dir}"
+log_debug "check_update: dotfiles_cache_dir=${dotfiles_cache_dir}"
+log_debug "check_update: dotfiler_cache_dir=${dotfiler_cache_dir}"
 
 for _d in "$dotfiles_cache_dir" "$dotfiler_cache_dir"; do
     [[ -d "$_d" ]] || mkdir -p "$_d"
@@ -64,7 +69,7 @@ zstyle -s ':dotfiler:update' mode update_mode || {
     }
 }
 
-verbose "check_update: update_mode=${update_mode}"
+log_debug "check_update: update_mode=${update_mode}"
 
 # Cancel update if:
 # - the automatic update is disabled
@@ -72,41 +77,41 @@ verbose "check_update: update_mode=${update_mode}"
 # - git is unavailable on the system
 # - $dotfiles_dir is not a git repository
 if [[ "$update_mode" = disabled ]]; then
-    verbose "check_update: update disabled by update_mode=disabled — exiting"
+    log_debug "check_update: update disabled by update_mode=disabled — exiting"
     unset update_mode
     return
 fi
 
 if [[ ! -w "$dotfiles_dir" || ! -O "$dotfiles_dir" ]]; then
-    verbose "check_update: no write permission or not owner of ${dotfiles_dir} — exiting"
+    log_debug "check_update: no write permission or not owner of ${dotfiles_dir} — exiting"
     unset update_mode
     return
 fi
 
 if ! command git --version 2>&1 >/dev/null; then
-    verbose "check_update: git not found — exiting"
+    log_debug "check_update: git not found — exiting"
     unset update_mode
     return
 fi
 
 if ! command git -C "$dotfiles_dir" rev-parse --is-inside-work-tree &>/dev/null; then
-    verbose "check_update: ${dotfiles_dir} is not a git repo — exiting"
+    log_debug "check_update: ${dotfiles_dir} is not a git repo — exiting"
     unset update_mode
     return
 fi
 
 function is_update_available() {
-    verbose "check_update: is_update_available: checking main repo ${dotfiles_dir}"
+    verbose "check_update: checking main repo ${dotfiles_dir}"
     if _update_core_is_available "$dotfiles_dir"; then
-        verbose "check_update: is_update_available: update available in main repo"
+        verbose "check_update: update available in main repo"
         return 0
     fi
-    verbose "check_update: is_update_available: checking component hooks"
+    verbose "check_update: checking component hooks"
     if _check_update_invoke_hooks; then
-        verbose "check_update: is_update_available: update available via hook"
+        verbose "check_update: update available via hook"
         return 0
     fi
-    verbose "check_update: is_update_available: no updates found"
+    verbose "check_update: no updates found"
     return 1
 }
 
@@ -120,7 +125,7 @@ function _check_update_invoke_hooks() {
     local _hooks_dir
     zstyle -s ':dotfiler:hooks' dir _hooks_dir \
         || _hooks_dir="${XDG_CONFIG_HOME:-$HOME/.config}/dotfiler/hooks"
-    verbose "check_update: hooks dir=${_hooks_dir}"
+    log_debug "check_update: hooks dir=${_hooks_dir}"
     [[ -d "$_hooks_dir" ]] || return 1
 
     # Local registry — same shape as update.sh's global registry but
@@ -153,9 +158,9 @@ function _check_update_invoke_hooks() {
     local _hook
     for _hook in "$_hooks_dir"/*.zsh(N); do
         [[ -f "$_hook" ]] || continue
-        verbose "check_update: sourcing hook ${_hook:t} (check mode)"
+        log_debug "check_update: sourcing hook ${_hook:t} (check mode)"
         source "$_hook"
-        verbose "check_update: hook ${_hook:t} sourced; registered=(${_dotfiler_registered_hooks[*]})"
+        log_debug "check_update: hook ${_hook:t} sourced; registered=(${_dotfiler_registered_hooks[*]})"
     done
 
     # Call each registered check_fn, then clean up all hook functions
@@ -164,10 +169,10 @@ function _check_update_invoke_hooks() {
     for _name in "${_dotfiler_registered_hooks[@]}"; do
         _fn="${_dotfiler_hook_check_fn[$_name]:-}"
         [[ -z "$_fn" ]] && continue
-        verbose "check_update: calling check_fn for ${_name}: ${_fn}"
+        log_debug "check_update: calling check_fn for ${_name}: ${_fn}"
         "$_fn"
         _rc=$?
-        verbose "check_update: ${_name} check rc=${_rc}"
+        log_debug "check_update: ${_name} check rc=${_rc}"
         (( _rc == 0 )) && _any_available=0
     done
 
@@ -177,7 +182,7 @@ function _check_update_invoke_hooks() {
         _fn="${_dotfiler_hook_cleanup_fn[$_name]:-}"
         [[ -n "$_fn" ]] && "$_fn"
     done
-    unset _zdot_dotfiler_scripts_dir 2>/dev/null
+    unset _zdot_dotfiler_scripts_dir ZDOT_DIR 2>/dev/null
     unset -f _update_register_hook
 
     return $_any_available
@@ -194,9 +199,9 @@ function update_dotfiles() {
 
     # Non-background mode: run update.sh interactively; only write timestamp on success.
     if [[ "$update_mode" != background ]]; then
-        verbose "check_update: update_dotfiles: running ${script_dir}/update.sh interactively"
+        verbose "check_update: running ${script_dir}/update.sh interactively"
         if LANG= "${script_dir}/update.sh" "$quiet"; then
-            verbose "check_update: update_dotfiles: success — writing timestamp"
+            verbose "check_update: success — writing timestamp"
             _update_core_write_timestamp "$dotfiles_timestamp"
             return 0
         else
@@ -207,15 +212,15 @@ function update_dotfiles() {
     fi
 
     # Background mode: capture stderr so it can be stored in the timestamp file.
-    verbose "check_update: update_dotfiles: running ${script_dir}/update.sh in background mode"
+    verbose "check_update: running ${script_dir}/update.sh in background mode"
     local exit_status error_out
     if error_out=$(LANG= "${script_dir}/update.sh" -q 2>&1); then
-        verbose "check_update: update_dotfiles: background success — writing timestamp"
+        verbose "check_update: background success — writing timestamp"
         _update_core_write_timestamp "$dotfiles_timestamp" 0 "Update successful"
         return 0
     else
         exit_status=$?
-        verbose "check_update: update_dotfiles: background failed (exit ${exit_status})"
+        verbose "check_update: background failed (exit ${exit_status})"
         _update_core_write_timestamp "$dotfiles_timestamp" $exit_status "$error_out"
         return $exit_status
     fi
@@ -224,9 +229,9 @@ function update_dotfiles() {
 function handle_self_update() {
     emulate -L zsh
 
-    verbose "check_update: handle_self_update: acquiring lock ${dotfiler_cache_dir}/self_update.lock"
+    log_debug "check_update: handle_self_update: acquiring lock ${dotfiler_cache_dir}/self_update.lock"
     if ! _update_core_acquire_lock "$dotfiler_cache_dir/self_update.lock"; then
-        verbose "check_update: handle_self_update: lock held — skipping"
+        log_debug "check_update: handle_self_update: lock held — skipping"
         return 0
     fi
 
@@ -249,23 +254,23 @@ function handle_self_update() {
     local _self_freq
     zstyle -s ':dotfiler:update' frequency _self_freq || _self_freq=${UPDATE_DOTFILE_SECONDS:-3600}
 
-    verbose "check_update: handle_self_update: stamp=${_self_stamp} freq=${_self_freq} force=${force_update}"
+    log_debug "check_update: handle_self_update: stamp=${_self_stamp} freq=${_self_freq} force=${force_update}"
     if ! _update_core_should_update "$_self_stamp" "$_self_freq" "$force_update"; then
-        verbose "check_update: handle_self_update: not yet due — skipping"
+        log_debug "check_update: handle_self_update: not yet due — skipping"
         return 0
     fi
 
     local _subtree_spec
     zstyle -s ':dotfiler:update' subtree-remote _subtree_spec 2>/dev/null || _subtree_spec=""
-    verbose "check_update: handle_self_update: detecting deployment topology (subtree_spec='${_subtree_spec}')"
+    log_debug "check_update: handle_self_update: detecting deployment topology (subtree_spec='${_subtree_spec}')"
     _update_core_detect_deployment "$script_dir" "$_subtree_spec"
     local _topology=$REPLY
 
-    verbose "check_update: handle_self_update: topology=${_topology}"
+    log_debug "check_update: handle_self_update: topology=${_topology}"
     local _avail
     case $_topology in
         standalone|submodule)
-            verbose "check_update: handle_self_update: checking availability (${_topology})"
+            log_debug "check_update: handle_self_update: checking availability (${_topology})"
             _update_core_is_available "$script_dir"
             _avail=$? ;;
         subtree)
@@ -276,27 +281,27 @@ function handle_self_update() {
             [[ -z "$_branch" ]] && \
                 _branch=$(_update_core_get_default_branch "$script_dir" "$_remote")
             _remote_url=$(git -C "$script_dir" config "remote.${_remote}.url" 2>/dev/null)
-            verbose "check_update: handle_self_update: subtree remote=${_remote} branch=${_branch} url=${_remote_url}"
+            log_debug "check_update: handle_self_update: subtree remote=${_remote} branch=${_branch} url=${_remote_url}"
             _update_core_is_available_subtree "$script_dir" "$_remote_url" "$_branch"
             _avail=$? ;;
         subdir|none|*)
-            verbose "check_update: handle_self_update: topology=${_topology} — nothing to do"
+            log_debug "check_update: handle_self_update: topology=${_topology} — nothing to do"
             return 0 ;;
     esac
 
-    verbose "check_update: handle_self_update: _avail=${_avail} (0=update available, 1=up to date)"
+    log_debug "check_update: handle_self_update: _avail=${_avail} (0=update available, 1=up to date)"
 
     # _avail==1 means up to date or indeterminate — write stamp and return cleanly.
     if (( _avail == 1 )); then
-        verbose "check_update: handle_self_update: up to date — writing timestamp"
+        log_debug "check_update: handle_self_update: up to date — writing timestamp"
         _update_core_write_timestamp "$_self_stamp"
         return 0
     fi
 
     # _avail==0 means an update is available — run update_self.sh.
-    verbose "check_update: handle_self_update: update available — running update_self.sh"
+    log_debug "check_update: handle_self_update: update available — running update_self.sh"
     if "${script_dir}/update_self.sh" --force; then
-        verbose "check_update: handle_self_update: self-update succeeded"
+        log_debug "check_update: handle_self_update: self-update succeeded"
         _update_core_write_timestamp "$_self_stamp"
         return 0
     else
@@ -311,9 +316,9 @@ function handle_update() {
 
     local option
 
-    verbose "check_update: handle_update: acquiring lock ${dotfiles_cache_dir}/update.lock"
+    log_debug "check_update: handle_update: acquiring lock ${dotfiles_cache_dir}/update.lock"
     if ! _update_core_acquire_lock "$dotfiles_cache_dir/update.lock"; then
-        verbose "check_update: handle_update: lock held — skipping"
+        log_debug "check_update: handle_update: lock held — skipping"
         return 0
     fi
 
@@ -353,39 +358,39 @@ function handle_update() {
     local _dotfiles_freq
     zstyle -s ':dotfiler:update' frequency _dotfiles_freq || _dotfiles_freq=${UPDATE_DOTFILE_SECONDS:-3600}
 
-    verbose "check_update: handle_update: stamp=${dotfiles_timestamp} freq=${_dotfiles_freq} force=${force_update}"
+    log_debug "check_update: handle_update: stamp=${dotfiles_timestamp} freq=${_dotfiles_freq} force=${force_update}"
     if ! _update_core_should_update "$dotfiles_timestamp" "$_dotfiles_freq" "$force_update"; then
-        verbose "check_update: handle_update: not yet due — skipping"
+        log_debug "check_update: handle_update: not yet due — skipping"
         return 0
     fi
 
     # Verify the dotfiles directory is still a git repository.
-    verbose "check_update: handle_update: verifying ${dotfiles_dir} is a git repo"
+    log_debug "check_update: handle_update: verifying ${dotfiles_dir} is a git repo"
     if ! (builtin cd -q "$dotfiles_dir" && LANG= git rev-parse &>/dev/null); then
         error "Can't update: '${dotfiles_dir}' is not a git repository."
         return 1
     fi
 
     # Check if there are updates available before proceeding.
-    verbose "check_update: handle_update: checking for available updates"
+    log_debug "check_update: handle_update: checking for available updates"
     if ! is_update_available; then
-        verbose "check_update: handle_update: no updates available — writing timestamp"
+        log_debug "check_update: handle_update: no updates available — writing timestamp"
         _update_core_write_timestamp "$dotfiles_timestamp"
         return 0
     fi
 
-    verbose "check_update: handle_update: updates available — update_mode=${update_mode}"
+    log_debug "check_update: handle_update: updates available — update_mode=${update_mode}"
 
     # Reminder mode, or user has already typed input: show a nudge and exit.
     if [[ "$update_mode" = reminder ]]; then
-        verbose "check_update: handle_update: reminder mode — printing nudge"
+        log_debug "check_update: handle_update: reminder mode — printing nudge"
         printf '\r\e[0K'
         info "It's time to update! You can do that by running \`${script_dir}/dotfiler update\`"
         return 0
     fi
 
     if [[ "$update_mode" != background ]] && _update_core_has_typed_input; then
-        verbose "check_update: handle_update: typed input detected — printing nudge and deferring"
+        log_debug "check_update: handle_update: typed input detected — printing nudge and deferring"
         printf '\r\e[0K'
         info "It's time to update! You can do that by running \`${script_dir}/dotfiler update\`"
         return 0
@@ -393,30 +398,30 @@ function handle_update() {
 
     # Auto / background mode: update without prompting.
     if [[ "$update_mode" = (auto|background) ]]; then
-        verbose "check_update: handle_update: ${update_mode} mode — updating without prompt"
+        log_debug "check_update: handle_update: ${update_mode} mode — updating without prompt"
         update_dotfiles
         return $?
     fi
 
     # Prompt mode: ask the user.
-    verbose "check_update: handle_update: prompt mode — asking user"
+    log_debug "check_update: handle_update: prompt mode — asking user"
     info_nonl "Would you like to update? [Y/n] "
     read -r -k 1 option
     [[ "$option" = $'\n' ]] || echo
     case "$option" in
         [yY$'\n'])
-            verbose "check_update: handle_update: user accepted update"
+            log_debug "check_update: handle_update: user accepted update"
             update_dotfiles
             return $?
             ;;
         [nN])
-            verbose "check_update: handle_update: user declined — writing timestamp"
+            log_debug "check_update: handle_update: user declined — writing timestamp"
             _update_core_write_timestamp "$dotfiles_timestamp"
             info "You can update manually by running \`${dotfiles_dir}/dotfiler update\`"
             return 0
             ;;
         *)
-            verbose "check_update: handle_update: unrecognised input — deferring"
+            log_debug "check_update: handle_update: unrecognised input — deferring"
             info "You can update manually by running \`${dotfiles_dir}/dotfiler update\`"
             return 0
             ;;

@@ -56,7 +56,7 @@ range=("${(@)range:#-r}")
 range=("${(@)range:#--range}")
 
 [[ ${#quiet[@]} -gt 0 ]]   && quiet_mode=true
-[[ ${#verbose[@]} -gt 0 ]] && verbose_mode=true
+[[ ${#verbose[@]} -gt 0 ]] && export DOTFILER_VERBOSE=1
 
 _update_repo_dir="${opt_repo_dir[-1]:-}"
 _update_link_dest="${opt_link_dest[-1]:-$HOME}"

@@ -122,9 +122,9 @@ _update_core_acquire_lock() {
     local _mtime _age
     _mtime=$(zstat +mtime "$_lock" 2>/dev/null) || _mtime=0
     _age=$(( EPOCHSECONDS - _mtime ))
-    verbose "update_core: lock ${_lock} held (age ${_age}s)"
+    log_debug "update_core: lock ${_lock} held (age ${_age}s)"
     if (( _age > 600 )); then
-        verbose "update_core: stale lock (>${_age}s) — removing and retaking"
+        log_debug "update_core: stale lock (>${_age}s) — removing and retaking"
         rm -rf "$_lock" && mkdir "$_lock" 2>/dev/null && return 0
     fi
     return 1
@@ -568,7 +568,7 @@ _update_core_is_available() {
 
         [[ -z "$_remote_head" ]] && return 1   # empty response → skip
 
-        verbose "update_core: local=${_local_head:0:8} remote(API)=${_remote_head:0:8}"
+        log_debug "update_core: local=${_local_head:0:8} remote(API)=${_remote_head:0:8}"
 
         [[ "$_local_head" == "$_remote_head" ]] && return 1   # up to date
 
@@ -622,7 +622,7 @@ _update_core_is_available_subtree() {
         _local_head=$REPLY
     else
         # No marker → first run; assume update available to bootstrap
-        verbose "update_core: no subtree SHA marker found — assuming update available"
+        log_debug "update_core: no subtree SHA marker found — assuming update available"
         return 0
     fi
 
@@ -659,7 +659,7 @@ _update_core_is_available_subtree() {
 
         [[ -z "$_remote_head" ]] && return 1   # empty response → skip
 
-        verbose "update_core: subtree marker=${_local_head:0:8} remote(API)=${_remote_head:0:8}"
+        log_debug "update_core: subtree marker=${_local_head:0:8} remote(API)=${_remote_head:0:8}"
 
         # Simple equality check — no merge-base (parent repo has no
         # knowledge of the subtree source history)
@@ -671,7 +671,7 @@ _update_core_is_available_subtree() {
     _remote_head=$(git ls-remote "$_remote_url" "$_branch" 2>/dev/null | awk '{print $1}')
     [[ -z "$_remote_head" ]] && return 1   # ls-remote failed → skip
 
-    verbose "update_core: subtree marker=${_local_head:0:8} remote(ls-remote)=${_remote_head:0:8}"
+    log_debug "update_core: subtree marker=${_local_head:0:8} remote(ls-remote)=${_remote_head:0:8}"
 
     [[ "$_local_head" == "$_remote_head" ]] && return 1
     return 0
@@ -704,7 +704,7 @@ _update_core_build_file_lists() {
     for _line in ${(f)_git_commits}; do
         _hash=${_line%%$'\t'*}
         _message=${_line#*$'\t'}
-        verbose "update_core: commit ${_hash[1,12]}: ${_message}"
+        log_debug "update_core: commit ${_hash[1,12]}: ${_message}"
 
         _git_log=$(git -C "$_repo_dir" log -m --name-status \
             --diff-filter=ADMRC --no-decorate --pretty=format: \
@@ -718,21 +718,21 @@ _update_core_build_file_lists() {
             if [[ "$_update_type" == M ]]; then
                 local _file=$_file_refs
                 [[ -n "$_file" ]] || continue
-                verbose "  $_file modified"
+                log_debug "  $_file modified"
                 _update_core_files_to_unpack+=("$_file")
                 _update_core_files_to_remove=(${_update_core_files_to_remove:#"$_file"})
 
             elif [[ "$_update_type" == A ]]; then
                 local _file=$_file_refs
                 [[ -n "$_file" ]] || continue
-                verbose "  $_file added"
+                log_debug "  $_file added"
                 _update_core_files_to_unpack+=("$_file")
                 _update_core_files_to_remove=(${_update_core_files_to_remove:#"$_file"})
 
             elif [[ "$_update_type" == C<-> ]]; then
                 local _dst_file=${_file_refs#*$'\t'}
                 [[ -n "$_dst_file" ]] || continue
-                verbose "  $_dst_file copied"
+                log_debug "  $_dst_file copied"
                 _update_core_files_to_remove=(${_update_core_files_to_remove:#"$_dst_file"})
                 _update_core_files_to_unpack+=("$_dst_file")
 
@@ -740,7 +740,7 @@ _update_core_build_file_lists() {
                 local _src_file=${_file_refs%%$'\t'*}
                 local _dst_file=${_file_refs#*$'\t'}
                 [[ -n "$_dst_file" ]] || continue
-                verbose "  $_dst_file renamed (from $_src_file)"
+                log_debug "  $_dst_file renamed (from $_src_file)"
                 _update_core_files_to_unpack=(${_update_core_files_to_unpack:#"$_src_file"})
                 _update_core_files_to_remove+=("$_src_file")
                 _update_core_files_to_unpack+=("$_dst_file")
@@ -748,7 +748,7 @@ _update_core_build_file_lists() {
             elif [[ "$_update_type" == D ]]; then
                 local _file=$_file_refs
                 [[ -n "$_file" ]] || continue
-                verbose "  $_file deleted"
+                log_debug "  $_file deleted"
                 _update_core_files_to_unpack=(${_update_core_files_to_unpack:#"$_file"})
                 _update_core_files_to_remove+=("$_file")
             fi
