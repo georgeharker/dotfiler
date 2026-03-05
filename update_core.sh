@@ -870,8 +870,9 @@ _update_core_resolve_component_range() {
 
 # _update_core_cleanup
 # Unsets all private _update_core_* helper functions defined in this file.
-# Callers (update.sh, update.zsh) invoke this after sourcing and using the
-# helpers so the functions do not leak into the caller's namespace.
+# Called by update.sh (subprocess) after it has finished its update work.
+# NOT called by update.zsh — those functions must persist as runtime
+# dependencies of _zdot_update_handle_update (via _zdot_update_hook_*).
 # Self-unsets last.
 _update_core_cleanup() {
     unset -f \
