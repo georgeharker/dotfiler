@@ -4,7 +4,7 @@
 script_name="${${(%):-%x}:A}"
 script_dir="${script_name:h}"
 
-source "${script_dir}/logging.sh"
+source "${script_dir}/logging.zsh"
 
 # Simple script directory finder (no zstyle - used internally to avoid circular deps)
 find_script_directory_simple() {

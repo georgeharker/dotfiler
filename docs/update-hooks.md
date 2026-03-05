@@ -85,7 +85,7 @@ function _my_cleanup_fn() {
 
 ## The `_update_core_*` API
 
-The `update_core.sh` library provides helpers for all common update operations.
+The `update_core.zsh` library provides helpers for all common update operations.
 These are available to your hook functions when dotfiler sources your hook.
 
 ### Availability Checks

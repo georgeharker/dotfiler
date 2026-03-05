@@ -6,7 +6,7 @@ script_name="${${(%):-%x}:A}"
 helper_script_dir="${script_name:h}"
 
 # Load module management helpers (which includes main helpers)
-source "${helper_script_dir}/module_helpers.sh"
+source "${helper_script_dir}/module_helpers.zsh"
 
 # Get install directory using helper
 install_dir=$(find_dotfiles_install_directory)
@@ -25,7 +25,7 @@ if [[ ${#profile[@]} -gt 0 ]]; then
 fi
 export INSTALL_PROFILE="${INSTALL_PROFILE:-full}"
 
-# Global array for final instructions (same as install.sh)
+# Global array for final instructions (same as install.zsh)
 final_instructions=()
 
 # Function to add final instructions from modules
@@ -65,7 +65,7 @@ else
     echo "=== Module Complete ==="
 fi
 # Source helpers
-source "$install_dir/helpers.sh"
+source "$install_dir/helpers.zsh"
 detect_os
 
 module_name="$1"

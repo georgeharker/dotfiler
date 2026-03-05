@@ -7,12 +7,12 @@ files, numbered to control execution order.
 ## File Naming
 
 ```
-00-dotfiler-install.sh   # always first — bootstraps dotfiler itself
-01-package-manager.sh
-02-shell-utils.sh
-03-development-tools.sh
+00-dotfiler-install.zsh   # always first — bootstraps dotfiler itself
+01-package-manager.zsh
+02-shell-utils.zsh
+03-development-tools.zsh
 ...
-08-post-install.sh       # always last — post-install messages
+08-post-install.zsh       # always last — post-install messages
 ```
 
 Files are sourced in lexicographic order. Use two-digit prefixes so ordering is
@@ -37,10 +37,10 @@ underscores. `dotfiler install` discovers and calls it automatically.
 
 ## Available Functions
 
-Source `helpers.sh` at the top of your module to get the full helper API:
+Source `helpers.zsh` at the top of your module to get the full helper API:
 
 ```zsh
-source "$(dirname "$0")/helpers.sh"
+source "$(dirname "$0")/helpers.zsh"
 ```
 
 ### Output / Logging
@@ -110,7 +110,7 @@ add_final_instruction "Restart your shell to activate foo"
 module_name="my-tools"
 module_description="Install my development tools"
 
-source "$(dirname "$0")/helpers.sh"
+source "$(dirname "$0")/helpers.zsh"
 
 function run_my_tools_module() {
     detect_os
@@ -145,11 +145,11 @@ print_section "Development Tools"
 print_subsection "Languages"
 ```
 
-## The `00-dotfiler-install.sh` Convention
+## The `00-dotfiler-install.zsh` Convention
 
 Your first module should always bootstrap dotfiler itself — ensuring the `dotfiler`
 command is on `$PATH` before subsequent modules rely on it. See
-`example_install/00-dotfiler-install.sh` for a reference implementation.
+`example_install/00-dotfiler-install.zsh` for a reference implementation.
 
 ## Running Install
 

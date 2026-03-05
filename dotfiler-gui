@@ -307,7 +307,7 @@ class DotfileApp(App[None]):
     def __init__(self, dotfiles_dir: Optional[Path] = None, setup_script: Optional[Path] = None):
         super().__init__()
         self.dotfiles_dir = dotfiles_dir or (Path.home() / ".dotfiles")
-        self.setup_script = setup_script or (self.dotfiles_dir / "setup.sh")
+        self.setup_script = setup_script or (self.dotfiles_dir / "setup.zsh")
         self.selected_files = set()
         self.is_manage_mode = False
         self.tracked_file_paths = []  # Store paths corresponding to table rows
@@ -748,12 +748,12 @@ class DotfileApp(App[None]):
     def run_ingest(self, files: List[Path]) -> None:
         """Run the ingest command for selected files."""
         if not self.setup_script.exists():
-            self.notify("Setup script not found at ~/.dotfiles/setup.sh", severity="error")
+            self.notify("Setup script not found at ~/.dotfiles/setup.zsh", severity="error")
             return
 
         for file_path in files:
             try:
-                # Run setup.sh -i for each file
+                # Run setup.zsh -i for each file
                 result = subprocess.run(
                     [str(self.setup_script), "-i", str(file_path)],
                     capture_output=True,
@@ -777,13 +777,13 @@ class DotfileApp(App[None]):
             self.refresh_tree_highlights()
 
     def git_add_file(self, original_path: Path) -> None:
-        """This method is no longer needed - setup.sh handles git operations automatically."""
+        """This method is no longer needed - setup.zsh handles git operations automatically."""
         pass
 
     def delete_tracked_file(self, file_path: Path) -> None:
-        """Delete a tracked file from dotfiles using setup.sh."""
+        """Delete a tracked file from dotfiles using setup.zsh."""
         if not self.setup_script.exists():
-            self.notify("Setup script not found at ~/.dotfiles/setup.sh", severity="error")
+            self.notify("Setup script not found at ~/.dotfiles/setup.zsh", severity="error")
             return
             
         try:
@@ -812,7 +812,7 @@ class DotfileApp(App[None]):
     def run_unpack(self) -> None:
         """Run the unpack command."""
         if not self.setup_script.exists():
-            self.notify("Setup script not found at ~/.dotfiles/setup.sh", severity="error")
+            self.notify("Setup script not found at ~/.dotfiles/setup.zsh", severity="error")
             return
 
         try:
@@ -836,9 +836,9 @@ class DotfileApp(App[None]):
             self.notify(f"Error unpacking: {e}", severity="error")
 
     def run_unpack_single_file(self, dotfile_path: Path) -> None:
-        """Run unpack for a single file using setup.sh -u flag."""
+        """Run unpack for a single file using setup.zsh -u flag."""
         if not self.setup_script.exists():
-            self.notify("Setup script not found at ~/.dotfiles/setup.sh", severity="error")
+            self.notify("Setup script not found at ~/.dotfiles/setup.zsh", severity="error")
             return
 
         try:
@@ -876,7 +876,7 @@ def main():
     parser.add_argument(
         "--setup-script",
         type=Path,
-        help="Path to setup script (default: <dotfiles-dir>/setup.sh)"
+        help="Path to setup script (default: <dotfiles-dir>/setup.zsh)"
     )
     
     args = parser.parse_args()

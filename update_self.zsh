@@ -1,15 +1,15 @@
 #!/bin/zsh
 
-# update_self.sh — topology-aware self-update for dotfiler scripts
+# update_self.zsh — topology-aware self-update for dotfiler scripts
 #
 # Updates the dotfiler scripts directory itself (standalone, submodule, or
-# subtree), then re-execs the freshly-updated update.sh to process user
+# subtree), then re-execs the freshly-updated update.zsh to process user
 # dotfiles.  For subdir and none topologies, self-update is a no-op and
-# update.sh is exec'd directly.
+# update.zsh is exec'd directly.
 #
-# Usage: update_self.sh [-f|--force] [--dry-run] [-q|--quiet] [-v|--verbose]
+# Usage: update_self.zsh [-f|--force] [--dry-run] [-q|--quiet] [-v|--verbose]
 #
-# Flags are forwarded to the exec'd update.sh unchanged.
+# Flags are forwarded to the exec'd update.zsh unchanged.
 
 emulate -L zsh
 # PIPE_FAIL and NO_UNSET are useful hardening; ERR_EXIT is intentionally
@@ -24,11 +24,11 @@ setopt PIPE_FAIL NO_UNSET
 script_name="${${(%):-%x}:A}"
 script_dir="${script_name:h}"
 
-source "${script_dir}/helpers.sh"
-source "${script_dir}/update_core.sh"
+source "${script_dir}/helpers.zsh"
+source "${script_dir}/update_core.zsh"
 
 # ---------------------------------------------------------------------------
-# Parse flags (forward all to exec'd update.sh)
+# Parse flags (forward all to exec'd update.zsh)
 # ---------------------------------------------------------------------------
 
 local -a _forward_args
@@ -65,10 +65,10 @@ verbose "update_self: topology=$_topology script_dir=$script_dir"
 # ---------------------------------------------------------------------------
 
 _update_self_exec_update() {
-    info "update_self: re-execing update.sh"
-    exec "${script_dir}/update.sh" "${_forward_args[@]}"
+    info "update_self: re-execing update.zsh"
+    exec "${script_dir}/update.zsh" "${_forward_args[@]}"
     # exec only returns on failure
-    error "update_self: exec of update.sh failed."
+    error "update_self: exec of update.zsh failed."
     return 1
 }
 
@@ -85,7 +85,7 @@ case $_topology in
     # -----------------------------------------------------------------------
     standalone)
     # The scripts dir is its own standalone git repo.  Pull if an update is
-    # available, then re-exec update.sh.
+    # available, then re-exec update.zsh.
     # -----------------------------------------------------------------------
         local _avail
         _update_core_is_available "$script_dir" && _avail=0 || _avail=$?
@@ -114,7 +114,7 @@ case $_topology in
     # -----------------------------------------------------------------------
     submodule)
     # The scripts dir is a submodule inside the user's dotfiles repo.  Update
-    # the submodule, optionally commit the parent, then re-exec update.sh.
+    # the submodule, optionally commit the parent, then re-exec update.zsh.
     # -----------------------------------------------------------------------
         local _submod_root _parent _rel
         _submod_root=$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null)
@@ -151,7 +151,7 @@ case $_topology in
     # -----------------------------------------------------------------------
     subtree)
     # The scripts dir lives as a subtree prefix inside the user's dotfiles
-    # repo.  Pull the subtree, optionally commit, then re-exec update.sh.
+    # repo.  Pull the subtree, optionally commit, then re-exec update.zsh.
     # -----------------------------------------------------------------------
         local _parent _rel
         if ! _parent=$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null); then
@@ -205,7 +205,7 @@ case $_topology in
                     "$_mode"
             else
                 error "update_self: subtree pull failed (working tree may have uncommitted changes)."
-                # Continue to re-exec update.sh with existing scripts rather
+                # Continue to re-exec update.zsh with existing scripts rather
                 # than failing hard — the user's dotfiles can still be updated.
             fi
             _update_core_write_timestamp "$_self_stamp"
@@ -217,7 +217,7 @@ case $_topology in
     # -----------------------------------------------------------------------
     subdir)
     # Plain subdirectory — parent repo manages the scripts.  Self-update is a
-    # no-op; exec update.sh directly.
+    # no-op; exec update.zsh directly.
     # -----------------------------------------------------------------------
         info "update_self: subdir topology — parent repo manages scripts, skipping self-update"
         _update_self_exec_update
@@ -226,7 +226,7 @@ case $_topology in
 
     # -----------------------------------------------------------------------
     none|*)
-    # Not inside a git repo at all.  Just exec update.sh.
+    # Not inside a git repo at all.  Just exec update.zsh.
     # -----------------------------------------------------------------------
         warn "update_self: scripts directory is not a git repo — skipping self-update"
         _update_self_exec_update

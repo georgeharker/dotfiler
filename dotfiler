@@ -5,7 +5,7 @@
 script_name="${${(%):-%x}:A}"
 helper_script_dir="${script_name:h}"
 
-source "${helper_script_dir}/helpers.sh"
+source "${helper_script_dir}/helpers.zsh"
 
 set -e
 
@@ -76,34 +76,34 @@ case "$command" in
     gui)
         # Get directories using helper functions
         dotfiles_dir=$(find_dotfiles_directory)
-        setup_script="$script_dir/setup.sh"
+        setup_script="$script_dir/setup.zsh"
         
         # Launch the GUI with discovered directories and user arguments
         exec "$script_dir/dotfiler-gui" --dotfiles-dir "$dotfiles_dir" --setup-script "$setup_script" "$@"
         ;;
     setup)
         # Run setup script with all remaining arguments
-        exec "$script_dir/setup.sh" "$@"
+        exec "$script_dir/setup.zsh" "$@"
         ;;
     check-updates)
         # Run check_update script with all remaining arguments
-        exec "$script_dir/check_update.sh" "$@"
+        exec "$script_dir/check_update.zsh" "$@"
         ;;
     update)
         # Run update script with all remaining arguments
-        exec "$script_dir/update.sh" "$@"
+        exec "$script_dir/update.zsh" "$@"
         ;;
     update-self)
         # Update dotfiler scripts themselves
-        exec "$script_dir/update_self.sh" "$@"
+        exec "$script_dir/update_self.zsh" "$@"
         ;;
    install)
        # Run install script with all remaining arguments
-       exec "$script_dir/install.sh" "$@"
+       exec "$script_dir/install.zsh" "$@"
        ;;
    install-module)
        # Run install_module script with all remaining arguments
-       exec "$script_dir/install_module.sh" "$@"
+       exec "$script_dir/install_module.zsh" "$@"
        ;;
     *)
         echo "Error: Unknown command '$command'" >&2

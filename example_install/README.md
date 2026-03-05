@@ -4,30 +4,30 @@ This directory contains the modular installation system for dotfiles. Each scrip
 
 ## Structure
 
-- `helpers.sh` - Common helper functions used by all modules
-- `00-dotfiler-install.sh` - Install dotfiler command to ~/bin
-- `01-package-manager.sh` - Package manager setup (Homebrew/APT) and fonts
-- `02-shell-utils.sh` - Shell environment tools (eza, fzf, zoxide, antidote)
-- `03-development-tools.sh` - Core development tools (git, delta, cmake)
-- `04-editors-terminals.sh` - Editors, terminals, and shell enhancements (tmux, neovim)
-- `05-programming-languages.sh` - Language-specific environments (Python, Rust, Node.js)
-- `06-applications.sh` - Specific applications (1Password, tailscale)
-- `07-post-install.sh` - Post-installation configuration
+- `helpers.zsh` - Common helper functions used by all modules
+- `00-dotfiler-install.zsh` - Install dotfiler command to ~/bin
+- `01-package-manager.zsh` - Package manager setup (Homebrew/APT) and fonts
+- `02-shell-utils.zsh` - Shell environment tools (eza, fzf, zoxide, antidote)
+- `03-development-tools.zsh` - Core development tools (git, delta, cmake)
+- `04-editors-terminals.zsh` - Editors, terminals, and shell enhancements (tmux, neovim)
+- `05-programming-languages.zsh` - Language-specific environments (Python, Rust, Node.js)
+- `06-applications.zsh` - Specific applications (1Password, tailscale)
+- `07-post-install.zsh` - Post-installation configuration
 
 ## Usage
 
 ### Full Installation
 Run the main script from the root directory:
 ```bash
-./install.sh
+./install.zsh
 ```
 
 ### Individual Module Installation
 You can run individual modules by name:
 ```bash
-./install_module.sh package-manager
-./install_module.sh development-tools
-./install_module.sh editors-terminals
+./install_module.zsh package-manager
+./install_module.zsh development-tools
+./install_module.zsh editors-terminals
 # etc.
 ```
 
@@ -37,10 +37,10 @@ All install commands support a `-f` or `--force` flag to reinstall components:
 
 ```bash
 # Force reinstall all modules
-../install.sh --force
+../install.zsh --force
 
 # Force reinstall specific module
-../install_module.sh development-tools --force
+../install_module.zsh development-tools --force
 ```
 
 When `--force` is not specified, installation scripts will skip items that are already installed, making subsequent runs fast and safe.
@@ -69,11 +69,11 @@ The installation system uses smart conditional logic to avoid unnecessary work:
 
 ```bash
 # Normal run - skips if ripgrep exists
-./install_module.sh shell-utils
+./install_module.zsh shell-utils
 # Output: "ripgrep already installed"
 
 # Force run - reinstalls even if exists
-./install_module.sh shell-utils --force
+./install_module.zsh shell-utils --force
 # Output: "Installing cargo package: ripgrep" (runs cargo install -f)
 ```
 
@@ -86,7 +86,7 @@ The system automatically detects whether it's running on macOS or Linux and adju
 
 ## Helper Functions
 
-The `helpers.sh` file provides a comprehensive set of functions for building reliable, cross-platform installation modules with intelligent conditional installation.
+The `helpers.zsh` file provides a comprehensive set of functions for building reliable, cross-platform installation modules with intelligent conditional installation.
 
 ### Core System Functions
 

@@ -7,7 +7,7 @@ script_dir="${script_name:h}/../scripts/"
 script_dir=${script_dir:A}
 
 # Pull in logging
-source "${script_dir}/logging.sh"
+source "${script_dir}/logging.zsh"
 
 # Detect operating system
 detect_os() {

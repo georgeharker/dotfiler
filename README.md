@@ -50,7 +50,7 @@ cp ~/.dotfiles/.nounpack/dotfiler/dotfiles_exclude ~/.dotfiles/
 .nounpack/dotfiler/dotfiler setup -u
 
 # Enable auto-update on login (add to your .zshrc)
-echo '[[ -f ~/.dotfiles/.nounpack/dotfiler/check_update.sh ]] && source ~/.dotfiles/.nounpack/dotfiler/check_update.sh' >> ~/.zshrc
+echo '[[ -f ~/.dotfiles/.nounpack/dotfiler/check_update.zsh ]] && source ~/.dotfiles/.nounpack/dotfiler/check_update.zsh' >> ~/.zshrc
 
 # Enable shell completions (optional)
 echo 'source ~/.dotfiles/.nounpack/dotfiler/completions.zsh' >> ~/.zshrc
@@ -106,7 +106,7 @@ git subtree pull --prefix=.nounpack/dotfiler dotfiler main --squash
 ```
 
 **Required:** Tell dotfiler which remote to track for self-updates. Add this
-to your `.zshrc` **before** sourcing `check_update.sh`:
+to your `.zshrc` **before** sourcing `check_update.zsh`:
 
 ```bash
 zstyle ':dotfiler:update' subtree-remote 'dotfiler main'
@@ -127,7 +127,7 @@ chmod +x ~/.dotfiler/dotfiler
 Then configure your dotfiles repo to find the scripts:
 
 ```bash
-# In your .zshrc, before sourcing check_update.sh:
+# In your .zshrc, before sourcing check_update.zsh:
 zstyle ':dotfiles:scripts' path "$HOME/.dotfiler"
 ```
 
@@ -141,7 +141,7 @@ Clone your repo and restore all symlinks in one go:
 git clone <your-repo> ~/.dotfiles
 cd ~/.dotfiles
 git submodule update --init --recursive   # if using submodule
-chmod +x .nounpack/dotfiler/dotfiler .nounpack/dotfiler/*.sh
+chmod +x .nounpack/dotfiler/dotfiler .nounpack/dotfiler/.zsh
 .nounpack/dotfiler/dotfiler setup -u
 ```
 
@@ -240,7 +240,7 @@ never called by the auto-update machinery.
 `--dry-run` suppresses the pull and all filesystem writes in every mode.
 
 Only files that changed in the relevant commits get re-unpacked — fast and safe.
-If any `.nounpack/install/*.sh` scripts changed, dotfiler warns you to re-run
+If any `.nounpack/install/.zsh` scripts changed, dotfiler warns you to re-run
 `dotfiler install`.
 
 ### `dotfiler install` — Bootstrap a new machine
@@ -277,14 +277,14 @@ Controls: `↑↓←→` navigate, `Space/Enter` select, `I` track, `F` file inf
 
 ### Integration
 
-`check_update.sh` must be **sourced** (not executed) so it can interact with
+`check_update.zsh` must be **sourced** (not executed) so it can interact with
 the current shell — prompt the user, run `zsh` hooks, etc.
 
 Add this to your `.zshrc`, after any `zstyle` configuration:
 
 ```bash
-[[ -f ~/.dotfiles/.nounpack/dotfiler/check_update.sh ]] && \
-    source ~/.dotfiles/.nounpack/dotfiler/check_update.sh
+[[ -f ~/.dotfiles/.nounpack/dotfiler/check_update.zsh ]] && \
+    source ~/.dotfiles/.nounpack/dotfiler/check_update.zsh
 ```
 
 That's all that's required. On each new login shell, dotfiler checks whether
@@ -293,7 +293,7 @@ the remote has new commits, then acts based on your configured mode.
 If you're using the standalone install, point to the script directly:
 
 ```bash
-[[ -f ~/.dotfiler/check_update.sh ]] && source ~/.dotfiler/check_update.sh
+[[ -f ~/.dotfiler/check_update.zsh ]] && source ~/.dotfiler/check_update.zsh
 ```
 
 ### Update modes
@@ -322,7 +322,7 @@ Oh-My-Zsh users: dotfiler falls back to reading `:omz:update mode` if no
 
 ### Debugging the update check
 
-To see exactly what `check_update.sh` is doing at login, enable debug output
+To see exactly what `check_update.zsh` is doing at login, enable debug output
 in any of these ways:
 
 ```bash
@@ -405,7 +405,7 @@ commit them to your dotfiles repo alongside your config.
 cp -r .nounpack/dotfiler/example_install/ .nounpack/install/
 
 # Customise as needed
-vim .nounpack/install/02-shell-utils.sh
+vim .nounpack/install/02-shell-utils.zsh
 
 # Run all modules
 dotfiler install
@@ -418,14 +418,14 @@ Available modules (in run order):
 
 | Module | Purpose |
 |--------|---------|
-| `00-dotfiler-install.sh` | Symlink `dotfiler` command to `~/bin` |
-| `01-package-manager.sh` | Homebrew (macOS) / APT + extras (Linux), fonts |
-| `02-shell-utils.sh` | `eza`, `fzf`, `zoxide`, `antidote`, etc. |
-| `03-development-tools.sh` | `git`, `delta`, `cmake`, and friends |
-| `04-editors-terminals.sh` | `tmux`, `neovim`, terminal emulators |
-| `05-programming-languages.sh` | Language runtimes and version managers |
-| `06-applications.sh` | End-user applications |
-| `07-post-install.sh` | Final configuration and cleanup |
+| `00-dotfiler-install.zsh` | Symlink `dotfiler` command to `~/bin` |
+| `01-package-manager.zsh` | Homebrew (macOS) / APT + extras (Linux), fonts |
+| `02-shell-utils.zsh` | `eza`, `fzf`, `zoxide`, `antidote`, etc. |
+| `03-development-tools.zsh` | `git`, `delta`, `cmake`, and friends |
+| `04-editors-terminals.zsh` | `tmux`, `neovim`, terminal emulators |
+| `05-programming-languages.zsh` | Language runtimes and version managers |
+| `06-applications.zsh` | End-user applications |
+| `07-post-install.zsh` | Final configuration and cleanup |
 
 Install scripts are idempotent by default — already-installed items are skipped.
 `--force` triggers reinstall (`brew reinstall`, `cargo install -f`, etc.).
@@ -438,7 +438,7 @@ available inside install modules.
 ## Configuration
 
 All configuration is via `zstyle`. Add these to your `.zshrc` before sourcing
-`check_update.sh`:
+`check_update.zsh`:
 
 ```bash
 # Override the dotfiles repo path (default: auto-detected)
@@ -532,16 +532,16 @@ dotfiler check-updates --<TAB>  # --force, --debug, --help
 ├── .nounpack/
 │   ├── scripts/           # Dotfiler (submodule, subtree, or symlink)
 │   │   ├── dotfiler       # Main command dispatcher
-│   │   ├── setup.sh
-│   │   ├── update.sh
-│   │   ├── check_update.sh
-│   │   ├── install.sh
-│   │   ├── helpers.sh
+│   │   ├── setup.zsh
+│   │   ├── update.zsh
+│   │   ├── check_update.zsh
+│   │   ├── install.zsh
+│   │   ├── helpers.zsh
 │   │   ├── completions.zsh
 │   │   ├── dotfiles_exclude
 │   │   └── example_install/
 │   └── install/           # Your customised install modules (committed to repo)
-│       ├── 00-dotfiler-install.sh
+│       ├── 00-dotfiler-install.zsh
 │       └── …
 ├── dotfiles_exclude       # Your exclusion patterns
 ├── .zshrc                 # Tracked dotfiles (symlinked to ~/)
@@ -579,7 +579,7 @@ git push
 # Manually:
 dotfiler update
 
-# Or just open a new shell — check_update.sh handles it at login
+# Or just open a new shell — check_update.zsh handles it at login
 ```
 
 ### Restore everything on a new machine
@@ -588,7 +588,7 @@ dotfiler update
 git clone <your-repo> ~/.dotfiles
 cd ~/.dotfiles
 git submodule update --init --recursive
-chmod +x .nounpack/dotfiler/dotfiler .nounpack/dotfiler/*.sh
+chmod +x .nounpack/dotfiler/dotfiler .nounpack/dotfiler/.zsh
 .nounpack/dotfiler/dotfiler setup -u
 .nounpack/dotfiler/dotfiler install
 ```
@@ -599,7 +599,7 @@ chmod +x .nounpack/dotfiler/dotfiler .nounpack/dotfiler/*.sh
 
 ```bash
 # Scripts not executable after clone
-chmod +x ~/.dotfiles/.nounpack/dotfiler/dotfiler ~/.dotfiles/.nounpack/dotfiler/*.sh
+chmod +x ~/.dotfiles/.nounpack/dotfiler/dotfiler ~/.dotfiles/.nounpack/dotfiler/.zsh
 
 # Re-create all symlinks
 dotfiler setup -u

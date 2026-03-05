@@ -9,10 +9,10 @@
 # Excludes for the dotfiles system
 .nounpack/
 dotfiles_exclude
-install.sh
-install_module.sh
-update.sh
-check_updates.sh
+install.zsh
+install_module.zsh
+update.zsh
+check_updates.zsh
 dotfiler
 .codecompanion/*
 

@@ -5,7 +5,7 @@ script_name="${${(%):-%x}:A}"
 helper_script_dir="${script_name:h}"
 
 # Load module management helpers (which includes main helpers)
-source "${helper_script_dir}/module_helpers.sh"
+source "${helper_script_dir}/module_helpers.zsh"
 
 
 # Dotfiles Installation Script (Modular Version)
@@ -18,7 +18,7 @@ script_dir=$(find_dotfiles_script_directory)
 install_dir=$(find_dotfiles_install_directory)
 
 # Source helper functions
-source "$install_dir/helpers.sh"
+source "$install_dir/helpers.zsh"
 
 # parse opts
 

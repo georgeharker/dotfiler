@@ -144,12 +144,12 @@ _dotfiler_modules() {
     # Try to find dotfiler command location
     script_dir="${${${(%):-%x}:A}:h}"
     
-    # Try to source module_helpers.sh and get modules
-    if [[ -n "$script_dir" && -f "$script_dir/module_helpers.sh" ]]; then
+    # Try to source module_helpers.zsh and get modules
+    if [[ -n "$script_dir" && -f "$script_dir/module_helpers.zsh" ]]; then
         # Source in a subshell to avoid polluting completion environment
         local module_list
         module_list=$(
-            source "$script_dir/module_helpers.sh" 2>/dev/null && 
+            source "$script_dir/module_helpers.zsh" 2>/dev/null && 
             list_available_modules 2>/dev/null | 
             tail -n +2 | 
             sed 's/^[[:space:]]*//' | 
@@ -191,12 +191,12 @@ _dotfiler_module_functions() {
     # Try to find dotfiler command location
     script_dir="${${${(%):-%x}:A}:h}"
     
-    # Try to source module_helpers.sh and get module functions
-    if [[ -n "$script_dir" && -f "$script_dir/module_helpers.sh" ]]; then
+    # Try to source module_helpers.zsh and get module functions
+    if [[ -n "$script_dir" && -f "$script_dir/module_helpers.zsh" ]]; then
         # Source in a subshell to avoid polluting completion environment
         local function_list
         function_list=$(
-            source "$script_dir/module_helpers.sh" 2>/dev/null && 
+            source "$script_dir/module_helpers.zsh" 2>/dev/null && 
             get_module_functions "$module_name" 2>/dev/null
         )
         

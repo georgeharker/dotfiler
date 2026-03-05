@@ -6,7 +6,7 @@
 
 # Always load main helpers to ensure all path functions are available
 script_dir="${${(%):-%x}:A:h}"
-source "$script_dir/helpers.sh"
+source "$script_dir/helpers.zsh"
 
 # Global associative arrays for module data
 declare -gA dotfiles_module_functions
@@ -23,7 +23,7 @@ register_module() {
         return 1
     fi
     
-    local basename=$(basename "$filename" .sh)
+    local basename=$(basename "$filename" .zsh)
     
     dotfiles_module_filenames["$basename"]="$filename"
     dotfiles_module_functions["$basename"]="${module_main_function:-run_${basename//-/_}_module}"
@@ -51,8 +51,8 @@ load_install_modules() {
     dotfiles_module_names=()
     
     # Load all install modules
-    for module in "$install_dir"/*.sh; do
-        if [[ -f "$module" && "$module" != *"helpers.sh" ]]; then
+    for module in "$install_dir"/*.zsh; do
+        if [[ -f "$module" && "$module" != *"helpers.zsh" ]]; then
             # Reset module variables before sourcing
             unset module_name module_description module_main_function
             

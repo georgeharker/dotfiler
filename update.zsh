@@ -1,13 +1,13 @@
 #!/bin/zsh
 
-# update.sh — apply dotfiles updates from git history
+# update.zsh — apply dotfiles updates from git history
 #
 # Phase-separated execution model:
 #   1. PLAN   — fetch, compute ranges, build file lists; source component hooks
 #               so they register into _dotfiler_registered_hooks / _dotfiler_hook_*_fn
 #               then call each hook's plan_fn in-process (no git writes, no subprocesses)
 #   2. PULL   — all git operations (main repo + all components) in registration order
-#   3. UNPACK — all setup.sh calls after every repo is at new HEAD
+#   3. UNPACK — all setup.zsh calls after every repo is at new HEAD
 #   4. POST   — commit parent pointers, warn about install scripts, cleanup
 #
 # Flags: -D/--dry-run, -q/--quiet, -v/--verbose,
@@ -20,9 +20,9 @@
 script_name="${${(%):-%x}:A}"
 helper_script_dir="${script_name:h}"
 
-source "${helper_script_dir}/helpers.sh"
-source "${helper_script_dir}/logging.sh"
-source "${helper_script_dir}/update_core.sh"
+source "${helper_script_dir}/helpers.zsh"
+source "${helper_script_dir}/logging.zsh"
+source "${helper_script_dir}/update_core.zsh"
 
 dotfiles_dir=$(find_dotfiles_directory)
 script_dir=$(find_dotfiles_script_directory)
@@ -79,7 +79,7 @@ _update_component_mode=false
 #   _dotfiler_hook_check_fn[name]       — fn: 0=available 1=up-to-date 2=error
 #   _dotfiler_hook_plan_fn[name]        — fn: populates _dotfiler_plan_<name>_*
 #   _dotfiler_hook_pull_fn[name]        — fn: git operations only
-#   _dotfiler_hook_unpack_fn[name]      — fn: setup.sh after all pulls
+#   _dotfiler_hook_unpack_fn[name]      — fn: setup.zsh after all pulls
 #   _dotfiler_hook_post_fn[name]        — fn: commit parents, markers etc.
 #   _dotfiler_hook_cleanup_fn[name]     — fn: unset hook impl fns (check mode)
 #   _dotfiler_hook_component_dir[name]  — component repo dir (absolute path)
@@ -98,7 +98,7 @@ typeset -gA  _dotfiler_hook_topology
 # _update_register_hook \
 #     <name> <check_fn> <plan_fn> <pull_fn> <unpack_fn> <post_fn> \
 #     [cleanup_fn] [component_dir] [topology]
-# Called by each hook when sourced. cleanup_fn: called by check_update.sh
+# Called by each hook when sourced. cleanup_fn: called by check_update.zsh
 # after check_fns run. component_dir + topology: used by dotfiler to resolve
 # component ranges from a dotfiles range without calling plan_fn first.
 function _update_register_hook() {
@@ -304,7 +304,7 @@ function _update_main_unpack(){
         [[ "$_link_dest" != "$HOME" ]] && _setup_extra+=(--link-dest "$_link_dest")
         [[ ${#quiet[@]} -gt 0 ]] && _quiet_arg="-q"
 
-        "${script_dir}/setup.sh" \
+        "${script_dir}/setup.zsh" \
             ${_dry_run_arg:+"$_dry_run_arg"} \
             "${_setup_extra[@]}" \
             -u \
@@ -321,7 +321,7 @@ function _update_main_post(){
     local -a _modified_install=()
     local _file
     for _file in "${_to_unpack[@]}"; do
-        [[ "$_file" == .nounpack/install/*.sh ]] && _modified_install+=("$_file")
+        [[ "$_file" == .nounpack/install/*.zsh ]] && _modified_install+=("$_file")
     done
     if [[ ${#_modified_install[@]} -gt 0 ]]; then
         warn "Install scripts modified, you may need to run dotfile install-module"

@@ -13,7 +13,7 @@ at login:
 ```zsh
 # In ~/.zshrc (or your dotfiles' shell init):
 if command -v dotfiler &>/dev/null; then
-    source "$(dotfiler scripts-dir)/check_update.sh"
+    source "$(dotfiler scripts-dir)/check_update.zsh"
 fi
 ```
 

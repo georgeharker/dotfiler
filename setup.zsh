@@ -4,7 +4,7 @@
 script_name="${${(%):-%x}:A}"
 helper_script_dir="${script_name:h}"
 
-source "${helper_script_dir}/helpers.sh"
+source "${helper_script_dir}/helpers.zsh"
 
 ingest=()
 setup=()

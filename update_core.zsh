@@ -1,12 +1,12 @@
 #!/bin/zsh
 
-# update_core.sh — shared update primitives for dotfiler and zdot
+# update_core.zsh — shared update primitives for dotfiler and zdot
 #
 # All functions take explicit _repo_dir arguments rather than relying on
-# ambient globals.  Callers (check_update.sh, update.sh, update.zsh) read
+# ambient globals.  Callers (check_update.zsh, update.zsh) read
 # zstyle values and pass resolved strings/bools as arguments.
 #
-# Logging: uses dotfiler's logging.sh macros (info, warn, error, action,
+# Logging: uses dotfiler's logging.zsh macros (info, warn, error, action,
 # report, verbose).  When sourced by zdot's update.zsh, a thin shim must be
 # installed first that aliases those names to zdot_info / zdot_warn.
 #
@@ -165,7 +165,7 @@ _update_core_write_timestamp() {
 }
 
 # ---------------------------------------------------------------------------
-# Update availability check (no GitHub API fallback — stays in check_update.sh)
+# Update availability check (no GitHub API fallback — stays in check_update.zsh)
 # ---------------------------------------------------------------------------
 
 # _update_core_is_available_fetch <repo_dir> [allow_diverged]
@@ -678,13 +678,13 @@ _update_core_is_available_subtree() {
 }
 
 # ---------------------------------------------------------------------------
-# File list builder (promoted from update.sh for use by hooks)
+# File list builder (promoted from update.zsh for use by hooks)
 # ---------------------------------------------------------------------------
 
 # _update_core_build_file_lists <repo_dir> <diff_range>
 # Walks commits in <diff_range> commit-by-commit (-m for merge awareness) and
 # populates two *caller-declared* unique arrays:
-#   _update_core_files_to_unpack  — files to add/update via setup.sh
+#   _update_core_files_to_unpack  — files to add/update via setup.zsh
 #   _update_core_files_to_remove  — deleted/renamed-away symlinks to remove
 # The arrays must be declared (typeset -aU) by the caller before this call.
 # Callers should copy them out immediately; they are overwritten on each call.
@@ -870,7 +870,7 @@ _update_core_resolve_component_range() {
 
 # _update_core_cleanup
 # Unsets all private _update_core_* helper functions defined in this file.
-# Called by update.sh (subprocess) after it has finished its update work.
+# Called by update.zsh (subprocess) after it has finished its update work.
 # NOT called by update.zsh — those functions must persist as runtime
 # dependencies of _zdot_update_handle_update (via _zdot_update_hook_*).
 # Self-unsets last.

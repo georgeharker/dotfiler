@@ -4,9 +4,9 @@
 script_name="${${(%):-%x}:A}"
 helper_script_dir="${script_name:h}"
 
-source "${helper_script_dir}/helpers.sh"
-source "${helper_script_dir}/logging.sh"
-source "${helper_script_dir}/update_core.sh"
+source "${helper_script_dir}/helpers.zsh"
+source "${helper_script_dir}/logging.zsh"
+source "${helper_script_dir}/update_core.zsh"
 
 force_update=false
 
@@ -128,7 +128,7 @@ function _check_update_invoke_hooks() {
     log_debug "check_update: hooks dir=${_hooks_dir}"
     [[ -d "$_hooks_dir" ]] || return 1
 
-    # Local registry — same shape as update.sh's global registry but
+    # Local registry — same shape as update.zsh's global registry but
     # scoped to this function so teardown is trivial.
     local -a _dotfiler_registered_hooks
     local -A _dotfiler_hook_check_fn
@@ -197,10 +197,10 @@ function update_dotfiles() {
         quiet="-q"
     fi
 
-    # Non-background mode: run update.sh interactively; only write timestamp on success.
+    # Non-background mode: run update.zsh interactively; only write timestamp on success.
     if [[ "$update_mode" != background ]]; then
-        verbose "check_update: running ${script_dir}/update.sh interactively"
-        if LANG= "${script_dir}/update.sh" "$quiet"; then
+        verbose "check_update: running ${script_dir}/update.zsh interactively"
+        if LANG= "${script_dir}/update.zsh" "$quiet"; then
             verbose "check_update: success — writing timestamp"
             _update_core_write_timestamp "$dotfiles_timestamp"
             return 0
@@ -212,9 +212,9 @@ function update_dotfiles() {
     fi
 
     # Background mode: capture stderr so it can be stored in the timestamp file.
-    verbose "check_update: running ${script_dir}/update.sh in background mode"
+    verbose "check_update: running ${script_dir}/update.zsh in background mode"
     local exit_status error_out
-    if error_out=$(LANG= "${script_dir}/update.sh" -q 2>&1); then
+    if error_out=$(LANG= "${script_dir}/update.zsh" -q 2>&1); then
         verbose "check_update: background success — writing timestamp"
         _update_core_write_timestamp "$dotfiles_timestamp" 0 "Update successful"
         return 0
@@ -298,9 +298,9 @@ function handle_self_update() {
         return 0
     fi
 
-    # _avail==0 means an update is available — run update_self.sh.
-    log_debug "check_update: handle_self_update: update available — running update_self.sh"
-    if "${script_dir}/update_self.sh" --force; then
+    # _avail==0 means an update is available — run update_self.zsh.
+    log_debug "check_update: handle_self_update: update available — running update_self.zsh"
+    if "${script_dir}/update_self.zsh" --force; then
         log_debug "check_update: handle_self_update: self-update succeeded"
         _update_core_write_timestamp "$_self_stamp"
         return 0
