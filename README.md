@@ -17,6 +17,19 @@ machines (packages, languages, apps), and a GUI for exploring and managing
 tracked files. If you just want symlinks, Stow is simpler. If you want a full
 dotfile lifecycle — track, sync, install, update — dotfiler has you covered.
 
+> **zdot:** dotfiler integrates with [zdot](https://github.com/georgeharker/zdot),
+> a modular zsh configuration manager, but does not require it. See
+> [docs/zdot-integration.md](docs/zdot-integration.md) for details.
+
+---
+
+## Documentation
+
+- [Authoring install files](docs/authoring-install-files.md)
+- [How updates work](docs/how-updates-work.md) — user perspective, deployment tradeoffs
+- [Update hooks](docs/update-hooks.md) — authoring hooks, internals, API reference
+- [zdot integration](docs/zdot-integration.md)
+
 ---
 
 ## Quick Start
@@ -184,12 +197,14 @@ dotfiler check-updates [options]
 | Flag | Long form | Description |
 |------|-----------|-------------|
 | `-f` | `--force` | Force check, ignoring the timestamp cache |
-| `-d` | `--debug` | Print debug output to stderr |
+| `-v` | `--verbose` | Show progress output |
+| `-d` | `--debug` | Show debug tracing (implies --verbose) |
 
 ```bash
 dotfiler check-updates           # Check against git remote
 dotfiler check-updates --force   # Ignore cache, check now
-dotfiler check-updates --debug   # Show what the update check is doing
+dotfiler check-updates --verbose # Show progress output
+dotfiler check-updates --debug   # Show full debug tracing
 ```
 
 ### `dotfiler update` — Pull updates and re-link
@@ -312,19 +327,18 @@ in any of these ways:
 
 ```bash
 # 1. Environment variable — set before opening a shell (e.g. in .zshenv)
-export DOTFILES_DEBUG=1
+export DOTFILER_DEBUG=1    # debug tracing
+export DOTFILER_VERBOSE=1  # progress output only
 
-# 2. zstyle — set before sourcing check_update.sh
-zstyle ':dotfiler:update' verbose silent   # suppress all non-error output
-#   (omit the zstyle to get the default — informational messages only)
-
-# 3. Flag — when running check-updates directly
+# 2. Flag — when running check-updates directly
+dotfiler check-updates --verbose
 dotfiler check-updates --debug
 ```
 
-With `DOTFILES_DEBUG` set, every phase is printed with a `[debug]` prefix so
+With `DOTFILER_DEBUG` set, every phase is printed with a `[debug]` prefix so
 you can trace exactly which branch is taken, what lock files are acquired, and
-whether an update is detected.
+whether an update is detected. `DOTFILER_VERBOSE` shows higher-level progress
+without the low-level tracing.
 
 ### Check frequency
 
@@ -335,7 +349,7 @@ zstyle ':dotfiler:update' frequency 86400   # once per day
 zstyle ':dotfiler:update' frequency 3600    # once per hour (default)
 ```
 
-The timestamp is stored in `${XDG_CACHE_DIR:-$HOME/.cache}/dotfiles/dotfiles_update`.
+The timestamp is stored in `${XDG_CACHE_HOME:-$HOME/.cache}/dotfiles/dotfiles_update`.
 Delete that file or run `dotfiler check-updates --force` to trigger an immediate check.
 
 ### How the check works
