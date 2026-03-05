@@ -177,7 +177,6 @@ function _check_update_invoke_hooks() {
         _fn="${_dotfiler_hook_cleanup_fn[$_name]:-}"
         [[ -n "$_fn" ]] && "$_fn"
     done
-    unset -f warn info error verbose 2>/dev/null
     unset _zdot_dotfiler_scripts_dir ZDOT_DIR 2>/dev/null
     unset -f _update_register_hook
 
