@@ -317,6 +317,12 @@ function handle_update() {
         return 0
     fi
 
+    # Capture sourced state before trap — cleanup_helpers unsets is_script_sourced.
+    # When sourced into a live shell we must NOT unset logging/helper functions
+    # that belong to the shell's own environment.
+    local _handle_update_sourced=false
+    is_script_sourced && _handle_update_sourced=true
+
     # Clean up on any exit.  Signal traps propagate the signal's status so that
     # an INT/QUIT is not swallowed.  Normal EXIT does only cleanup — no `return`
     # here because this function is called at script top-level and `return`
@@ -325,8 +331,10 @@ function handle_update() {
         unset update_mode 2>/dev/null
         unset dotfiles_dir dotfiles_cache_dir dotfiles_timestamp 2>/dev/null
         unset -f is_update_available update_dotfiles handle_update _check_update_invoke_hooks 2>/dev/null
-        cleanup_helpers 2>/dev/null
-        cleanup_logging 2>/dev/null
+        if [[ \$_handle_update_sourced != true ]]; then
+            cleanup_helpers 2>/dev/null
+            cleanup_logging 2>/dev/null
+        fi
         _update_core_release_lock '$dotfiles_cache_dir/update.lock'
     " EXIT
     trap "
@@ -334,8 +342,10 @@ function handle_update() {
         unset update_mode 2>/dev/null
         unset dotfiles_dir dotfiles_cache_dir dotfiles_timestamp 2>/dev/null
         unset -f is_update_available update_dotfiles handle_update _check_update_invoke_hooks 2>/dev/null
-        cleanup_helpers 2>/dev/null
-        cleanup_logging 2>/dev/null
+        if [[ \$_handle_update_sourced != true ]]; then
+            cleanup_helpers 2>/dev/null
+            cleanup_logging 2>/dev/null
+        fi
         _update_core_release_lock '$dotfiles_cache_dir/update.lock'
         return \$ret
     " INT QUIT
