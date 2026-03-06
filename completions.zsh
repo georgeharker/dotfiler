@@ -99,23 +99,28 @@ _dotfiler_check_update_args() {
 }
 
 # Complete update-self command arguments
+# update-self delegates to: update.zsh --update-phases=dotfiler
+# The dotfiler phase is always selected; other --update-phases values are not meaningful here.
 _dotfiler_update_self_args() {
     _arguments \
         '(- *)--help[Show help message]' \
         '(-f --force)'{-f,--force}'[Force update even if timestamp is recent]' \
         '(-q --quiet)'{-q,--quiet}'[Suppress informational output]' \
         '(-v --verbose)'{-v,--verbose}'[Enable verbose output]' \
-        '--dry-run[Show what would be updated without making changes]'
+        '(-D --dry-run)'{-D,--dry-run}'[Show what would be updated without making changes]'
 }
 
 # Complete update command arguments
 _dotfiler_update_args() {
     _arguments \
         '(- *)--help[Show help message]' \
+        '(-f --force)'{-f,--force}'[Force update even if timestamp is recent]' \
         '(-q --quiet)'{-q,--quiet}'[Run update quietly without output]' \
-        '(-c --commit-hash)'{-c,--commit-hash}'[Update to specific commit hash]:hash:' \
-        '(-r --range)'{-r,--range}'[Show changes in specific range]:range:' \
-        '(-D --dry-run)'{-D,--dry-run}'[Show what would be updated without making changes]'
+        '(-v --verbose)'{-v,--verbose}'[Enable verbose output]' \
+        '(-c --commit-hash)'{-c,--commit-hash}'[Replay dotfiles from specific commit hash]:hash:' \
+        '(-r --range)'{-r,--range}'[Replay dotfiles changes in specific range]:range:' \
+        '(-D --dry-run)'{-D,--dry-run}'[Show what would be updated without making changes]' \
+        '*--update-phases=[Restrict to named phase (repeatable)]:phase:(dotfiler dotfiles hooks)'
 }
 
 # Complete install command arguments

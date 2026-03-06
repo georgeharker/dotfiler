@@ -789,10 +789,10 @@ function setup_find_deep() {
     if [[ ${#find_prune_args[@]} -gt 0 ]]; then
         find_output=$(find $_foptd "$start_dir" -mindepth 1 $_fopt \
             \( "${find_prune_args[@]}" \) -o \
-            \( -type f -o -type l \) -print)
+            \( -type f -o -type l \) -print )
     else
         find_output=$(find $_foptd "$start_dir" -mindepth 1 $_fopt \
-            \( -type f -o -type l \))
+            \( -type f -o -type l \) )
     fi
     local f
     for f in ${(f)find_output}; do
@@ -1145,9 +1145,9 @@ function setup_find() {
     if [[ ${#find_prune_args[@]} -gt 0 ]]; then
         find_output=$(find $_foptd "$start_dir" -mindepth 1 $_fopt \
             \( "${find_prune_args[@]}" \) -o \
-            \( -type f -o -type l \) -print)
+            \( -type f -o -type l \) -print )
     else
-        find_output=$(find $_foptd "$start_dir" -mindepth 1 $_fopt \( -type f -o -type l \))
+        find_output=$(find $_foptd "$start_dir" -mindepth 1 $_fopt \( -type f -o -type l \) )
     fi
     for f in ${(f)find_output}; do
         [[ -n "$f" ]] || continue
@@ -1217,25 +1217,25 @@ function setup_main() {
         { _setup_main_usage; unfunction _setup_main_usage; return 1; }
 
     # Strip flag tokens that zparseopts +: leaves interleaved with values
-    ingest=("${(@)ingest:#-i}")
-    ingest=("${(@)ingest:#--ingest}")
-    track=("${(@)track:#-t}")
-    track=("${(@)track:#--track}")
-    untrack=("${(@)untrack:#-x}")
-    untrack=("${(@)untrack:#--untrack}")
-    force_unpack=("${(@)force_unpack:#-U}")
-    force_unpack=("${(@)force_unpack:#--force-unpack}")
+    ingest=( "${(@)ingest:#-i}" )
+    ingest=( "${(@)ingest:#--ingest}" )
+    track=( "${(@)track:#-t}" )
+    track=( "${(@)track:#--track}" )
+    untrack=( "${(@)untrack:#-x}" )
+    untrack=( "${(@)untrack:#--untrack}" )
+    force_unpack=( "${(@)force_unpack:#-U}" )
+    force_unpack=( "${(@)force_unpack:#--force-unpack}" )
 
     # Remaining positional args go to the appropriate file list
     if [[ ${#unpack[@]} -gt 0 ]]; then
-        unpack_files+=("$@")
+        unpack_files+=( "$@" )
     elif [[ ${#force_unpack[@]} -gt 0 ]]; then
-        force_unpack_files+=("$@")
+        force_unpack_files+=( "$@" )
     fi
 
-    if [[ ${#setup[@]} -eq 0 && ${#ingest[@]} -eq 0 && ${#track[@]} -eq 0 && \
-          ${#untrack[@]} -eq 0 && ${#unpack[@]} -eq 0 && ${#force_unpack[@]} -eq 0 && \
-          ${#diff[@]} -eq 0 ]]; then
+    if [[ ${#setup[@]} -eq 0 && ${#ingest[@]} -eq 0 && ${#track[@]} -eq 0 \
+          && ${#untrack[@]} -eq 0 && ${#unpack[@]} -eq 0 && ${#force_unpack[@]} -eq 0 \
+          && ${#diff[@]} -eq 0 ]]; then
         _setup_main_usage
         unfunction _setup_main_usage
         return 1

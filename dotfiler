@@ -90,13 +90,13 @@ case "$command" in
         exec "$script_dir/check_update.zsh" "$@"
         ;;
     update)
-        # update_self.zsh checks for dotfiler script updates, then always
-        # execs update.zsh itself (whether or not a self-update occurred).
-        exec "$script_dir/update_self.zsh" "$@"
+        # update.zsh handles both dotfiler script self-update and dotfiles
+        # update in a single phased run.
+        exec "$script_dir/update.zsh" "$@"
         ;;
     update-self)
-        # Update dotfiler scripts themselves
-        exec "$script_dir/update_self.zsh" "$@"
+        # Update dotfiler scripts only.
+        exec "$script_dir/update.zsh" --update-phases=dotfiler "$@"
         ;;
    install)
        # Run install script with all remaining arguments

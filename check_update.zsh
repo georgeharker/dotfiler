@@ -298,9 +298,9 @@ function handle_self_update() {
         return 0
     fi
 
-    # _avail==0 means an update is available — run update_self.zsh.
-    log_debug "check_update: handle_self_update: update available — running update_self.zsh"
-    if "${script_dir}/update_self.zsh" --force; then
+    # _avail==0 means an update is available — run update.zsh dotfiler phase.
+    log_debug "check_update: handle_self_update: update available — running update.zsh --update-phases=dotfiler"
+    if "${script_dir}/update.zsh" --update-phases=dotfiler; then
         log_debug "check_update: handle_self_update: self-update succeeded"
         _update_core_write_timestamp "$_self_stamp"
         return 0

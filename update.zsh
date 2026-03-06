@@ -1,17 +1,36 @@
 #!/bin/zsh
 
-# update.zsh — apply dotfiles updates from git history
+# update.zsh — topology-aware self-update for dotfiler scripts, then apply
+# dotfiles updates from git history.
 #
 # Phase-separated execution model:
-#   1. PLAN   — fetch, compute ranges, build file lists; source component hooks
+#   dotfiler phase (from update_self.zsh):
+#     INIT    — detect topology of dotfiler scripts directory
+#     PLAN    — check availability of dotfiler scripts update
+#     PULL    — git pull/submodule/subtree for dotfiler scripts
+#     UNPACK  — no-op for now (scripts not symlinked into $HOME)
+#
+#   dotfiles + hooks phases (from update.zsh):
+#     PLAN    — fetch, compute ranges, build file lists; source component hooks
 #               so they register into _dotfiler_registered_hooks / _dotfiler_hook_*_fn
 #               then call each hook's plan_fn in-process (no git writes, no subprocesses)
-#   2. PULL   — all git operations (main repo + all components) in registration order
-#   3. UNPACK — all setup.zsh calls after every repo is at new HEAD
-#   4. POST   — commit parent pointers, warn about install scripts, cleanup
+#     PULL    — all git operations (main repo + all components) in registration order
+#     UNPACK  — all setup.zsh calls after every repo is at new HEAD
+#     POST    — commit parent pointers, warn about install scripts, cleanup
 #
-# Flags: -D/--dry-run, -q/--quiet, -v/--verbose,
-#        -c/--commit-hash, -r/--range, --repo-dir, --link-dest
+# Flags: -D/--dry-run, -q/--quiet, -v/--verbose, -f/--force,
+#        -c/--commit-hash, -r/--range,
+#        --update-phases=<phase> (dotfiler|dotfiles|hooks; repeatable; default=all)
+#
+# Range/commit-hash targets the main dotfiles repo; component hooks derive their
+# own ranges from the dotfiles history via marker files (see _update_phase_plan).
+# Future work: --component=<name> to target a single hook with an explicit range.
+
+emulate -L zsh
+# PIPE_FAIL and NO_UNSET are useful hardening; ERR_EXIT is intentionally
+# omitted — this script does deliberate error recovery (subtree pull can fail
+# and we continue) so ERR_EXIT would abort those paths prematurely.
+setopt PIPE_FAIL NO_UNSET
 
 # ---------------------------------------------------------------------------
 # Bootstrap
@@ -28,46 +47,309 @@ dotfiles_dir=$(find_dotfiles_directory)
 script_dir=$(find_dotfiles_script_directory)
 
 # ---------------------------------------------------------------------------
-# Argument parsing
+# _update_parse_args "$@"
+#
+# Parse flags into module-level globals consumed by phase functions.
+# Sets: quiet[], verbose[], force[], dry_run[], commit_hash[], range[],
+#       _update_phases[], _update_range_mode
+#       _dry_run (int), _force (int) — for update_self topology functions
 # ---------------------------------------------------------------------------
 
-commit_hash=()
-range=()
+function _update_parse_args() {
+    commit_hash=()
+    range=()
+    _update_phases=()
 
-function usage(){
-    echo "Usage: ${script_name} [-D|--dry-run] [-q|--quiet] [-v|--verbose]"
-    echo "                      [-c|--commit-hash <hash>] [-r|--range <range>]"
-    echo "                      [--repo-dir <path>] [--link-dest <path>]"
+    function _update_usage(){
+        echo "Usage: ${script_name} [-D|--dry-run] [-q|--quiet] [-v|--verbose] [-f|--force]"
+        echo "                      [-c|--commit-hash <hash>] [-r|--range <range>]"
+        echo "                      [--update-phases=<dotfiler|dotfiles|hooks> ...]"
+        echo "  --update-phases  Restrict to named phases (repeatable). Default: all."
+        echo "  -c/--commit-hash and -r/--range target the main dotfiles repo."
+        echo "  Component hook ranges are derived from the dotfiles history."
+    }
+
+    zmodload zsh/zutil
+    zparseopts -D -E - \
+        q=quiet -quiet=quiet \
+        v=verbose -verbose=verbose \
+        f=force -force=force \
+        c+:=commit_hash -commit-hash+:=commit_hash \
+        r+:=range -range+:=range \
+        D=dry_run -dry-run=dry_run \
+        -update-phases+:=_update_phases_raw || { _update_usage; unfunction _update_usage; return 1; }
+
+    unfunction _update_usage
+
+    commit_hash=("${(@)commit_hash:#-c}")
+    commit_hash=("${(@)commit_hash:#--commit-hash}")
+    range=("${(@)range:#-r}")
+    range=("${(@)range:#--range}")
+
+    # Strip --update-phases tokens, leaving only the values
+    _update_phases=("${(@)_update_phases_raw:#--update-phases}")
+
+    [[ ${#quiet[@]} -gt 0 ]]   && quiet_mode=true
+    [[ ${#verbose[@]} -gt 0 ]] && export DOTFILER_VERBOSE=1
+
+    # True when a specific commit or range was given — skips the git pull
+    # (repo is already at the target) and drives component range resolution.
+    # Future: --component=<name> will extend this to target a single hook.
+    _update_range_mode=false
+    [[ ${#range[@]} -gt 0 || ${#commit_hash[@]} -gt 0 ]] \
+        && _update_range_mode=true
+
+    # Integer forms used by _update_dotfiler_pull topology functions.
+    _dry_run=0; [[ ${#dry_run[@]} -gt 0 ]] && _dry_run=1
+    _force=0;   [[ ${#force[@]} -gt 0 ]]   && _force=1
 }
 
-zmodload zsh/zutil
-zparseopts -D -E - \
-    q=quiet -quiet=quiet \
-    v=verbose -verbose=verbose \
-    c+:=commit_hash -commit-hash+:=commit_hash \
-    r+:=range -range+:=range \
-    D=dry_run -dry-run=dry_run \
-    -repo-dir:=opt_repo_dir \
-    -link-dest:=opt_link_dest || { usage; exit 1; }
+# ---------------------------------------------------------------------------
+# _update_should_run_phase <phase>
+#
+# Returns 0 if the named phase should run.
+# If _update_phases is empty (no --update-phases flags), all phases run.
+# ---------------------------------------------------------------------------
 
-commit_hash=("${(@)commit_hash:#-c}")
-commit_hash=("${(@)commit_hash:#--commit-hash}")
-range=("${(@)range:#-r}")
-range=("${(@)range:#--range}")
+function _update_should_run_phase() {
+    [[ ${#_update_phases[@]} -eq 0 ]] && return 0
+    [[ ${_update_phases[(i)$1]} -le ${#_update_phases[@]} ]] && return 0
+    return 1
+}
 
-[[ ${#quiet[@]} -gt 0 ]]   && quiet_mode=true
-[[ ${#verbose[@]} -gt 0 ]] && export DOTFILER_VERBOSE=1
+# ===========================================================================
+# DOTFILER PHASE FUNCTIONS (from update_self.zsh)
+# ===========================================================================
 
-_update_repo_dir="${opt_repo_dir[-1]:-}"
-_update_link_dest="${opt_link_dest[-1]:-$HOME}"
-[[ -n "$_update_repo_dir" ]] && dotfiles_dir="$_update_repo_dir"
+# ---------------------------------------------------------------------------
+# Detect deployment topology
+# ---------------------------------------------------------------------------
 
-# Is this a component invocation (--repo-dir / --range / --commit-hash)?
-# Kept only for informational verbose output — the phase functions handle
-# all cases correctly without a separate code path.
-_update_component_mode=false
-[[ -n "$_update_repo_dir" || ${#range[@]} -gt 0 || ${#commit_hash[@]} -gt 0 ]] \
-    && _update_component_mode=true
+function _update_dotfiler_init() {
+    zstyle -s ':dotfiler:update' subtree-remote _dotfiler_subtree_spec 2>/dev/null \
+        || _dotfiler_subtree_spec=""
+
+    _update_core_detect_deployment "$script_dir" "$_dotfiler_subtree_spec"
+    _dotfiler_topology=$REPLY
+
+    # Stamp written after a successful pull in each topology branch.
+    _dotfiler_self_stamp="${XDG_CACHE_DIR:-$HOME/.cache}/dotfiler/dotfiler_scripts_update"
+
+    verbose "update_self: topology=$_dotfiler_topology script_dir=$script_dir"
+}
+
+
+# ---------------------------------------------------------------------------
+# _update_dotfiler_plan
+#
+# Fetch remotes and check whether an update is available.
+# Sets _dotfiler_update_avail (0=available, non-zero=up-to-date or error).
+# ---------------------------------------------------------------------------
+
+function _update_dotfiler_plan() {
+    case $_dotfiler_topology in
+
+        # -------------------------------------------------------------------
+        standalone)
+        # The scripts dir is its own standalone git repo.
+        # -------------------------------------------------------------------
+            local _avail
+            _update_core_is_available "$script_dir" && _avail=0 || _avail=$?
+            _dotfiler_update_avail=$_avail
+            ;;
+
+        # -------------------------------------------------------------------
+        submodule)
+        # The scripts dir is a submodule inside the user's dotfiles repo.
+        # -------------------------------------------------------------------
+            local _avail
+            _update_core_is_available "$script_dir" && _avail=0 || _avail=$?
+            _dotfiler_update_avail=$_avail
+            ;;
+
+        # -------------------------------------------------------------------
+        subtree)
+        # The scripts dir lives as a subtree prefix inside the user's dotfiles repo.
+        # -------------------------------------------------------------------
+            local _avail
+            _update_core_is_available_subtree "$script_dir" && _avail=0 || _avail=$?
+            _dotfiler_update_avail=$_avail
+            ;;
+
+        # -------------------------------------------------------------------
+        subdir)
+        # Plain subdirectory — parent repo manages the scripts.
+        # -------------------------------------------------------------------
+            info "update_self: subdir topology — parent repo manages scripts, skipping self-update"
+            _dotfiler_update_avail=1
+            ;;
+
+        # -------------------------------------------------------------------
+        none|*)
+        # Not inside a git repo at all.
+        # -------------------------------------------------------------------
+            warn "update_self: scripts directory is not a git repo — skipping self-update"
+            _dotfiler_update_avail=1
+            ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# _update_dotfiler_pull
+#
+# Apply the dotfiler scripts update based on topology and availability set
+# by _update_dotfiler_plan.  Writes timestamp on success.
+# ---------------------------------------------------------------------------
+
+function _update_dotfiler_pull() {
+    case $_dotfiler_topology in
+
+        # -------------------------------------------------------------------
+        standalone)
+        # The scripts dir is its own standalone git repo.  Pull if an update
+        # is available.
+        # -------------------------------------------------------------------
+            local _avail
+            _update_core_is_available "$script_dir" && _avail=0 || _avail=$?
+            if (( _avail == 0 )); then
+                info "update_self: update available — pulling scripts"
+                if (( _dry_run )); then
+                    info "update_self: [dry-run] would git pull"
+                else
+                    local _remote _branch
+                    _remote=$(_update_core_get_default_remote "$script_dir")
+                    _branch=$(_update_core_get_default_branch "$script_dir" "$_remote")
+                    if ! git -C "$script_dir" pull --ff-only "$_remote" "$_branch"; then
+                        error "update_self: git pull failed."
+                        return 1
+                    fi
+                    _update_core_write_timestamp "$_dotfiler_self_stamp"
+                fi
+            else
+                info "update_self: scripts already up to date"
+                (( _dry_run )) || _update_core_write_timestamp "$_dotfiler_self_stamp"
+            fi
+            ;;
+
+        # -------------------------------------------------------------------
+        submodule)
+        # The scripts dir is a submodule inside the user's dotfiles repo.
+        # Update the submodule and optionally commit the parent.
+        # -------------------------------------------------------------------
+            local _submod_root _parent _rel
+            _submod_root=$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null)
+            # Find the parent repo by walking up from _submod_root
+            if ! _parent=$(git -C "${_submod_root}/.." rev-parse --show-toplevel 2>/dev/null); then
+                error "update_self: cannot find parent repo for submodule."
+                return 1
+            fi
+            _rel=${_submod_root#${_parent}/}
+
+            local _mode
+            zstyle -s ':dotfiler:update' in-tree-commit _mode 2>/dev/null || _mode="auto"
+
+            if (( _dry_run )); then
+                info "update_self: [dry-run] would: git -C $_parent submodule update --remote -- $_rel"
+            else
+                if ! git -C "$_parent" submodule update --remote -- "$_rel"; then
+                    error "update_self: submodule update failed."
+                    return 1
+                fi
+                _update_core_commit_parent \
+                    "$_parent" "$_rel" \
+                    "dotfiler submodule updated" \
+                    "dotfiler: update scripts submodule" \
+                    "$_mode"
+                _update_core_write_timestamp "$_dotfiler_self_stamp"
+            fi
+            ;;
+
+        # -------------------------------------------------------------------
+        subtree)
+        # The scripts dir lives as a subtree prefix inside the user's dotfiles
+        # repo.  Pull the subtree and optionally commit.
+        # -------------------------------------------------------------------
+            local _parent _rel
+            if ! _parent=$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null); then
+                error "update_self: cannot find parent repo for subtree."
+                return 1
+            fi
+            local _parent_real _script_real
+            _parent_real=${_parent:A}
+            _script_real=${script_dir:A}
+            _rel=${_script_real#${_parent_real}/}
+
+            # Parse subtree-remote zstyle: "<remote> [<branch>]"
+            local _remote _branch
+            _remote="${_dotfiler_subtree_spec%% *}"
+            _branch="${_dotfiler_subtree_spec#* }"
+            [[ "$_branch" == "$_remote" ]] && _branch=""   # no space = no branch given
+            [[ -z "$_branch" ]] && \
+                _branch=$(_update_core_get_default_branch "$script_dir" "$_remote")
+
+            local _mode
+            zstyle -s ':dotfiler:update' in-tree-commit _mode 2>/dev/null || _mode="auto"
+
+            if (( _dry_run )); then
+                info "update_self: [dry-run] would: git subtree pull --prefix=$_rel $_remote $_branch --squash"
+            else
+                if git -C "$_parent" subtree pull \
+                    --prefix="$_rel" "$_remote" "$_branch" --squash; then
+
+                    # Record the remote SHA we just pulled so future
+                    # _update_core_is_available_subtree can compare against it.
+                    local _remote_url _pulled_sha
+                    _remote_url=$(git -C "$script_dir" config "remote.${_remote}.url" 2>/dev/null)
+                    _pulled_sha=$(_update_core_resolve_remote_sha "$_remote_url" "$_branch" 2>/dev/null)
+                    if [[ -n "$_pulled_sha" ]]; then
+                        _update_core_write_sha_marker "$script_dir" "$_pulled_sha"
+                    fi
+
+                    # Stage the SHA marker alongside the subtree when committing
+                    # to the parent repo.
+                    _update_core_sha_marker_path "$script_dir"
+                    local _marker_path=$REPLY
+                    if [[ "$_mode" != "none" && -f "$_marker_path" ]]; then
+                        git -C "$_parent" add "$_marker_path" 2>/dev/null
+                    fi
+
+                    _update_core_commit_parent \
+                        "$_parent" "$_rel" \
+                        "dotfiler subtree updated" \
+                        "dotfiler: update scripts subtree" \
+                        "$_mode"
+                else
+                    error "update_self: subtree pull failed (working tree may have uncommitted changes)."
+                    # Continue rather than failing hard — dotfiles can still be
+                    # updated with existing scripts.
+                fi
+                _update_core_write_timestamp "$_dotfiler_self_stamp"
+            fi
+            ;;
+
+        # -------------------------------------------------------------------
+        subdir|none|*)
+        # No-op — nothing to pull.
+        # -------------------------------------------------------------------
+            ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# _update_dotfiler_unpack
+#
+# No-op for now — dotfiler scripts are not symlinked into $HOME.
+# Framework is in place for future component install support.
+# ---------------------------------------------------------------------------
+
+function _update_dotfiler_unpack() {
+    verbose "update_self: dotfiler unpack phase — no-op (scripts not symlinked)"
+    return 0
+}
+
+# ===========================================================================
+# DOTFILES + HOOKS PHASE FUNCTIONS (from update.zsh)
+# ===========================================================================
 
 # ---------------------------------------------------------------------------
 # Hook registry
@@ -85,45 +367,49 @@ _update_component_mode=false
 #   _dotfiler_hook_component_dir[name]  — component repo dir (absolute path)
 #   _dotfiler_hook_topology[name]       — standalone|submodule|subtree|subdir
 
-typeset -ga  _dotfiler_registered_hooks
-typeset -gA  _dotfiler_hook_check_fn
-typeset -gA  _dotfiler_hook_plan_fn
-typeset -gA  _dotfiler_hook_pull_fn
-typeset -gA  _dotfiler_hook_unpack_fn
-typeset -gA  _dotfiler_hook_post_fn
-typeset -gA  _dotfiler_hook_cleanup_fn
-typeset -gA  _dotfiler_hook_component_dir
-typeset -gA  _dotfiler_hook_topology
+function _update_init_registry() {
+    typeset -ga  _dotfiler_registered_hooks
+    typeset -gA  _dotfiler_hook_check_fn
+    typeset -gA  _dotfiler_hook_plan_fn
+    typeset -gA  _dotfiler_hook_pull_fn
+    typeset -gA  _dotfiler_hook_unpack_fn
+    typeset -gA  _dotfiler_hook_post_fn
+    typeset -gA  _dotfiler_hook_cleanup_fn
+    typeset -gA  _dotfiler_hook_component_dir
+    typeset -gA  _dotfiler_hook_topology
 
-# _update_register_hook \
-#     <name> <check_fn> <plan_fn> <pull_fn> <unpack_fn> <post_fn> \
-#     [cleanup_fn] [component_dir] [topology]
-# Called by each hook when sourced. cleanup_fn: called by check_update.zsh
-# after check_fns run. component_dir + topology: used by dotfiler to resolve
-# component ranges from a dotfiles range without calling plan_fn first.
-function _update_register_hook() {
-    local _name=$1
-    _dotfiler_registered_hooks+=("$_name")
-    _dotfiler_hook_check_fn[$_name]=$2
-    _dotfiler_hook_plan_fn[$_name]=$3
-    _dotfiler_hook_pull_fn[$_name]=$4
-    _dotfiler_hook_unpack_fn[$_name]=$5
-    _dotfiler_hook_post_fn[$_name]=$6
-    _dotfiler_hook_cleanup_fn[$_name]=${7:-}
-    _dotfiler_hook_component_dir[$_name]=${8:-}
-    _dotfiler_hook_topology[$_name]=${9:-}
-}
+    # _update_register_hook \
+    #     <name> <check_fn> <plan_fn> <pull_fn> <unpack_fn> <post_fn> \
+    #     [cleanup_fn] [component_dir] [topology]
+    # Called by each hook when sourced. cleanup_fn: called by check_update.zsh
+    # after check_fns run. component_dir + topology: used by dotfiler to resolve
+    # component ranges from a dotfiles range without calling plan_fn first.
+    function _update_register_hook() {
+        local _name=$1
+        _dotfiler_registered_hooks+=("$_name")
+        _dotfiler_hook_check_fn[$_name]=$2
+        _dotfiler_hook_plan_fn[$_name]=$3
+        _dotfiler_hook_pull_fn[$_name]=$4
+        _dotfiler_hook_unpack_fn[$_name]=$5
+        _dotfiler_hook_post_fn[$_name]=$6
+        _dotfiler_hook_cleanup_fn[$_name]=${7:-}
+        _dotfiler_hook_component_dir[$_name]=${8:-}
+        _dotfiler_hook_topology[$_name]=${9:-}
+    }
 
-# ---------------------------------------------------------------------------
-# Helpers: safe operations (dry-run aware)
-# ---------------------------------------------------------------------------
+    # ---------------------------------------------------------------------------
+    # Helpers: safe operations (dry-run aware)
+    # ---------------------------------------------------------------------------
 
-function _update_safe_rm(){
-    if [[ ${#dry_run[@]} -gt 0 ]]; then
-        action "[DRY RUN] Would remove: $1"
-    else
-        rm -f "$1"
-    fi
+    function _update_safe_rm(){
+        if [[ ${#dry_run[@]} -gt 0 ]]; then
+            action "[DRY RUN] Would remove: $1"
+        else
+            rm -f "$1"
+        fi
+    }
+
+    typeset -gaU _dotfiler_plan_main_to_unpack _dotfiler_plan_main_to_remove
 }
 
 # ---------------------------------------------------------------------------
@@ -141,8 +427,6 @@ function _update_safe_rm(){
 #   _dotfiler_plan_<n>_to_unpack       — array of files to unpack
 #   _dotfiler_plan_<n>_to_remove       — array of symlinks to delete
 # ---------------------------------------------------------------------------
-
-typeset -gaU _dotfiler_plan_main_to_unpack _dotfiler_plan_main_to_remove
 
 function _update_phase_plan(){
     verbose "update: phase plan: begin"
@@ -177,9 +461,10 @@ function _update_phase_plan(){
     _dotfiler_plan_main_to_unpack=("${_update_core_files_to_unpack[@]}")
     _dotfiler_plan_main_to_remove=("${_update_core_files_to_remove[@]}")
 
-    # Register main repo with its phase functions
+    # Register main repo with its phase functions.
+    # link_dest for the main repo is always $HOME — dotfiles symlinks live there.
     _dotfiler_plan_main_repo_dir="$dotfiles_dir"
-    _dotfiler_plan_main_link_dest="$_update_link_dest"
+    _dotfiler_plan_main_link_dest="$HOME"
     _update_register_hook main \
         '' \
         '' \
@@ -299,20 +584,25 @@ function _update_main_unpack(){
         action "Unpacking files"
         verbose "files to unpack: ${_to_unpack[*]}"
 
-        local _dry_run_bool=0 _quiet_bool=0
-        [[ ${#dry_run[@]} -gt 0 ]] && _dry_run_bool=1
-        [[ ${#quiet[@]} -gt 0 ]]   && _quiet_bool=1
+        # -U = force-unpack (overwrite existing, ignore exclusions)
+        # -u = normal unpack
+        local _unpack_flag="-u"
+        [[ ${#force[@]} -gt 0 ]] && _unpack_flag="-U"
+
+        local -a _setup_args=(
+            "$_unpack_flag"
+            ${dry_run:+"-D"}
+            ${quiet:+"-q"}
+            "--repo-dir=${_dotfiler_plan_main_repo_dir}"
+            "--link-dest=${_link_dest}"
+            "${_to_unpack[@]}"
+        )
 
         # Run in a ( subshell ) — pure fork, no zsh startup files re-read,
         # namespace discarded on exit. setup_unload is belt-and-braces.
         (
             source "${script_dir}/setup.zsh"
-            setup_run_unpack \
-                "${_update_repo_dir:-}" \
-                "${_link_dest}" \
-                "$_dry_run_bool" \
-                "$_quiet_bool" \
-            "${_to_unpack[@]}"
+            setup_main "${_setup_args[@]}"
             setup_unload
         )
         return $?
@@ -389,48 +679,79 @@ function _update_phase_post(){
 }
 
 # ---------------------------------------------------------------------------
-# Component mode (--repo-dir / --range / --commit-hash)
+# _update_cleanup
 # ---------------------------------------------------------------------------
-# _update_component_mode is true when invoked with explicit repo/range/hash.
-# No separate code path needed — _update_phase_plan handles all range modes,
-# _update_main_pull skips git pull when range/hash was explicit, and hooks
-# are skipped in commit/range mode inside _update_phase_plan already.
+
+function _update_cleanup() {
+    unset -f \
+        _update_register_hook \
+        _update_safe_rm \
+        _update_dotfiler_init \
+        _update_dotfiler_plan \
+        _update_dotfiler_pull \
+        _update_dotfiler_unpack \
+        _update_phase_plan \
+        _update_main_pull \
+        _update_main_unpack \
+        _update_main_post \
+        _update_phase_pull \
+        _update_phase_unpack \
+        _update_phase_post \
+        _update_should_run_phase \
+        _update_parse_args \
+        _update_init_registry \
+        _update_cleanup \
+        2>/dev/null
+    unset -A \
+        _dotfiler_hook_check_fn \
+        _dotfiler_hook_plan_fn \
+        _dotfiler_hook_pull_fn \
+        _dotfiler_hook_unpack_fn \
+        _dotfiler_hook_post_fn \
+        _dotfiler_hook_cleanup_fn \
+        _dotfiler_hook_component_dir \
+        _dotfiler_hook_topology \
+        2>/dev/null
+    unset \
+        _dotfiler_registered_hooks \
+        _dotfiler_topology \
+        _dotfiler_subtree_spec \
+        _dotfiler_self_stamp \
+        _dotfiler_update_avail \
+        2>/dev/null
+    _update_core_cleanup
+}
+
+# ---------------------------------------------------------------------------
+# _update_main
+# ---------------------------------------------------------------------------
+
+function _update_main() {
+    _update_parse_args "$@" || exit $?
+    _update_init_registry
+
+    [[ "$_update_range_mode" == true ]] && \
+        verbose "update: range mode (repo=${dotfiles_dir})"
+
+    if _update_should_run_phase dotfiler; then
+        _update_dotfiler_init
+        _update_dotfiler_plan
+        _update_dotfiler_pull || exit $?
+        _update_dotfiler_unpack
+    fi
+
+    if _update_should_run_phase dotfiles || _update_should_run_phase hooks; then
+        _update_phase_plan || exit $?
+        _update_phase_pull || exit $?
+        _update_phase_unpack
+        _update_phase_post
+    fi
+
+    _update_cleanup
+}
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
-[[ "$_update_component_mode" == true ]] && \
-    verbose "update: component mode (repo=${dotfiles_dir})"
-
-_update_phase_plan || exit $?
-_update_phase_pull || exit $?
-_update_phase_unpack
-_update_phase_post
-
-# Cleanup
-unset -f \
-    _update_register_hook \
-    _update_safe_rm \
-    _update_phase_plan \
-    _update_main_pull \
-    _update_main_unpack \
-    _update_main_post \
-    _update_phase_pull \
-    _update_phase_unpack \
-    _update_phase_post \
-    2>/dev/null
-unset -A \
-    _dotfiler_hook_check_fn \
-    _dotfiler_hook_plan_fn \
-    _dotfiler_hook_pull_fn \
-    _dotfiler_hook_unpack_fn \
-    _dotfiler_hook_post_fn \
-    _dotfiler_hook_cleanup_fn \
-    _dotfiler_hook_component_dir \
-    _dotfiler_hook_topology \
-    2>/dev/null
-unset \
-    _dotfiler_registered_hooks \
-    2>/dev/null
-_update_core_cleanup
+[[ $ZSH_EVAL_CONTEXT == *:file* ]] || _update_main "$@"
