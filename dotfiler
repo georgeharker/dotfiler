@@ -90,8 +90,9 @@ case "$command" in
         exec "$script_dir/check_update.zsh" "$@"
         ;;
     update)
-        # Run update script with all remaining arguments
-        exec "$script_dir/update.zsh" "$@"
+        # update_self.zsh checks for dotfiler script updates, then always
+        # execs update.zsh itself (whether or not a self-update occurred).
+        exec "$script_dir/update_self.zsh" "$@"
         ;;
     update-self)
         # Update dotfiler scripts themselves
