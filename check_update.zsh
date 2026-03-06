@@ -200,7 +200,7 @@ function update_dotfiles() {
     # Non-background mode: run update.zsh interactively; only write timestamp on success.
     if [[ "$update_mode" != background ]]; then
         verbose "check_update: running ${script_dir}/update.zsh interactively"
-        if LANG= "${script_dir}/update.zsh" "$quiet"; then
+        if LANG= "${script_dir}/update.zsh" ${quiet:+"$quiet"}; then
             verbose "check_update: success — writing timestamp"
             _update_core_write_timestamp "$dotfiles_timestamp"
             return 0
@@ -274,15 +274,8 @@ function handle_self_update() {
             _update_core_is_available "$script_dir"
             _avail=$? ;;
         subtree)
-            local _remote_url _remote _branch
-            _remote="${_subtree_spec%% *}"
-            _branch="${_subtree_spec#* }"
-            [[ "$_branch" == "$_remote" ]] && _branch=""
-            [[ -z "$_branch" ]] && \
-                _branch=$(_update_core_get_default_branch "$script_dir" "$_remote")
-            _remote_url=$(git -C "$script_dir" config "remote.${_remote}.url" 2>/dev/null)
-            log_debug "check_update: handle_self_update: subtree remote=${_remote} branch=${_branch} url=${_remote_url}"
-            _update_core_is_available_subtree "$script_dir" "$_remote_url" "$_branch"
+            log_debug "check_update: handle_self_update: subtree spec='${_subtree_spec}'"
+            _update_core_is_available_subtree "$script_dir" "$_subtree_spec"
             _avail=$? ;;
         subdir|none|*)
             log_debug "check_update: handle_self_update: topology=${_topology} — nothing to do"

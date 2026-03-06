@@ -169,10 +169,13 @@ function _update_dotfiler_plan() {
 
         # -------------------------------------------------------------------
         subtree)
-        # The scripts dir lives as a subtree prefix inside the user's dotfiles repo.
+        # The scripts dir lives as a subtree prefix inside the user's dotfiles
+        # repo. Check availability by comparing the remote SHA against the
+        # marker file committed alongside the subtree.
         # -------------------------------------------------------------------
             local _avail
-            _update_core_is_available_subtree "$script_dir" && _avail=0 || _avail=$?
+            _update_core_is_available_subtree \
+                "$script_dir" "$_dotfiler_subtree_spec" && _avail=0 || _avail=$?
             _dotfiler_update_avail=$_avail
             ;;
 
@@ -239,10 +242,12 @@ function _update_dotfiler_pull() {
             local _submod_root _parent _rel
             _submod_root=$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null)
             # Find the parent repo by walking up from _submod_root
-            if ! _parent=$(git -C "${_submod_root}/.." rev-parse --show-toplevel 2>/dev/null); then
+            _update_core_get_parent_root "$script_dir"
+            if [[ "${reply[2]}" != superproject ]]; then
                 error "update_self: cannot find parent repo for submodule."
                 return 1
             fi
+            _parent="${reply[1]}"
             _rel=${_submod_root#${_parent}/}
 
             local _mode
@@ -270,22 +275,22 @@ function _update_dotfiler_pull() {
         # repo.  Pull the subtree and optionally commit.
         # -------------------------------------------------------------------
             local _parent _rel
-            if ! _parent=$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null); then
+            _update_core_get_parent_root "$script_dir"
+            if [[ "${reply[2]}" == none ]]; then
                 error "update_self: cannot find parent repo for subtree."
                 return 1
             fi
-            local _parent_real _script_real
-            _parent_real=${_parent:A}
-            _script_real=${script_dir:A}
+            _parent="${reply[1]}"
+            local _parent_real=${_parent:A}
+            local _script_real=${script_dir:A}
             _rel=${_script_real#${_parent_real}/}
 
             # Parse subtree-remote zstyle: "<remote> [<branch>]"
-            local _remote _branch
-            _remote="${_dotfiler_subtree_spec%% *}"
-            _branch="${_dotfiler_subtree_spec#* }"
-            [[ "$_branch" == "$_remote" ]] && _branch=""   # no space = no branch given
-            [[ -z "$_branch" ]] && \
-                _branch=$(_update_core_get_default_branch "$script_dir" "$_remote")
+            local _remote _branch _remote_url
+            _update_core_resolve_subtree_spec "$script_dir" "$_dotfiler_subtree_spec" || {
+                error "update_self: could not resolve subtree spec '${_dotfiler_subtree_spec}'"; return 1
+            }
+            _remote="$reply[1]" _branch="$reply[2]" _remote_url="$reply[3]"
 
             local _mode
             zstyle -s ':dotfiler:update' in-tree-commit _mode 2>/dev/null || _mode="auto"
@@ -298,8 +303,7 @@ function _update_dotfiler_pull() {
 
                     # Record the remote SHA we just pulled so future
                     # _update_core_is_available_subtree can compare against it.
-                    local _remote_url _pulled_sha
-                    _remote_url=$(git -C "$script_dir" config "remote.${_remote}.url" 2>/dev/null)
+                    local _pulled_sha
                     _pulled_sha=$(_update_core_resolve_remote_sha "$_remote_url" "$_branch" 2>/dev/null)
                     if [[ -n "$_pulled_sha" ]]; then
                         _update_core_write_sha_marker "$script_dir" "$_pulled_sha"

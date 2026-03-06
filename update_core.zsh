@@ -605,7 +605,25 @@ _update_core_is_available() {
 # Subtree-aware update availability check
 # ---------------------------------------------------------------------------
 
-# _update_core_is_available_subtree <subtree_dir> <remote_url> <branch>
+# _update_core_resolve_subtree_spec <repo_dir> <subtree_spec>
+# <subtree_spec> is "<remote_name> [branch]".
+# Sets reply=( remote branch remote_url ) and returns 0, or returns 1 on error.
+_update_core_resolve_subtree_spec() {
+    local _dir=$1 _spec=$2
+    local _remote _branch _remote_url
+    _remote="${_spec%% *}"
+    _branch="${_spec#* }"
+    [[ "$_branch" == "$_remote" ]] && _branch=""
+    [[ -z "$_branch" ]] && \
+        _branch=$(_update_core_get_default_branch "$_dir" "$_remote")
+    _remote_url=$(git -C "$_dir" config "remote.${_remote}.url" 2>/dev/null)
+    [[ -z "$_remote_url" ]] && return 1
+    reply=( "$_remote" "$_branch" "$_remote_url" )
+    return 0
+}
+
+# _update_core_is_available_subtree <subtree_dir> <subtree_spec>
+# <subtree_spec> is "<remote_name> [branch]" (same format as zstyle subtree-remote).
 # Returns:
 #   0 — update is available
 #   1 — up to date or indeterminate (skip — conservative)
@@ -618,7 +636,9 @@ _update_core_is_available() {
 # If no marker exists (first run or migration), we assume an update is
 # available to bootstrap the marker.
 _update_core_is_available_subtree() {
-    local _subtree_dir=$1 _remote_url=$2 _branch=${3:-main}
+    local _subtree_dir=$1 _subtree_spec=$2
+    _update_core_resolve_subtree_spec "$_subtree_dir" "$_subtree_spec" || return 1
+    local _remote="$reply[1]" _branch="$reply[2]" _remote_url="$reply[3]"
     local _local_head _remote_head
 
     # Read the cached SHA from the marker file adjacent to the subtree
@@ -907,6 +927,7 @@ _update_core_cleanup() {
         _update_core_is_available \
         _update_core_is_available_fetch \
         _update_core_is_available_subtree \
+        _update_core_resolve_subtree_spec \
         _update_core_get_parent_root \
         _update_core_list_submodule_paths \
         _update_core_resolve_remote_sha \
