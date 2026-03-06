@@ -710,6 +710,23 @@ _update_core_build_file_lists() {
         _message=${_line#*$'\t'}
         log_debug "update_core: commit ${_hash[1,12]}: ${_message}"
 
+        # Skip squashed subtree commits. git-subtree pull/add grafts a squash
+        # commit into the dotfiles repo whose paths are relative to the subrepo
+        # root, not the dotfiles root. The merge commit that follows already
+        # captures these changes with fully-qualified dotfiles-relative paths
+        # (when diffed against the main-line parent), so processing the squash
+        # commit would produce spurious removes/unpacks with bare paths.
+        # Squash commits are identified by both git-subtree-dir: and
+        # git-subtree-split: trailers in the commit body (always present
+        # together when using git subtree pull --squash).
+        local _commit_body
+        _commit_body=$(git -C "$_repo_dir" log -1 --format="%B" "$_hash" 2>/dev/null)
+        if [[ "$_commit_body" == *$'\n''git-subtree-dir: '* && \
+              "$_commit_body" == *$'\n''git-subtree-split: '* ]]; then
+            log_debug "  skipping squashed subtree commit"
+            continue
+        fi
+
         _git_log=$(git -C "$_repo_dir" log -m --name-status \
             --diff-filter=ADMRC --no-decorate --pretty=format: \
             "${_hash}...${_hash}^" 2>/dev/null)
