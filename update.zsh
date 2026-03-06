@@ -127,7 +127,9 @@ function _update_should_run_phase() {
 
 function _update_dotfiler_init() {
     zstyle -s ':dotfiler:update' subtree-remote _dotfiler_subtree_spec 2>/dev/null \
-        || _dotfiler_subtree_spec=""
+        || _dotfiler_subtree_spec="dotfiler main"
+    zstyle -s ':dotfiler:update' subtree-url _dotfiler_subtree_url 2>/dev/null \
+        || _dotfiler_subtree_url="https://github.com/georgeharker/dotfiler.git"
 
     _update_core_detect_deployment "$script_dir" "$_dotfiler_subtree_spec"
     _dotfiler_topology=$REPLY
@@ -175,7 +177,8 @@ function _update_dotfiler_plan() {
         # -------------------------------------------------------------------
             local _avail
             _update_core_is_available_subtree \
-                "$script_dir" "$_dotfiler_subtree_spec" && _avail=0 || _avail=$?
+                "$script_dir" "$_dotfiler_subtree_spec" \
+                "$_dotfiler_subtree_url" && _avail=0 || _avail=$?
             _dotfiler_update_avail=$_avail
             ;;
 
@@ -287,7 +290,8 @@ function _update_dotfiler_pull() {
 
             # Parse subtree-remote zstyle: "<remote> [<branch>]"
             local _remote _branch _remote_url
-            _update_core_resolve_subtree_spec "$script_dir" "$_dotfiler_subtree_spec" || {
+            _update_core_resolve_subtree_spec "$script_dir" "$_dotfiler_subtree_spec" \
+                "$_dotfiler_subtree_url" || {
                 error "update_self: could not resolve subtree spec '${_dotfiler_subtree_spec}'"; return 1
             }
             _remote="$reply[1]" _branch="$reply[2]" _remote_url="$reply[3]"
@@ -347,8 +351,19 @@ function _update_dotfiler_pull() {
 # ---------------------------------------------------------------------------
 
 function _update_dotfiler_unpack() {
-    verbose "update_self: dotfiler unpack phase — no-op (scripts not symlinked)"
-    return 0
+    local -a _setup_args=(
+        -u
+        ${dry_run:+"-D"}
+        ${quiet:+"-q"}
+        "--repo-dir=${script_dir}"
+        "--link-dest=${HOME}"
+        "--excludes=${script_dir}/dotfiler_exclude"
+    )
+    (
+        source "$script_dir/setup.zsh"
+        setup_main "${_setup_args[@]}"
+        setup_unload
+    )
 }
 
 # ===========================================================================
@@ -599,6 +614,7 @@ function _update_main_unpack(){
             ${quiet:+"-q"}
             "--repo-dir=${_dotfiler_plan_main_repo_dir}"
             "--link-dest=${_link_dest}"
+            "--excludes=${_dotfiler_plan_main_repo_dir}/dotfiles_exclude"
             "${_to_unpack[@]}"
         )
 
@@ -720,6 +736,7 @@ function _update_cleanup() {
         _dotfiler_registered_hooks \
         _dotfiler_topology \
         _dotfiler_subtree_spec \
+        _dotfiler_subtree_url \
         _dotfiler_self_stamp \
         _dotfiler_update_avail \
         2>/dev/null

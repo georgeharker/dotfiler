@@ -1,0 +1,35 @@
+# dotfiler_exclude — patterns for dotfiler's own files.
+# Pass via --excludes when setup is run against dotfiler's own repo dir.
+# Patterns are relative to the dotfiler repo root.
+
+# Documentation and project files
+*.md
+*.txt
+*.py
+*.toml
+*.sh
+LICENSE
+Makefile
+pyproject.toml
+python_requirements.txt
+requirements.txt
+
+# Dotfiler infrastructure scripts (not dotfiles)
+dotfiler
+dotfiler-gui
+setup.zsh
+helpers.zsh
+logging.zsh
+module_helpers.zsh
+update.zsh
+update_core.zsh
+check_update.zsh
+install.zsh
+install_module.zsh
+completions.zsh
+update_self.zsh
+
+# Directories
+example_install/
+test/
+docs/

@@ -1,0 +1,28 @@
+# always_exclude — glob patterns applied to every repo, every setup invocation.
+# Patterns are filename/glob based (not root-relative paths).
+# Place a copy at your dotfiles repo root to override this default.
+
+# Editor and OS detritus
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+*.tmp
+*.bak
+
+# Logs
+*.log
+
+# Dependency / build dirs
+node_modules/
+.venv/
+.cache/
+__pycache__/
+*.pyc
+
+# The exclude files themselves
+always_exclude
+dotfiles_exclude
+dotfiler_exclude
+zdot_exclude

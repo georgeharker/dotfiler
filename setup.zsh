@@ -26,7 +26,7 @@
 #   _gitignore_rules, _prune_dir_names
 
 # Double-source guard
-[[ -n "$_setup_zsh_loaded" ]] && return 0
+[[ -n "${_setup_zsh_loaded:-}" ]] && return 0
 _setup_zsh_loaded=1
 
 # When exec'd directly (not sourced into an environment that already loaded
@@ -728,10 +728,30 @@ if [[ `uname` == "Darwin" ]]; then
     _gitignore_rules=()
     _prune_dir_names=()
 
+    # Layer 1: enforce (.git/ .nounpack/ etc.)
+    read_exclusion_patterns --enforce
+
+    # Layer 2: always_exclude — glob patterns applied to every repo.
+    # Sought in dotfiles root first, fallback to dotfiler's own dir.
+    local _dotfiles_root _always_exclude
+    _dotfiles_root=$(find_dotfiles_directory 2>/dev/null || true)
+    _always_exclude="${_dotfiles_root}/always_exclude"
+    [[ -f "$_always_exclude" ]] || \
+        _always_exclude="${${(%):-%x}:A:h}/always_exclude"
+    [[ -f "$_always_exclude" ]] && read_exclusion_patterns "$_always_exclude"
+
+    # Layer 3: caller-specified excludes (--excludes), OR dotfiles_exclude default.
+    if [[ ${#_setup_excludes_files[@]} -gt 0 ]]; then
+        local _ef
+        for _ef in "${_setup_excludes_files[@]}"; do
+            [[ -f "$_ef" ]] && read_exclusion_patterns "$_ef"
+        done
+    else
     local dotfiles_exclude_file
     dotfiles_exclude_file=$(find_dotfiles_exclude_file)
-    read_exclusion_patterns --enforce
     read_exclusion_patterns "$dotfiles_exclude_file"
+    fi
+
     build_find_prune_args
 
     (( dry_run_bool )) && warn "=== DRY RUN MODE ==="
@@ -978,6 +998,7 @@ fi
 #   ingest, setup, track, untrack, unpack, force_unpack,
 #   unpack_files, force_unpack_files.
 function setup_run_all() {
+    _setup_excludes_files=( "${@[7,-1]}" )
     _setup_init "$1" "$2" "$3" "$4" "${5:-0}" "${6:-0}"
 
 # Ingest is track + unpack
@@ -1204,7 +1225,7 @@ function setup_main() {
     local -a unpack_files=() force_unpack_files=()
     local -a track=() untrack=() diff=() quiet=() dry_run=()
     local -a defyes=() defno=() debug_flag=()
-    local -a opt_repo_dir=() opt_link_dest=()
+     local -a opt_repo_dir=() opt_link_dest=() opt_excludes=()
 
     zmodload zsh/zutil
     zparseopts -D -E - i+:=ingest -ingest+:=ingest \
@@ -1220,7 +1241,8 @@ function setup_main() {
                        y=defyes -y=defyes \
                        n=defno -n=defno \
                        -repo-dir:=opt_repo_dir \
-                       -link-dest:=opt_link_dest || \
+                        -link-dest:=opt_link_dest \
+                        -excludes+:=opt_excludes || \
         { _setup_main_usage; unfunction _setup_main_usage; return 1; }
 
     # Strip flag tokens that zparseopts +: leaves interleaved with values
@@ -1232,6 +1254,7 @@ function setup_main() {
     untrack=( "${(@)untrack:#--untrack}" )
     force_unpack=( "${(@)force_unpack:#-U}" )
     force_unpack=( "${(@)force_unpack:#--force-unpack}" )
+    opt_excludes=( "${(@)opt_excludes:#--excludes}" )
 
     # Remaining positional args go to the appropriate file list
     if [[ ${#unpack[@]} -gt 0 ]]; then
@@ -1260,7 +1283,8 @@ function setup_main() {
     [[ ${#defno[@]} -gt 0 ]]   && _defno_bool=1
 
     setup_run_all "${opt_repo_dir[-1]:-}" "${opt_link_dest[-1]:-}" \
-        "$_dry_run_bool" "$_quiet_bool" "$_defyes_bool" "$_defno_bool"
+        "$_dry_run_bool" "$_quiet_bool" "$_defyes_bool" "$_defno_bool" \
+        "${opt_excludes[@]}"
 }
 
 # setup_unload
@@ -1271,7 +1295,7 @@ function setup_main() {
 #   when setup.zsh has been sourced into a long-running process.
 function setup_unload() {
     # Globals from _setup_init
-    unset dotfiles_dir _setup_link_dest
+    unset dotfiles_dir _setup_link_dest _setup_excludes_files
     unset dry_run quiet defyes defno
     unset findopt findoptd find_prune_args
     unset _gitignore_rules _prune_dir_names

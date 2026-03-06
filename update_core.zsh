@@ -605,19 +605,27 @@ _update_core_is_available() {
 # Subtree-aware update availability check
 # ---------------------------------------------------------------------------
 
-# _update_core_resolve_subtree_spec <repo_dir> <subtree_spec>
+# _update_core_resolve_subtree_spec <repo_dir> <subtree_spec> [<remote_url>]
 # <subtree_spec> is "<remote_name> [branch]".
+# If <remote_url> is supplied and the remote is not yet registered in the repo,
+# the remote is added automatically (bootstrapping a fresh clone).
 # Sets reply=( remote branch remote_url ) and returns 0, or returns 1 on error.
 _update_core_resolve_subtree_spec() {
-    local _dir=$1 _spec=$2
+    local _dir=$1 _spec=$2 _url_hint=${3:-}
     local _remote _branch _remote_url
     _remote="${_spec%% *}"
     _branch="${_spec#* }"
     [[ "$_branch" == "$_remote" ]] && _branch=""
+    _remote_url=$(git -C "$_dir" config "remote.${_remote}.url" 2>/dev/null)
+    # If the remote is missing but a URL hint was provided, register it now.
+    if [[ -z "$_remote_url" && -n "$_url_hint" ]]; then
+        git -C "$_dir" remote add "$_remote" "$_url_hint" 2>/dev/null \
+            && git -C "$_dir" fetch "$_remote" 2>/dev/null \
+            && _remote_url="$_url_hint"
+    fi
+    [[ -z "$_remote_url" ]] && return 1
     [[ -z "$_branch" ]] && \
         _branch=$(_update_core_get_default_branch "$_dir" "$_remote")
-    _remote_url=$(git -C "$_dir" config "remote.${_remote}.url" 2>/dev/null)
-    [[ -z "$_remote_url" ]] && return 1
     reply=( "$_remote" "$_branch" "$_remote_url" )
     return 0
 }
@@ -636,8 +644,8 @@ _update_core_resolve_subtree_spec() {
 # If no marker exists (first run or migration), we assume an update is
 # available to bootstrap the marker.
 _update_core_is_available_subtree() {
-    local _subtree_dir=$1 _subtree_spec=$2
-    _update_core_resolve_subtree_spec "$_subtree_dir" "$_subtree_spec" || return 1
+    local _subtree_dir=$1 _subtree_spec=$2 _url_hint=${3:-}
+    _update_core_resolve_subtree_spec "$_subtree_dir" "$_subtree_spec" "$_url_hint" || return 1
     local _remote="$reply[1]" _branch="$reply[2]" _remote_url="$reply[3]"
     local _local_head _remote_head
 
@@ -758,21 +766,21 @@ _update_core_build_file_lists() {
 
             if [[ "$_update_type" == M ]]; then
                 local _file=$_file_refs
-                [[ -n "$_file" ]] || continue
+                [[ -n "$_file" && "$_file" == .* && "$_file" != .nounpack/* ]] || continue
                 log_debug "  $_file modified"
                 _update_core_files_to_unpack+=("$_file")
                 _update_core_files_to_remove=(${_update_core_files_to_remove:#"$_file"})
 
             elif [[ "$_update_type" == A ]]; then
                 local _file=$_file_refs
-                [[ -n "$_file" ]] || continue
+                [[ -n "$_file" && "$_file" == .* && "$_file" != .nounpack/* ]] || continue
                 log_debug "  $_file added"
                 _update_core_files_to_unpack+=("$_file")
                 _update_core_files_to_remove=(${_update_core_files_to_remove:#"$_file"})
 
             elif [[ "$_update_type" == C<-> ]]; then
                 local _dst_file=${_file_refs#*$'\t'}
-                [[ -n "$_dst_file" ]] || continue
+                [[ -n "$_dst_file" && "$_dst_file" == .* && "$_dst_file" != .nounpack/* ]] || continue
                 log_debug "  $_dst_file copied"
                 _update_core_files_to_remove=(${_update_core_files_to_remove:#"$_dst_file"})
                 _update_core_files_to_unpack+=("$_dst_file")
@@ -783,12 +791,14 @@ _update_core_build_file_lists() {
                 [[ -n "$_dst_file" ]] || continue
                 log_debug "  $_dst_file renamed (from $_src_file)"
                 _update_core_files_to_unpack=(${_update_core_files_to_unpack:#"$_src_file"})
+                [[ "$_src_file" == .* && "$_src_file" != .nounpack/* ]] && \
                 _update_core_files_to_remove+=("$_src_file")
+                [[ "$_dst_file" == .* && "$_dst_file" != .nounpack/* ]] && \
                 _update_core_files_to_unpack+=("$_dst_file")
 
             elif [[ "$_update_type" == D ]]; then
                 local _file=$_file_refs
-                [[ -n "$_file" ]] || continue
+                [[ -n "$_file" && "$_file" == .* && "$_file" != .nounpack/* ]] || continue
                 log_debug "  $_file deleted"
                 _update_core_files_to_unpack=(${_update_core_files_to_unpack:#"$_file"})
                 _update_core_files_to_remove+=("$_file")
