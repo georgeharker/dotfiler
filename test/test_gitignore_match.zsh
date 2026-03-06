@@ -1,7 +1,7 @@
 #!/usr/bin/env zsh
 # test_gitignore_match.zsh — exhaustive tests for _gitignore_match_single()
 #
-# Sources setup.zsh directly (ZSH_EVAL_CONTEXT guards skip the script body).
+# Sources setup.zsh directly (ZSH_EVAL_CONTEXT guard skips setup_main).
 # Tests the production function from a single authoritative copy.
 setopt extendedglob
 

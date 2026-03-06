@@ -298,18 +298,23 @@ function _update_main_unpack(){
     if [[ ${#_to_unpack[@]} -gt 0 ]]; then
         action "Unpacking files"
         verbose "files to unpack: ${_to_unpack[*]}"
-        local _dry_run_arg="" _setup_extra=() _quiet_arg=""
-        [[ ${#dry_run[@]} -gt 0 ]] && _dry_run_arg="-D"
-        [[ -n "$_update_repo_dir" ]] && _setup_extra+=(--repo-dir "$_update_repo_dir")
-        [[ "$_link_dest" != "$HOME" ]] && _setup_extra+=(--link-dest "$_link_dest")
-        [[ ${#quiet[@]} -gt 0 ]] && _quiet_arg="-q"
 
-        "${script_dir}/setup.zsh" \
-            ${_dry_run_arg:+"$_dry_run_arg"} \
-            "${_setup_extra[@]}" \
-            -u \
-            ${_quiet_arg:+"$_quiet_arg"} \
+        local _dry_run_bool=0 _quiet_bool=0
+        [[ ${#dry_run[@]} -gt 0 ]] && _dry_run_bool=1
+        [[ ${#quiet[@]} -gt 0 ]]   && _quiet_bool=1
+
+        # Run in a ( subshell ) — pure fork, no zsh startup files re-read,
+        # namespace discarded on exit. setup_unload is belt-and-braces.
+        (
+            source "${script_dir}/setup.zsh"
+            setup_run_unpack \
+                "${_update_repo_dir:-}" \
+                "${_link_dest}" \
+                "$_dry_run_bool" \
+                "$_quiet_bool" \
             "${_to_unpack[@]}"
+            setup_unload
+        )
         return $?
     fi
     return 0
@@ -384,7 +389,7 @@ function _update_phase_post(){
 }
 
 # ---------------------------------------------------------------------------
-# Component mode (backward compat: --repo-dir / --range / --commit-hash)
+# Component mode (--repo-dir / --range / --commit-hash)
 # ---------------------------------------------------------------------------
 # _update_component_mode is true when invoked with explicit repo/range/hash.
 # No separate code path needed — _update_phase_plan handles all range modes,
