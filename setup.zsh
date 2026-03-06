@@ -1,3 +1,4 @@
+#!/usr/bin/env zsh
 # setup.zsh — dotfiler setup functions, safe to source from any context.
 #
 # Provides:
@@ -27,6 +28,12 @@
 # Double-source guard
 [[ -n "$_setup_zsh_loaded" ]] && return 0
 _setup_zsh_loaded=1
+
+# When exec'd directly (not sourced into an environment that already loaded
+# helpers.zsh), pull in the helpers so find_dotfiles_directory etc. are defined.
+if (( ! ${+functions[find_dotfiles_directory]} )); then
+    source "${${(%):-%x}:A:h}/helpers.zsh"
+fi
 
 # ---------------------------------------------------------------------------
 # Exclusion system — gitignore-style semantics
