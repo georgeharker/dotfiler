@@ -749,16 +749,6 @@ function _update_main() {
     [[ "$_update_range_mode" == true ]] && \
         verbose "update: range mode active (repo=${dotfiles_dir})"
 
-    if _update_should_run_phase dotfiler; then
-        verbose "update: running dotfiler phase"
-        _update_dotfiler_init
-        _update_dotfiler_plan
-        _update_dotfiler_pull || exit $?
-        _update_dotfiler_unpack
-    else
-        verbose "update: skipping dotfiler phase"
-    fi
-
     if _update_should_run_phase dotfiles || _update_should_run_phase hooks; then
         verbose "update: running dotfiles/hooks phases"
         _update_phase_plan || exit $?
@@ -767,6 +757,16 @@ function _update_main() {
         _update_phase_post
     else
         verbose "update: skipping dotfiles/hooks phases"
+    fi
+
+    if _update_should_run_phase dotfiler; then
+        verbose "update: running dotfiler phase"
+        _update_dotfiler_init
+        _update_dotfiler_plan
+        _update_dotfiler_pull || exit $?
+        _update_dotfiler_unpack
+    else
+        verbose "update: skipping dotfiler phase"
     fi
 
     verbose "update: done"
