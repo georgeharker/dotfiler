@@ -351,19 +351,24 @@ function _update_dotfiler_pull() {
 # ---------------------------------------------------------------------------
 
 function _update_dotfiler_unpack() {
-    local -a _setup_args=(
-        -u
-        ${dry_run:+"-D"}
-        ${quiet:+"-q"}
-        --repo-dir "${script_dir}"
-        --link-dest "${HOME}"
-        --excludes "${script_dir}/dotfiler_exclude"
-    )
-    (
-        source "$script_dir/setup.zsh"
-        setup_main "${_setup_args[@]}"
-        setup_unload
-    )
+    # Disabled: dotfiler scripts are not symlinked into $HOME.
+    # TODO: re-enable once dotfiler_exclude is verified and find/link
+    #       behaviour against the scripts dir is confirmed safe.
+    #
+    # local -a _setup_args=(
+    #     -u
+    #     ${dry_run:+"-D"}
+    #     ${quiet:+"-q"}
+    #     --repo-dir "${script_dir}"
+    #     --link-dest "${HOME}"
+    #     --excludes "${script_dir}/dotfiler_exclude"
+    # )
+    # (
+    #     source "$script_dir/setup.zsh"
+    #     setup_main "${_setup_args[@]}"
+    #     setup_unload
+    # )
+    return 0
 }
 
 # ===========================================================================
