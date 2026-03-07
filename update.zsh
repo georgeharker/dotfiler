@@ -355,9 +355,9 @@ function _update_dotfiler_unpack() {
         -u
         ${dry_run:+"-D"}
         ${quiet:+"-q"}
-        "--repo-dir=${script_dir}"
-        "--link-dest=${HOME}"
-        "--excludes=${script_dir}/dotfiler_exclude"
+        --repo-dir "${script_dir}"
+        --link-dest "${HOME}"
+        --excludes "${script_dir}/dotfiler_exclude"
     )
     (
         source "$script_dir/setup.zsh"
@@ -612,9 +612,9 @@ function _update_main_unpack(){
             "$_unpack_flag"
             ${dry_run:+"-D"}
             ${quiet:+"-q"}
-            "--repo-dir=${_dotfiler_plan_main_repo_dir}"
-            "--link-dest=${_link_dest}"
-            "--excludes=${_dotfiler_plan_main_repo_dir}/dotfiles_exclude"
+            --repo-dir "${_dotfiler_plan_main_repo_dir}"
+            --link-dest "${_link_dest}"
+            --excludes "${_dotfiler_plan_main_repo_dir}/dotfiles_exclude"
             "${_to_unpack[@]}"
         )
 
