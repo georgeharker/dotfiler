@@ -240,7 +240,8 @@ function _update_dotfiler_pull() {
             if (( _dry_run )); then
                 info "update_self: [dry-run] would: git -C ${_parent} submodule update --remote -- ${_rel}"
             else
-                _update_core_prompt_dirty "$_parent" "update_self submodule" || return 1                verbose "update_self: git submodule update --autostash --remote -- ${_rel}"
+                _update_core_prompt_dirty "$_parent" "update_self submodule" || return 1
+                verbose "update_self: git submodule update --autostash --remote -- ${_rel}"
                 git -C "$_parent" submodule update --autostash --remote -- "$_rel" || {
                     error "update_self: submodule update failed."
                     return 1

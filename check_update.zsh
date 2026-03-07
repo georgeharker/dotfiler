@@ -199,14 +199,18 @@ function update_dotfiles() {
 
     # Non-background mode: run update.zsh interactively; only write timestamp on success.
     if [[ "$update_mode" != background ]]; then
-        verbose "check_update: running ${script_dir}/update.zsh interactively"
-        if LANG= "${script_dir}/update.zsh" ${quiet:+"$quiet"}; then
+        local -a _update_args=()
+        [[ -n "$quiet" ]]              && _update_args+=( "$quiet" )
+        [[ -n "$DOTFILER_VERBOSE" ]]   && _update_args+=( "--verbose" )
+        [[ -n "$DOTFILER_DEBUG" ]]     && _update_args+=( "--debug" )
+        verbose "check_update: running ${script_dir}/update.zsh interactively ${_update_args[*]}"
+        if LANG= "${script_dir}/update.zsh" "${_update_args[@]}"; then
             verbose "check_update: success — writing timestamp"
             _update_core_write_timestamp "$dotfiles_timestamp"
             return 0
         else
             local _rc=$?
-            error "Update failed (exit ${_rc})."
+            error "check_update: update.zsh failed (exit ${_rc}) — re-run with --debug for details"
             return $_rc
         fi
     fi
