@@ -241,12 +241,16 @@ function _update_dotfiler_pull() {
             if (( _dry_run )); then
                 info "update_self: [dry-run] would: git -C ${_parent} submodule update --remote -- ${_rel}"
             else
-                _update_core_prompt_dirty "$_parent" "update_self submodule" || return 1
-                verbose "update_self: git submodule update --autostash --remote -- ${_rel}"
-                git -C "$_parent" submodule update --autostash --remote -- "$_rel" || {
+                local _stashed=0
+                _update_core_maybe_stash "$_parent" "update_self submodule" || return 1
+                _stashed=$REPLY
+                verbose "update_self: git submodule update --remote -- ${_rel}"
+                git -C "$_parent" submodule update --remote -- "$_rel" || {
+                    (( _stashed )) && _update_core_pop_stash "$_parent" "update_self submodule"
                     error "update_self: submodule update failed."
                     return 1
                 }
+                (( _stashed )) && _update_core_pop_stash "$_parent" "update_self submodule"
                 _update_core_commit_parent \
                     "$_parent" "$_rel" \
                     "dotfiler submodule updated" \
@@ -281,7 +285,9 @@ function _update_dotfiler_pull() {
             if (( _dry_run )); then
                 info "update_self: [dry-run] would: git subtree pull --prefix=${_rel} ${_remote} ${_branch} --squash"
             else
+                local _stashed=0
                 _update_core_maybe_stash "$_parent" "update_self subtree" || return 1
+                _stashed=$REPLY
                 verbose "update_self: git subtree pull --prefix=${_rel} ${_remote} ${_branch} --squash"
                 local _subtree_out _subtree_rc
                 _subtree_out=$(git -C "$_parent" subtree pull \
@@ -306,9 +312,9 @@ function _update_dotfiler_pull() {
                         "dotfiler: update scripts subtree" \
                         "$_mode"
                     log_debug "update_self: subtree pull succeeded — writing stamp"
-                    _update_core_pop_stash "update_self subtree"
+                    (( _stashed )) && _update_core_pop_stash "$_parent" "update_self subtree"
                 else
-                    _update_core_pop_stash "update_self subtree"
+                    (( _stashed )) && _update_core_pop_stash "$_parent" "update_self subtree"
                     error "update_self: subtree pull failed."
                 fi
                 _update_core_write_timestamp "$_dotfiler_self_stamp"

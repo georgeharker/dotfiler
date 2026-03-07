@@ -448,51 +448,15 @@ _update_core_prompt_dirty() {
     return 0
 }
 
+# _update_core_maybe_stash / _update_core_pop_stash — see below.
+
 # _update_core_maybe_stash <repo_dir> <label>
-# For commands that lack --autostash (e.g. git subtree pull).
-# Checks dirty, prompts, and if consented manually stashes.
-# Sets _UPDATE_CORE_STASHED=1 / _UPDATE_CORE_STASH_DIR for later pop.
+# If dirty, prompts the user. On consent, stashes.
+# Sets REPLY=1 if a stash was created, REPLY=0 if not.
 # Returns 0 to proceed, 1 to abort.
 _update_core_maybe_stash() {
     local _dir=$1 _label=${2:-update}
-    _UPDATE_CORE_STASHED=0
-    _UPDATE_CORE_STASH_DIR=
-
-    _update_core_prompt_dirty "$_dir" "$_label" || return 1
-    _update_core_check_dirty "$_dir" && return 0  # clean — nothing to stash
-
-    log_debug "update_core: ${_label}: stashing in ${_dir}"
-    git -C "$_dir" stash push -q -m "dotfiler: stash before ${_label}" || {
-        warn "update_core: ${_label}: git stash failed — skipping"
-        return 1
-    }
-    _UPDATE_CORE_STASHED=1
-    _UPDATE_CORE_STASH_DIR="$_dir"
-    return 0
-}
-
-# _update_core_pop_stash <label>
-# Pops the stash created by _update_core_maybe_stash if one was applied.
-_update_core_pop_stash() {
-    local _label=${1:-update}
-    (( _UPDATE_CORE_STASHED )) || return 0
-    log_debug "update_core: ${_label}: popping stash in ${_UPDATE_CORE_STASH_DIR}"
-    git -C "$_UPDATE_CORE_STASH_DIR" stash pop -q || {
-        warn "update_core: ${_label}: stash pop had conflicts — resolve manually"
-        warn "update_core: run: git -C ${_UPDATE_CORE_STASH_DIR} stash pop"
-    }
-    _UPDATE_CORE_STASHED=0
-    _UPDATE_CORE_STASH_DIR=
-}
-
-# _update_core_maybe_stash <repo_dir> <label>
-# If dirty, prompts the user. On consent, stashes and sets
-# _UPDATE_CORE_STASHED=1 / _UPDATE_CORE_STASH_DIR for later pop.
-# Returns 0 to proceed, 1 to abort.
-_update_core_maybe_stash() {
-    local _dir=$1 _label=${2:-update}
-    _UPDATE_CORE_STASHED=0
-    _UPDATE_CORE_STASH_DIR=
+    REPLY=0
 
     _update_core_check_dirty "$_dir" && return 0
 
@@ -514,23 +478,19 @@ _update_core_maybe_stash() {
         warn "update_core: ${_label}: git stash failed — skipping"
         return 1
     }
-    _UPDATE_CORE_STASHED=1
-    _UPDATE_CORE_STASH_DIR="$_dir"
+    REPLY=1
     return 0
 }
 
-# _update_core_pop_stash <label>
-# Pops the stash created by _update_core_maybe_stash if one was applied.
+# _update_core_pop_stash <repo_dir> <label>
+# Pops the stash in <repo_dir>. Only call if _update_core_maybe_stash set REPLY=1.
 _update_core_pop_stash() {
-    local _label=${1:-update}
-    (( _UPDATE_CORE_STASHED )) || return 0
-    log_debug "update_core: ${_label}: popping stash in ${_UPDATE_CORE_STASH_DIR}"
-    git -C "$_UPDATE_CORE_STASH_DIR" stash pop -q || {
+    local _dir=$1 _label=${2:-update}
+    log_debug "update_core: ${_label}: popping stash in ${_dir}"
+    git -C "$_dir" stash pop -q || {
         warn "update_core: ${_label}: stash pop had conflicts — resolve manually"
-        warn "update_core: run: git -C ${_UPDATE_CORE_STASH_DIR} stash pop"
+        warn "update_core: run: git -C ${_dir} stash pop"
     }
-    _UPDATE_CORE_STASHED=0
-    _UPDATE_CORE_STASH_DIR=
 }
 
 # ---------------------------------------------------------------------------
