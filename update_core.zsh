@@ -408,6 +408,132 @@ _update_core_resolve_remote_sha() {
 }
 
 # ---------------------------------------------------------------------------
+# Dirty repo check + stash helpers
+# ---------------------------------------------------------------------------
+
+# _update_core_check_dirty <repo_dir>
+# Returns 0 if clean, 1 if dirty.
+_update_core_check_dirty() {
+    local _dir=$1
+    git -C "$_dir" diff --quiet 2>/dev/null \
+        && git -C "$_dir" diff --cached --quiet 2>/dev/null
+}
+
+# _update_core_prompt_dirty <repo_dir> <label>
+# If repo is dirty, warns the user that the merge won't work.
+# Prompts whether to stash. Returns 0 if clean or user consented
+# to stash, 1 to abort. Does NOT stash — caller decides how.
+_update_core_prompt_dirty() {
+    local _dir=$1 _label=${2:-update}
+
+    _update_core_check_dirty "$_dir" && return 0
+
+    verbose "update_core: ${_label}: repo ${_dir} is dirty"
+
+    if _update_core_has_typed_input; then
+        warn "update_core: ${_label}: repo is dirty — merge will fail"
+        warn "update_core: stash or commit changes manually before updating"
+        return 1
+    fi
+
+    print -n "update_core: ${_label}: repo has uncommitted changes — merge will fail. Stash and continue? [y/N] "
+    local _ans
+    read -r -k1 _ans; print ""
+    if [[ "$_ans" != [yY] ]]; then
+        warn "update_core: ${_label}: skipping (dirty repo)"
+        return 1
+    fi
+    warn "update_core: ${_label}: stashing — note: if merge fails your changes will remain stashed"
+    warn "update_core: ${_label}: recover with: git -C ${_dir} stash pop"
+    return 0
+}
+
+# _update_core_maybe_stash <repo_dir> <label>
+# For commands that lack --autostash (e.g. git subtree pull).
+# Checks dirty, prompts, and if consented manually stashes.
+# Sets _UPDATE_CORE_STASHED=1 / _UPDATE_CORE_STASH_DIR for later pop.
+# Returns 0 to proceed, 1 to abort.
+_update_core_maybe_stash() {
+    local _dir=$1 _label=${2:-update}
+    _UPDATE_CORE_STASHED=0
+    _UPDATE_CORE_STASH_DIR=
+
+    _update_core_prompt_dirty "$_dir" "$_label" || return 1
+    _update_core_check_dirty "$_dir" && return 0  # clean — nothing to stash
+
+    log_debug "update_core: ${_label}: stashing in ${_dir}"
+    git -C "$_dir" stash push -q -m "dotfiler: stash before ${_label}" || {
+        warn "update_core: ${_label}: git stash failed — skipping"
+        return 1
+    }
+    _UPDATE_CORE_STASHED=1
+    _UPDATE_CORE_STASH_DIR="$_dir"
+    return 0
+}
+
+# _update_core_pop_stash <label>
+# Pops the stash created by _update_core_maybe_stash if one was applied.
+_update_core_pop_stash() {
+    local _label=${1:-update}
+    (( _UPDATE_CORE_STASHED )) || return 0
+    log_debug "update_core: ${_label}: popping stash in ${_UPDATE_CORE_STASH_DIR}"
+    git -C "$_UPDATE_CORE_STASH_DIR" stash pop -q || {
+        warn "update_core: ${_label}: stash pop had conflicts — resolve manually"
+        warn "update_core: run: git -C ${_UPDATE_CORE_STASH_DIR} stash pop"
+    }
+    _UPDATE_CORE_STASHED=0
+    _UPDATE_CORE_STASH_DIR=
+}
+
+# _update_core_maybe_stash <repo_dir> <label>
+# If dirty, prompts the user. On consent, stashes and sets
+# _UPDATE_CORE_STASHED=1 / _UPDATE_CORE_STASH_DIR for later pop.
+# Returns 0 to proceed, 1 to abort.
+_update_core_maybe_stash() {
+    local _dir=$1 _label=${2:-update}
+    _UPDATE_CORE_STASHED=0
+    _UPDATE_CORE_STASH_DIR=
+
+    _update_core_check_dirty "$_dir" && return 0
+
+    verbose "update_core: ${_label}: repo ${_dir} is dirty"
+
+    if _update_core_has_typed_input; then
+        warn "update_core: ${_label}: repo is dirty — cannot prompt, skipping update"
+        warn "update_core: stash or commit changes manually before updating"
+        return 1
+    fi
+
+    print -n "update_core: ${_label}: repo has uncommitted changes. Stash and continue? [y/N] "
+    local _ans
+    read -r -k1 _ans; print ""
+    [[ "$_ans" != [yY] ]] && { warn "update_core: ${_label}: skipping (dirty repo)"; return 1; }
+
+    log_debug "update_core: ${_label}: stashing in ${_dir}"
+    git -C "$_dir" stash push -q -m "dotfiler: stash before ${_label}" || {
+        warn "update_core: ${_label}: git stash failed — skipping"
+        return 1
+    }
+    _UPDATE_CORE_STASHED=1
+    _UPDATE_CORE_STASH_DIR="$_dir"
+    return 0
+}
+
+# _update_core_pop_stash <label>
+# Pops the stash created by _update_core_maybe_stash if one was applied.
+_update_core_pop_stash() {
+    local _label=${1:-update}
+    (( _UPDATE_CORE_STASHED )) || return 0
+    log_debug "update_core: ${_label}: popping stash in ${_UPDATE_CORE_STASH_DIR}"
+    git -C "$_UPDATE_CORE_STASH_DIR" stash pop -q || {
+        warn "update_core: ${_label}: stash pop had conflicts — resolve manually"
+        warn "update_core: run: git -C ${_UPDATE_CORE_STASH_DIR} stash pop"
+    }
+    _UPDATE_CORE_STASHED=0
+    _UPDATE_CORE_STASH_DIR=
+}
+
+# ---------------------------------------------------------------------------
 # Foreign staged content check
 # ---------------------------------------------------------------------------
 
@@ -612,6 +738,39 @@ _update_core_is_available() {
 # ---------------------------------------------------------------------------
 # Subtree-aware update availability check
 # ---------------------------------------------------------------------------
+
+# _update_core_get_dotfiler_subtree_config
+# Single source of truth for the dotfiler subtree remote spec and URL.
+# Reads zstyles ':dotfiler:update' subtree-remote and subtree-url,
+# falling back to the canonical defaults.
+# Sets reply=( subtree_spec subtree_url ).
+_update_core_get_dotfiler_subtree_config() {
+    local _spec _url
+    zstyle -s ':dotfiler:update' subtree-remote _spec 2>/dev/null \
+        || _spec="dotfiler main"
+    zstyle -s ':dotfiler:update' subtree-url _url 2>/dev/null \
+        || _url="https://github.com/georgeharker/dotfiler.git"
+    reply=( "$_spec" "$_url" )
+}
+
+# _update_core_get_in_tree_commit_mode <scope>
+# Reads the in-tree-commit mode from zstyle scope, defaults to "auto".
+# Valid values: auto, prompt, none. Sets REPLY.
+_update_core_get_in_tree_commit_mode() {
+    local _mode
+    zstyle -s "${1}" in-tree-commit _mode 2>/dev/null || _mode="auto"
+    REPLY=$_mode
+}
+
+# _update_core_get_update_frequency <scope>
+# Reads the update check frequency (seconds) from zstyle scope.
+# Defaults to UPDATE_DOTFILE_SECONDS or 3600. Sets REPLY.
+_update_core_get_update_frequency() {
+    local _freq
+    zstyle -s "${1}" frequency _freq 2>/dev/null \
+        || _freq=${UPDATE_DOTFILE_SECONDS:-3600}
+    REPLY=$_freq
+}
 
 # _update_core_resolve_subtree_spec <repo_dir> <subtree_spec> [<remote_url>]
 # <subtree_spec> is "<remote_name> [branch]".

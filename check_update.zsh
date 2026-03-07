@@ -252,7 +252,7 @@ function handle_self_update() {
 
     local _self_stamp="${dotfiler_cache_dir}/dotfiler_scripts_update"
     local _self_freq
-    zstyle -s ':dotfiler:update' frequency _self_freq || _self_freq=${UPDATE_DOTFILE_SECONDS:-3600}
+    _update_core_get_update_frequency ':dotfiler:update'; local _self_freq=$REPLY
 
     log_debug "check_update: handle_self_update: stamp=${_self_stamp} freq=${_self_freq} force=${force_update}"
     if ! _update_core_should_update "$_self_stamp" "$_self_freq" "$force_update"; then
@@ -260,8 +260,10 @@ function handle_self_update() {
         return 0
     fi
 
-    local _subtree_spec
-    zstyle -s ':dotfiler:update' subtree-remote _subtree_spec 2>/dev/null || _subtree_spec=""
+    local _subtree_spec _subtree_url
+    _update_core_get_dotfiler_subtree_config
+    _subtree_spec=$reply[1]
+    _subtree_url=$reply[2]
     log_debug "check_update: handle_self_update: detecting deployment topology (subtree_spec='${_subtree_spec}')"
     _update_core_detect_deployment "$script_dir" "$_subtree_spec"
     local _topology=$REPLY
@@ -274,8 +276,8 @@ function handle_self_update() {
             _update_core_is_available "$script_dir"
             _avail=$? ;;
         subtree)
-            log_debug "check_update: handle_self_update: subtree spec='${_subtree_spec}'"
-            _update_core_is_available_subtree "$script_dir" "$_subtree_spec"
+            log_debug "check_update: handle_self_update: subtree spec='${_subtree_spec}' url='${_subtree_url}'"
+            _update_core_is_available_subtree "$script_dir" "$_subtree_spec" "$_subtree_url"
             _avail=$? ;;
         subdir|none|*)
             log_debug "check_update: handle_self_update: topology=${_topology} — nothing to do"
@@ -349,7 +351,7 @@ function handle_update() {
     " INT QUIT
 
     local _dotfiles_freq
-    zstyle -s ':dotfiler:update' frequency _dotfiles_freq || _dotfiles_freq=${UPDATE_DOTFILE_SECONDS:-3600}
+    _update_core_get_update_frequency ':dotfiler:update'; local _dotfiles_freq=$REPLY
 
     log_debug "check_update: handle_update: stamp=${dotfiles_timestamp} freq=${_dotfiles_freq} force=${force_update}"
     if ! _update_core_should_update "$dotfiles_timestamp" "$_dotfiles_freq" "$force_update"; then

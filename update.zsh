@@ -130,10 +130,9 @@ function _update_should_run_phase() {
 function _update_dotfiler_init() {
     verbose "update_self: init begin (script_dir=${script_dir})"
 
-    zstyle -s ':dotfiler:update' subtree-remote _dotfiler_subtree_spec 2>/dev/null \
-        || _dotfiler_subtree_spec="dotfiler main"
-    zstyle -s ':dotfiler:update' subtree-url _dotfiler_subtree_url 2>/dev/null \
-        || _dotfiler_subtree_url="https://github.com/georgeharker/dotfiler.git"
+    _update_core_get_dotfiler_subtree_config
+    _dotfiler_subtree_spec=$reply[1]
+    _dotfiler_subtree_url=$reply[2]
 
     log_debug "update_self: subtree-spec=${_dotfiler_subtree_spec} subtree-url=${_dotfiler_subtree_url}"
 
@@ -207,8 +206,9 @@ function _update_dotfiler_pull() {
                     local _remote _branch
                     _remote=$(_update_core_get_default_remote "$script_dir")
                     _branch=$(_update_core_get_default_branch "$script_dir" "$_remote")
-                    verbose "update_self: git pull ${_remote} ${_branch}"
-                    git -C "$script_dir" pull --ff-only "$_remote" "$_branch" || {
+                    _update_core_prompt_dirty "$script_dir" "update_self standalone" || return 1
+                    verbose "update_self: git pull --autostash ${_remote} ${_branch}"
+                    git -C "$script_dir" pull --ff-only --autostash "$_remote" "$_branch" || {
                         error "update_self: git pull failed."
                         return 1
                     }
@@ -235,13 +235,13 @@ function _update_dotfiler_pull() {
             local _rel=${_submod_root#${_parent}/}
             log_debug "update_self: submodule parent=${_parent} rel=${_rel}"
             local _mode
-            zstyle -s ':dotfiler:update' in-tree-commit _mode 2>/dev/null || _mode="auto"
+            _update_core_get_in_tree_commit_mode ':dotfiler:update'; local _mode=$REPLY
             log_debug "update_self: in-tree-commit mode=${_mode}"
             if (( _dry_run )); then
                 info "update_self: [dry-run] would: git -C ${_parent} submodule update --remote -- ${_rel}"
             else
-                verbose "update_self: git submodule update --remote -- ${_rel}"
-                git -C "$_parent" submodule update --remote -- "$_rel" || {
+                _update_core_prompt_dirty "$_parent" "update_self submodule" || return 1                verbose "update_self: git submodule update --autostash --remote -- ${_rel}"
+                git -C "$_parent" submodule update --autostash --remote -- "$_rel" || {
                     error "update_self: submodule update failed."
                     return 1
                 }
@@ -274,11 +274,12 @@ function _update_dotfiler_pull() {
             }
             _remote="$reply[1]" _branch="$reply[2]" _remote_url="$reply[3]"
             local _mode
-            zstyle -s ':dotfiler:update' in-tree-commit _mode 2>/dev/null || _mode="auto"
+            _update_core_get_in_tree_commit_mode ':dotfiler:update'; local _mode=$REPLY
             log_debug "update_self: subtree remote=${_remote} branch=${_branch} in-tree-commit=${_mode}"
             if (( _dry_run )); then
                 info "update_self: [dry-run] would: git subtree pull --prefix=${_rel} ${_remote} ${_branch} --squash"
             else
+                _update_core_maybe_stash "$_parent" "update_self subtree" || return 1
                 verbose "update_self: git subtree pull --prefix=${_rel} ${_remote} ${_branch} --squash"
                 local _subtree_out _subtree_rc
                 _subtree_out=$(git -C "$_parent" subtree pull \
@@ -303,8 +304,10 @@ function _update_dotfiler_pull() {
                         "dotfiler: update scripts subtree" \
                         "$_mode"
                     log_debug "update_self: subtree pull succeeded — writing stamp"
+                    _update_core_pop_stash "update_self subtree"
                 else
-                    error "update_self: subtree pull failed (working tree may have uncommitted changes)."
+                    _update_core_pop_stash "update_self subtree"
+                    error "update_self: subtree pull failed."
                 fi
                 _update_core_write_timestamp "$_dotfiler_self_stamp"
             fi
@@ -551,10 +554,11 @@ ${#_dotfiler_plan_main_to_remove[@]} to remove"
 function _update_main_pull(){
     [[ ${#dry_run[@]} -gt 0 ]] && { verbose "update: main pull: skipping (dry-run)"; return 0; }
     [[ ${#commit_hash[@]} -gt 0 || ${#range[@]} -gt 0 ]] && { verbose "update: main pull: skipping (range mode)"; return 0; }
-    verbose "update: main pull: git pull ${_update_default_remote} ${_update_default_branch}"
-    git -C "$dotfiles_dir" pull -q \
+    _update_core_prompt_dirty "$dotfiles_dir" "main pull" || return 1
+    verbose "update: main pull: git pull --autostash ${_update_default_remote} ${_update_default_branch}"
+    git -C "$dotfiles_dir" pull -q --autostash \
         "$_update_default_remote" "$_update_default_branch" || {
-        warn "Update failed, likely modified files in the way"
+        warn "Update failed"
         return 1
     }
     verbose "update: main pull: done"
