@@ -61,8 +61,8 @@ _prune_dir_names=()
 #   the baked-in minimal ruleset is loaded instead.
 read_exclusion_patterns() {
     local enforce=0
-    [[ "$1" == "--enforce" ]] && { enforce=1; shift; }
-    local exclusion_file="$1"
+    [[ "${1:-}" == "--enforce" ]] && { enforce=1; shift; }
+    local exclusion_file="${1:-}"
     local flag="user"
     (( enforce )) && flag="enforce"
     
