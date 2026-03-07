@@ -445,8 +445,12 @@ _update_core_commit_parent() {
                 warn "update_core: commit manually: git -C ${_parent} add ${_rel} && git -C ${_parent} commit"
                 return 0
             fi
-            git -C "$_parent" add "$_rel" \
-                && git -C "$_parent" commit -m "$_commit_msg"
+            git -C "$_parent" add "$_rel" 2>/dev/null
+            if git -C "$_parent" diff --cached --quiet 2>/dev/null; then
+                log_debug "update_core: nothing to commit in parent (${_label})"
+            else
+                git -C "$_parent" commit -q -m "$_commit_msg"
+            fi
             ;;
         prompt)
             _update_core_has_typed_input && return 0
@@ -458,8 +462,12 @@ _update_core_commit_parent() {
             local _ans
             read -r -k1 _ans; print ""
             if [[ "$_ans" == (y|Y) ]]; then
-                git -C "$_parent" add "$_rel" \
-                    && git -C "$_parent" commit -m "$_commit_msg"
+                git -C "$_parent" add "$_rel" 2>/dev/null
+                if git -C "$_parent" diff --cached --quiet 2>/dev/null; then
+                    log_debug "update_core: nothing to commit in parent (${_label})"
+                else
+                    git -C "$_parent" commit -q -m "$_commit_msg"
+                fi
             fi
             ;;
         none|*)

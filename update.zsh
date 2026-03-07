@@ -61,7 +61,7 @@ function _update_parse_args() {
     _update_phases=()
 
     function _update_usage(){
-        echo "Usage: ${script_name} [-D|--dry-run] [-q|--quiet] [-v|--verbose] [-f|--force]"
+        echo "Usage: ${script_name} [-D|--dry-run] [-q|--quiet] [-v|--verbose] [-d|--debug] [-f|--force]"
         echo "                      [-c|--commit-hash <hash>] [-r|--range <range>]"
         echo "                      [--update-phases=<dotfiler|dotfiles|hooks> ...]"
         echo "  --update-phases  Restrict to named phases (repeatable). Default: all."
@@ -73,6 +73,7 @@ function _update_parse_args() {
     zparseopts -D -E - \
         q=quiet -quiet=quiet \
         v=verbose -verbose=verbose \
+        d=debug_flag -debug=debug_flag \
         f=force -force=force \
         c+:=commit_hash -commit-hash+:=commit_hash \
         r+:=range -range+:=range \
@@ -89,8 +90,9 @@ function _update_parse_args() {
     # Strip --update-phases tokens, leaving only the values
     _update_phases=("${(@)_update_phases_raw:#--update-phases}")
 
-    [[ ${#quiet[@]} -gt 0 ]]   && quiet_mode=true
-    [[ ${#verbose[@]} -gt 0 ]] && export DOTFILER_VERBOSE=1
+    [[ ${#quiet[@]} -gt 0 ]]      && quiet_mode=true
+    [[ ${#verbose[@]} -gt 0 ]]    && export DOTFILER_VERBOSE=1
+    [[ ${#debug_flag[@]} -gt 0 ]] && export DOTFILER_DEBUG=1
 
     # True when a specific commit or range was given — skips the git pull
     # (repo is already at the target) and drives component range resolution.
@@ -278,8 +280,12 @@ function _update_dotfiler_pull() {
                 info "update_self: [dry-run] would: git subtree pull --prefix=${_rel} ${_remote} ${_branch} --squash"
             else
                 verbose "update_self: git subtree pull --prefix=${_rel} ${_remote} ${_branch} --squash"
-                if git -C "$_parent" subtree pull \
-                    --prefix="$_rel" "$_remote" "$_branch" --squash; then
+                local _subtree_out
+                _subtree_out=$(git -C "$_parent" subtree pull \
+                    --prefix="$_rel" "$_remote" "$_branch" --squash 2>&1)
+                local _subtree_rc=$?
+                log_debug "update_self: subtree pull output: ${_subtree_out}"
+                if (( _subtree_rc == 0 )); then
                     local _pulled_sha
                     _pulled_sha=$(_update_core_resolve_remote_sha "$_remote_url" "$_branch" 2>/dev/null)
                     if [[ -n "$_pulled_sha" ]]; then
@@ -446,7 +452,7 @@ function _update_phase_plan(){
         git -C "$dotfiles_dir" fetch -q \
             "$_update_default_remote" "$_update_default_branch"
         _update_diff_range="HEAD..${_update_default_remote}/${_update_default_branch}"
-        info "Using ${_update_default_remote}/${_update_default_branch} mode: ${_update_diff_range}"
+        verbose "update: Using ${_update_default_remote}/${_update_default_branch} mode: ${_update_diff_range}"
     fi
 
     # ── Main repo file lists ──────────────────────────────────────────────
