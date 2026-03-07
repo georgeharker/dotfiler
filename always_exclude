@@ -20,6 +20,7 @@ node_modules/
 .cache/
 __pycache__/
 *.pyc
+*.zwc
 
 # The exclude files themselves
 always_exclude

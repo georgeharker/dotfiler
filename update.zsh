@@ -126,10 +126,14 @@ function _update_should_run_phase() {
 # ---------------------------------------------------------------------------
 
 function _update_dotfiler_init() {
+    verbose "update_self: init begin (script_dir=${script_dir})"
+
     zstyle -s ':dotfiler:update' subtree-remote _dotfiler_subtree_spec 2>/dev/null \
         || _dotfiler_subtree_spec="dotfiler main"
     zstyle -s ':dotfiler:update' subtree-url _dotfiler_subtree_url 2>/dev/null \
         || _dotfiler_subtree_url="https://github.com/georgeharker/dotfiler.git"
+
+    log_debug "update_self: subtree-spec=${_dotfiler_subtree_spec} subtree-url=${_dotfiler_subtree_url}"
 
     _update_core_detect_deployment "$script_dir" "$_dotfiler_subtree_spec"
     _dotfiler_topology=$REPLY
@@ -137,7 +141,8 @@ function _update_dotfiler_init() {
     # Stamp written after a successful pull in each topology branch.
     _dotfiler_self_stamp="${XDG_CACHE_DIR:-$HOME/.cache}/dotfiler/dotfiler_scripts_update"
 
-    verbose "update_self: topology=$_dotfiler_topology script_dir=$script_dir"
+    verbose "update_self: topology=${_dotfiler_topology}"
+    log_debug "update_self: stamp=${_dotfiler_self_stamp}"
 }
 
 
@@ -149,187 +154,151 @@ function _update_dotfiler_init() {
 # ---------------------------------------------------------------------------
 
 function _update_dotfiler_plan() {
+    verbose "update_self: plan begin (topology=${_dotfiler_topology})"
     case $_dotfiler_topology in
-
-        # -------------------------------------------------------------------
-        standalone)
-        # The scripts dir is its own standalone git repo.
-        # -------------------------------------------------------------------
+        standalone|submodule)
             local _avail
+            log_debug "update_self: plan: checking availability"
             _update_core_is_available "$script_dir" && _avail=0 || _avail=$?
             _dotfiler_update_avail=$_avail
+            log_debug "update_self: plan: avail=${_avail}"
             ;;
-
-        # -------------------------------------------------------------------
-        submodule)
-        # The scripts dir is a submodule inside the user's dotfiles repo.
-        # -------------------------------------------------------------------
-            local _avail
-            _update_core_is_available "$script_dir" && _avail=0 || _avail=$?
-            _dotfiler_update_avail=$_avail
-            ;;
-
-        # -------------------------------------------------------------------
         subtree)
-        # The scripts dir lives as a subtree prefix inside the user's dotfiles
-        # repo. Check availability by comparing the remote SHA against the
-        # marker file committed alongside the subtree.
-        # -------------------------------------------------------------------
             local _avail
+            log_debug "update_self: plan: checking availability (subtree spec='${_dotfiler_subtree_spec}')"
             _update_core_is_available_subtree \
                 "$script_dir" "$_dotfiler_subtree_spec" \
                 "$_dotfiler_subtree_url" && _avail=0 || _avail=$?
             _dotfiler_update_avail=$_avail
+            log_debug "update_self: plan: avail=${_avail}"
             ;;
-
-        # -------------------------------------------------------------------
         subdir)
-        # Plain subdirectory — parent repo manages the scripts.
-        # -------------------------------------------------------------------
             info "update_self: subdir topology — parent repo manages scripts, skipping self-update"
             _dotfiler_update_avail=1
             ;;
-
-        # -------------------------------------------------------------------
         none|*)
-        # Not inside a git repo at all.
-        # -------------------------------------------------------------------
             warn "update_self: scripts directory is not a git repo — skipping self-update"
             _dotfiler_update_avail=1
             ;;
     esac
+    verbose "update_self: plan done (update_avail=${_dotfiler_update_avail})"
 }
 
 # ---------------------------------------------------------------------------
 # _update_dotfiler_pull
 #
-# Apply the dotfiler scripts update based on topology and availability set
-# by _update_dotfiler_plan.  Writes timestamp on success.
+# Perform the actual git operations to update the scripts dir.
 # ---------------------------------------------------------------------------
 
 function _update_dotfiler_pull() {
+    verbose "update_self: pull begin (topology=${_dotfiler_topology})"
     case $_dotfiler_topology in
 
         # -------------------------------------------------------------------
         standalone)
-        # The scripts dir is its own standalone git repo.  Pull if an update
-        # is available.
         # -------------------------------------------------------------------
-            local _avail
-            _update_core_is_available "$script_dir" && _avail=0 || _avail=$?
-            if (( _avail == 0 )); then
-                info "update_self: update available — pulling scripts"
+            if (( _dotfiler_update_avail == 0 )); then
+                info "update_self: update available — pulling scripts (standalone)"
                 if (( _dry_run )); then
                     info "update_self: [dry-run] would git pull"
                 else
                     local _remote _branch
                     _remote=$(_update_core_get_default_remote "$script_dir")
                     _branch=$(_update_core_get_default_branch "$script_dir" "$_remote")
-                    if ! git -C "$script_dir" pull --ff-only "$_remote" "$_branch"; then
+                    verbose "update_self: git pull ${_remote} ${_branch}"
+                    git -C "$script_dir" pull --ff-only "$_remote" "$_branch" || {
                         error "update_self: git pull failed."
                         return 1
-                    fi
+                    }
+                    log_debug "update_self: pull succeeded — writing stamp"
                     _update_core_write_timestamp "$_dotfiler_self_stamp"
                 fi
             else
-                info "update_self: scripts already up to date"
+                verbose "update_self: scripts already up to date"
                 (( _dry_run )) || _update_core_write_timestamp "$_dotfiler_self_stamp"
             fi
             ;;
 
         # -------------------------------------------------------------------
         submodule)
-        # The scripts dir is a submodule inside the user's dotfiles repo.
-        # Update the submodule and optionally commit the parent.
         # -------------------------------------------------------------------
-            local _submod_root _parent _rel
-            _submod_root=$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null)
-            # Find the parent repo by walking up from _submod_root
             _update_core_get_parent_root "$script_dir"
             if [[ "${reply[2]}" != superproject ]]; then
                 error "update_self: cannot find parent repo for submodule."
                 return 1
             fi
-            _parent="${reply[1]}"
-            _rel=${_submod_root#${_parent}/}
-
+            local _parent="${reply[1]}"
+            local _submod_root
+            _submod_root=$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null)
+            local _rel=${_submod_root#${_parent}/}
+            log_debug "update_self: submodule parent=${_parent} rel=${_rel}"
             local _mode
             zstyle -s ':dotfiler:update' in-tree-commit _mode 2>/dev/null || _mode="auto"
-
+            log_debug "update_self: in-tree-commit mode=${_mode}"
             if (( _dry_run )); then
-                info "update_self: [dry-run] would: git -C $_parent submodule update --remote -- $_rel"
+                info "update_self: [dry-run] would: git -C ${_parent} submodule update --remote -- ${_rel}"
             else
-                if ! git -C "$_parent" submodule update --remote -- "$_rel"; then
+                verbose "update_self: git submodule update --remote -- ${_rel}"
+                git -C "$_parent" submodule update --remote -- "$_rel" || {
                     error "update_self: submodule update failed."
                     return 1
-                fi
+                }
                 _update_core_commit_parent \
                     "$_parent" "$_rel" \
                     "dotfiler submodule updated" \
                     "dotfiler: update scripts submodule" \
                     "$_mode"
+                log_debug "update_self: submodule pull succeeded — writing stamp"
                 _update_core_write_timestamp "$_dotfiler_self_stamp"
             fi
             ;;
 
         # -------------------------------------------------------------------
         subtree)
-        # The scripts dir lives as a subtree prefix inside the user's dotfiles
-        # repo.  Pull the subtree and optionally commit.
         # -------------------------------------------------------------------
-            local _parent _rel
             _update_core_get_parent_root "$script_dir"
             if [[ "${reply[2]}" == none ]]; then
                 error "update_self: cannot find parent repo for subtree."
                 return 1
             fi
-            _parent="${reply[1]}"
-            local _parent_real=${_parent:A}
-            local _script_real=${script_dir:A}
-            _rel=${_script_real#${_parent_real}/}
-
-            # Parse subtree-remote zstyle: "<remote> [<branch>]"
+            local _parent="${reply[1]}"
+            local _rel=${script_dir:A#${_parent:A}/}
+            log_debug "update_self: subtree parent=${_parent} rel=${_rel}"
             local _remote _branch _remote_url
             _update_core_resolve_subtree_spec "$script_dir" "$_dotfiler_subtree_spec" \
                 "$_dotfiler_subtree_url" || {
-                error "update_self: could not resolve subtree spec '${_dotfiler_subtree_spec}'"; return 1
+                error "update_self: could not resolve subtree spec '${_dotfiler_subtree_spec}'"
+                return 1
             }
             _remote="$reply[1]" _branch="$reply[2]" _remote_url="$reply[3]"
-
             local _mode
             zstyle -s ':dotfiler:update' in-tree-commit _mode 2>/dev/null || _mode="auto"
-
+            log_debug "update_self: subtree remote=${_remote} branch=${_branch} in-tree-commit=${_mode}"
             if (( _dry_run )); then
-                info "update_self: [dry-run] would: git subtree pull --prefix=$_rel $_remote $_branch --squash"
+                info "update_self: [dry-run] would: git subtree pull --prefix=${_rel} ${_remote} ${_branch} --squash"
             else
+                verbose "update_self: git subtree pull --prefix=${_rel} ${_remote} ${_branch} --squash"
                 if git -C "$_parent" subtree pull \
                     --prefix="$_rel" "$_remote" "$_branch" --squash; then
-
-                    # Record the remote SHA we just pulled so future
-                    # _update_core_is_available_subtree can compare against it.
                     local _pulled_sha
                     _pulled_sha=$(_update_core_resolve_remote_sha "$_remote_url" "$_branch" 2>/dev/null)
                     if [[ -n "$_pulled_sha" ]]; then
+                        log_debug "update_self: writing SHA marker ${_pulled_sha}"
                         _update_core_write_sha_marker "$script_dir" "$_pulled_sha"
                     fi
-
-                    # Stage the SHA marker alongside the subtree when committing
-                    # to the parent repo.
                     _update_core_sha_marker_path "$script_dir"
                     local _marker_path=$REPLY
                     if [[ "$_mode" != "none" && -f "$_marker_path" ]]; then
                         git -C "$_parent" add "$_marker_path" 2>/dev/null
                     fi
-
                     _update_core_commit_parent \
                         "$_parent" "$_rel" \
                         "dotfiler subtree updated" \
                         "dotfiler: update scripts subtree" \
                         "$_mode"
+                    log_debug "update_self: subtree pull succeeded — writing stamp"
                 else
                     error "update_self: subtree pull failed (working tree may have uncommitted changes)."
-                    # Continue rather than failing hard — dotfiles can still be
-                    # updated with existing scripts.
                 fi
                 _update_core_write_timestamp "$_dotfiler_self_stamp"
             fi
@@ -337,10 +306,11 @@ function _update_dotfiler_pull() {
 
         # -------------------------------------------------------------------
         subdir|none|*)
-        # No-op — nothing to pull.
         # -------------------------------------------------------------------
+            verbose "update_self: pull: topology=${_dotfiler_topology} — nothing to do"
             ;;
     esac
+    verbose "update_self: pull done"
 }
 
 # ---------------------------------------------------------------------------
@@ -573,14 +543,15 @@ ${#_dotfiler_plan_main_to_remove[@]} to remove"
 # ---------------------------------------------------------------------------
 
 function _update_main_pull(){
-    [[ ${#dry_run[@]} -gt 0 ]] && return 0
-    [[ ${#commit_hash[@]} -gt 0 || ${#range[@]} -gt 0 ]] && return 0
-    verbose "update: main pull: git pull"
+    [[ ${#dry_run[@]} -gt 0 ]] && { verbose "update: main pull: skipping (dry-run)"; return 0; }
+    [[ ${#commit_hash[@]} -gt 0 || ${#range[@]} -gt 0 ]] && { verbose "update: main pull: skipping (range mode)"; return 0; }
+    verbose "update: main pull: git pull ${_update_default_remote} ${_update_default_branch}"
     git -C "$dotfiles_dir" pull -q \
         "$_update_default_remote" "$_update_default_branch" || {
         warn "Update failed, likely modified files in the way"
         return 1
     }
+    verbose "update: main pull: done"
     return 0
 }
 
@@ -756,23 +727,31 @@ function _update_main() {
     _update_parse_args "$@" || exit $?
     _update_init_registry
 
+    verbose "update: starting (dotfiles_dir=${dotfiles_dir} script_dir=${script_dir})"
     [[ "$_update_range_mode" == true ]] && \
-        verbose "update: range mode (repo=${dotfiles_dir})"
+        verbose "update: range mode active (repo=${dotfiles_dir})"
 
     if _update_should_run_phase dotfiler; then
+        verbose "update: running dotfiler phase"
         _update_dotfiler_init
         _update_dotfiler_plan
         _update_dotfiler_pull || exit $?
         _update_dotfiler_unpack
+    else
+        verbose "update: skipping dotfiler phase"
     fi
 
     if _update_should_run_phase dotfiles || _update_should_run_phase hooks; then
+        verbose "update: running dotfiles/hooks phases"
         _update_phase_plan || exit $?
         _update_phase_pull || exit $?
         _update_phase_unpack
         _update_phase_post
+    else
+        verbose "update: skipping dotfiles/hooks phases"
     fi
 
+    verbose "update: done"
     _update_cleanup
 }
 
