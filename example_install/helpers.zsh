@@ -178,6 +178,12 @@ ensure_git() {
     else
         verbose "git-lfs already installed"
     fi
+    if ! check_command git-filter-repo; then
+        action "Installing git-filter-repo dependency..."
+        install_package git-filter-repo
+    else
+        verbose "git-filter-repo already installed"
+    fi
 }
 
 git_directory_exists() {

@@ -48,7 +48,7 @@ install_basic_python_packages() {
 install_claude() {
     action "Installing claude-code Node.js packages..."
     install_npm_package @anthropic-ai/claude-code
-    install_npm_package @zed-industries/claude-code-acp
+    install_npm_package @zed-industries/claude-agent-acp
 }
 
 install_copilot() {
@@ -59,6 +59,9 @@ install_copilot() {
 install_opencode() {
     action "Installing opencode Node.js packages..."
     install_npm_package opencode-ai
+    if is_os_macos; then
+        brew install --cask opencode-desktop
+    fi
 }
 
 install_gemini() {
