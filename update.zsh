@@ -104,6 +104,7 @@ function _update_parse_args() {
     # Integer forms used by _update_dotfiler_pull topology functions.
     _dry_run=0; [[ ${#dry_run[@]} -gt 0 ]] && _dry_run=1
     _force=0;   [[ ${#force[@]} -gt 0 ]]   && _force=1
+    return 0
 }
 
 # ---------------------------------------------------------------------------

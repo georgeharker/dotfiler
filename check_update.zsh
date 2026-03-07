@@ -204,7 +204,7 @@ function update_dotfiles() {
         [[ -n "$DOTFILER_VERBOSE" ]]   && _update_args+=( "--verbose" )
         [[ -n "$DOTFILER_DEBUG" ]]     && _update_args+=( "--debug" )
         verbose "check_update: running ${script_dir}/update.zsh interactively ${_update_args[*]}"
-        if LANG= "${script_dir}/update.zsh" "${_update_args[@]}"; then
+        if "${script_dir}/update.zsh" "${_update_args[@]}"; then
             verbose "check_update: success — writing timestamp"
             _update_core_write_timestamp "$dotfiles_timestamp"
             return 0
@@ -218,7 +218,7 @@ function update_dotfiles() {
     # Background mode: capture stderr so it can be stored in the timestamp file.
     verbose "check_update: running ${script_dir}/update.zsh in background mode"
     local exit_status error_out
-    if error_out=$(LANG= "${script_dir}/update.zsh" -q 2>&1); then
+    if error_out=$("${script_dir}/update.zsh" -q 2>&1); then
         verbose "check_update: background success — writing timestamp"
         _update_core_write_timestamp "$dotfiles_timestamp" 0 "Update successful"
         return 0
@@ -298,14 +298,17 @@ function handle_self_update() {
     fi
 
     # _avail==0 means an update is available — run update.zsh dotfiler phase.
-    log_debug "check_update: handle_self_update: update available — running update.zsh --update-phases=dotfiler"
-    if "${script_dir}/update.zsh" --update-phases=dotfiler; then
+    local -a _self_update_args=( --update-phases dotfiler )
+    [[ -n "$DOTFILER_VERBOSE" ]] && _self_update_args+=( "--verbose" )
+    [[ -n "$DOTFILER_DEBUG" ]]   && _self_update_args+=( "--debug" )
+    log_debug "check_update: handle_self_update: update available — running update.zsh ${_self_update_args[*]}"
+    if "${script_dir}/update.zsh" "${_self_update_args[@]}"; then
         log_debug "check_update: handle_self_update: self-update succeeded"
         _update_core_write_timestamp "$_self_stamp"
         return 0
     else
         local _rc=$?
-        error "Self-update failed (exit ${_rc})."
+        error "check_update: self-update failed (exit ${_rc}) — re-run with --debug for details"
         return $_rc
     fi
 }
