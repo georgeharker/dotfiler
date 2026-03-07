@@ -280,10 +280,10 @@ function _update_dotfiler_pull() {
                 info "update_self: [dry-run] would: git subtree pull --prefix=${_rel} ${_remote} ${_branch} --squash"
             else
                 verbose "update_self: git subtree pull --prefix=${_rel} ${_remote} ${_branch} --squash"
-                local _subtree_out
+                local _subtree_out _subtree_rc
                 _subtree_out=$(git -C "$_parent" subtree pull \
                     --prefix="$_rel" "$_remote" "$_branch" --squash 2>&1)
-                local _subtree_rc=$?
+                _subtree_rc=$?
                 log_debug "update_self: subtree pull output: ${_subtree_out}"
                 if (( _subtree_rc == 0 )); then
                     local _pulled_sha
