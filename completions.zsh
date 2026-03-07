@@ -87,10 +87,33 @@ _dotfiler_setup_args() {
         '(-q --quiet)'{-q,--quiet}'[Run in quiet mode (suppress output)]' \
         '(-D --dry-run)'{-D,--dry-run}'[Show what would be done without making changes]' \
         '(-y --yes)'{-y,--yes}'[Answer yes to all prompts]' \
-        '(-n --no)'{-n,--no}'[Answer no to all prompts]'
+        '(-n --no)'{-n,--no}'[Answer no to all prompts]' \
+        '(-A --all)'{-A,--all}'[Setup all components (dotfiles + hooks)]' \
+        '*'{-C,--component}'[Setup specific component (repeatable)]:component:_dotfiler_components' \
+        '--list-components[List available components]'
+}
+
+# Dynamic component name completion for --component / -C
+# Runs `dotfiler setup --list-components` to discover registered hooks.
+_dotfiler_components() {
+    local -a components
+    local script_dir="${${(%):-%x}:A:h}"
+    local setup_script="${script_dir}/setup.zsh"
+
+    if [[ -x "$setup_script" ]] || [[ -f "$setup_script" ]]; then
+        components=("${(@f)$(zsh "$setup_script" --list-components 2>/dev/null)}")
+    fi
+
+    # Fallback: always offer "main"
+    if (( ${#components} == 0 )); then
+        components=(main)
+    fi
+
+    _describe 'component' components
 }
 
 # Complete check_update command arguments
+# (check-updates checks for upstream changes in dotfiles + hooks)
 _dotfiler_check_update_args() {
     _arguments \
         '(- *)--help[Show help message]' \

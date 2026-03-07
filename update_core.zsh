@@ -1052,6 +1052,65 @@ _update_core_resolve_component_range() {
 # NOT called by update.zsh — those functions must persist as runtime
 # dependencies of _zdot_update_handle_update (via _zdot_update_hook_*).
 # Self-unsets last.
+# ---------------------------------------------------------------------------
+# Hook registry — shared between update.zsh and setup.zsh
+# ---------------------------------------------------------------------------
+#
+# Each hook (component) registers itself with a name and a set of phase
+# functions.  update.zsh drives check → plan → pull → unpack → post.
+# setup.zsh drives the optional setup_fn for full unpack without an update.
+#
+#   _dotfiler_registered_hooks          — ordered array of hook names
+#   _dotfiler_hook_check_fn[name]       — fn: 0=available 1=up-to-date 2=error
+#   _dotfiler_hook_plan_fn[name]        — fn: populates _dotfiler_plan_<name>_*
+#   _dotfiler_hook_pull_fn[name]        — fn: git operations only
+#   _dotfiler_hook_unpack_fn[name]      — fn: setup_core.zsh after all pulls
+#   _dotfiler_hook_post_fn[name]        — fn: commit parents, markers etc.
+#   _dotfiler_hook_cleanup_fn[name]     — fn: unset hook impl fns (check mode)
+#   _dotfiler_hook_component_dir[name]  — component repo dir (absolute path)
+#   _dotfiler_hook_topology[name]       — standalone|submodule|subtree|subdir
+#   _dotfiler_hook_setup_fn[name]       — fn: full-unpack for setup --all
+
+function _update_core_init_registry() {
+    typeset -ga  _dotfiler_registered_hooks
+    typeset -gA  _dotfiler_hook_check_fn
+    typeset -gA  _dotfiler_hook_plan_fn
+    typeset -gA  _dotfiler_hook_pull_fn
+    typeset -gA  _dotfiler_hook_unpack_fn
+    typeset -gA  _dotfiler_hook_post_fn
+    typeset -gA  _dotfiler_hook_cleanup_fn
+    typeset -gA  _dotfiler_hook_component_dir
+    typeset -gA  _dotfiler_hook_topology
+    typeset -gA  _dotfiler_hook_setup_fn
+}
+
+# _update_register_hook \
+#     <name> <check_fn> <plan_fn> <pull_fn> <unpack_fn> <post_fn> \
+#     [cleanup_fn] [component_dir] [topology] [setup_fn]
+#
+# Called by each hook .zsh file when sourced.
+#   cleanup_fn:    called by check_update.zsh after check_fns run.
+#   component_dir + topology: used by dotfiler to resolve component ranges
+#     from a dotfiles range without calling plan_fn first.
+#   setup_fn:      called by setup.zsh --all for full unpack without a pull.
+#     Receives a single argument: "unpack" or "force-unpack".
+#     Hooks that omit this do not participate in dotfiler setup --all.
+function _update_register_hook() {
+    local _name=$1
+    _dotfiler_registered_hooks+=("$_name")
+    _dotfiler_hook_check_fn[$_name]=$2
+    _dotfiler_hook_plan_fn[$_name]=$3
+    _dotfiler_hook_pull_fn[$_name]=$4
+    _dotfiler_hook_unpack_fn[$_name]=$5
+    _dotfiler_hook_post_fn[$_name]=$6
+    _dotfiler_hook_cleanup_fn[$_name]=${7:-}
+    _dotfiler_hook_component_dir[$_name]=${8:-}
+    _dotfiler_hook_topology[$_name]=${9:-}
+    _dotfiler_hook_setup_fn[$_name]=${10:-}
+}
+
+# ---------------------------------------------------------------------------
+
 _update_core_cleanup() {
     unset -f \
         _update_core_current_epoch \
@@ -1080,6 +1139,17 @@ _update_core_cleanup() {
         _update_core_write_ext_marker \
         _update_core_resolve_component_range \
         _update_core_build_file_lists \
+        _update_core_init_registry \
+        _update_register_hook \
         2>/dev/null
+
+    # Registry arrays — may not exist if _update_core_init_registry was never called
+    unset _dotfiler_registered_hooks 2>/dev/null
+    unset _dotfiler_hook_check_fn _dotfiler_hook_plan_fn \
+          _dotfiler_hook_pull_fn _dotfiler_hook_unpack_fn \
+          _dotfiler_hook_post_fn _dotfiler_hook_cleanup_fn \
+          _dotfiler_hook_component_dir _dotfiler_hook_topology \
+          _dotfiler_hook_setup_fn 2>/dev/null
+
     unset -f _update_core_cleanup 2>/dev/null
 }

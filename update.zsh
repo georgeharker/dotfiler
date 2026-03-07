@@ -42,6 +42,12 @@ helper_script_dir="${script_name:h}"
 source "${helper_script_dir}/helpers.zsh"
 source "${helper_script_dir}/logging.zsh"
 source "${helper_script_dir}/update_core.zsh"
+# Source setup_core early so unpack phases use the pre-pull version of the
+# code.  The source just defines functions; all mutable state is set up
+# inside setup_core_main → _setup_init on each call and discarded on return.
+# The double-source guard (_setup_core_zsh_loaded) means any later
+# `source setup_core.zsh` inside subshells is a harmless no-op.
+source "${helper_script_dir}/setup_core.zsh"
 
 dotfiles_dir=$(find_dotfiles_directory)
 script_dir=$(find_dotfiles_script_directory)
@@ -351,9 +357,9 @@ function _update_dotfiler_unpack() {
     #     --excludes "${script_dir}/dotfiler_exclude"
     # )
     # (
-    #     source "$script_dir/setup.zsh"
-    #     setup_main "${_setup_args[@]}"
-    #     setup_unload
+     #     source "$script_dir/setup_core.zsh"
+    #     setup_core_main "${_setup_args[@]}"
+    #     setup_core_unload
     # )
     return 0
 }
@@ -368,59 +374,19 @@ function _update_dotfiler_unpack() {
 # Hooks source into this process and call _update_register_hook to declare
 # their phase functions.  dotfiler owns the registry; hooks never iterate it.
 #
-#   _dotfiler_registered_hooks          — ordered array of hook names
-#   _dotfiler_hook_check_fn[name]       — fn: 0=available 1=up-to-date 2=error
-#   _dotfiler_hook_plan_fn[name]        — fn: populates _dotfiler_plan_<name>_*
-#   _dotfiler_hook_pull_fn[name]        — fn: git operations only
-#   _dotfiler_hook_unpack_fn[name]      — fn: setup.zsh after all pulls
-#   _dotfiler_hook_post_fn[name]        — fn: commit parents, markers etc.
-#   _dotfiler_hook_cleanup_fn[name]     — fn: unset hook impl fns (check mode)
-#   _dotfiler_hook_component_dir[name]  — component repo dir (absolute path)
-#   _dotfiler_hook_topology[name]       — standalone|submodule|subtree|subdir
+# Hook registry lives in update_core.zsh — shared with setup.zsh.
+# See _update_core_init_registry and _update_register_hook there.
 
-function _update_init_registry() {
-    typeset -ga  _dotfiler_registered_hooks
-    typeset -gA  _dotfiler_hook_check_fn
-    typeset -gA  _dotfiler_hook_plan_fn
-    typeset -gA  _dotfiler_hook_pull_fn
-    typeset -gA  _dotfiler_hook_unpack_fn
-    typeset -gA  _dotfiler_hook_post_fn
-    typeset -gA  _dotfiler_hook_cleanup_fn
-    typeset -gA  _dotfiler_hook_component_dir
-    typeset -gA  _dotfiler_hook_topology
+# ---------------------------------------------------------------------------
+# Helpers: safe operations (dry-run aware)
+# ---------------------------------------------------------------------------
 
-    # _update_register_hook \
-    #     <name> <check_fn> <plan_fn> <pull_fn> <unpack_fn> <post_fn> \
-    #     [cleanup_fn] [component_dir] [topology]
-    # Called by each hook when sourced. cleanup_fn: called by check_update.zsh
-    # after check_fns run. component_dir + topology: used by dotfiler to resolve
-    # component ranges from a dotfiles range without calling plan_fn first.
-    function _update_register_hook() {
-        local _name=$1
-        _dotfiler_registered_hooks+=("$_name")
-        _dotfiler_hook_check_fn[$_name]=$2
-        _dotfiler_hook_plan_fn[$_name]=$3
-        _dotfiler_hook_pull_fn[$_name]=$4
-        _dotfiler_hook_unpack_fn[$_name]=$5
-        _dotfiler_hook_post_fn[$_name]=$6
-        _dotfiler_hook_cleanup_fn[$_name]=${7:-}
-        _dotfiler_hook_component_dir[$_name]=${8:-}
-        _dotfiler_hook_topology[$_name]=${9:-}
-    }
-
-    # ---------------------------------------------------------------------------
-    # Helpers: safe operations (dry-run aware)
-    # ---------------------------------------------------------------------------
-
-    function _update_safe_rm(){
-        if [[ ${#dry_run[@]} -gt 0 ]]; then
-            action "[DRY RUN] Would remove: $1"
-        else
-            rm -f "$1"
-        fi
-    }
-
-    typeset -gaU _dotfiler_plan_main_to_unpack _dotfiler_plan_main_to_remove
+function _update_safe_rm(){
+    if [[ ${#dry_run[@]} -gt 0 ]]; then
+        action "[DRY RUN] Would remove: $1"
+    else
+        rm -f "$1"
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -606,6 +572,7 @@ function _update_main_unpack(){
             "$_unpack_flag"
             ${dry_run:+"-D"}
             ${quiet:+"-q"}
+            ${debug_flag:+"-g"}
             --repo-dir "${_dotfiler_plan_main_repo_dir}"
             --link-dest "${_link_dest}"
             --excludes "${_dotfiler_plan_main_repo_dir}/dotfiles_exclude"
@@ -613,11 +580,14 @@ function _update_main_unpack(){
         )
 
         # Run in a ( subshell ) — pure fork, no zsh startup files re-read,
-        # namespace discarded on exit. setup_unload is belt-and-braces.
+        # namespace discarded on exit. setup_core_unload is belt-and-braces.
+        # NOTE: setup_core.zsh is sourced early at the top of this file;
+        # the source below is a no-op (double-source guard fires) but kept
+        # so this block remains self-contained if ever extracted.
         (
-            source "${script_dir}/setup.zsh"
-            setup_main "${_setup_args[@]}"
-            setup_unload
+            source "${script_dir}/setup_core.zsh"
+            setup_core_main "${_setup_args[@]}"
+            setup_core_unload
         )
         return $?
     fi
@@ -713,7 +683,7 @@ function _update_cleanup() {
         _update_phase_post \
         _update_should_run_phase \
         _update_parse_args \
-        _update_init_registry \
+        _update_safe_rm \
         _update_cleanup \
         2>/dev/null
     unset -A \
@@ -723,6 +693,7 @@ function _update_cleanup() {
         _dotfiler_hook_unpack_fn \
         _dotfiler_hook_post_fn \
         _dotfiler_hook_cleanup_fn \
+        _dotfiler_hook_setup_fn \
         _dotfiler_hook_component_dir \
         _dotfiler_hook_topology \
         2>/dev/null
@@ -735,6 +706,7 @@ function _update_cleanup() {
         _dotfiler_update_avail \
         2>/dev/null
     _update_core_cleanup
+    setup_core_unload
 }
 
 # ---------------------------------------------------------------------------
@@ -743,7 +715,8 @@ function _update_cleanup() {
 
 function _update_main() {
     _update_parse_args "$@" || exit $?
-    _update_init_registry
+    _update_core_init_registry
+    typeset -gaU _dotfiler_plan_main_to_unpack _dotfiler_plan_main_to_remove
 
     verbose "update: starting (dotfiles_dir=${dotfiles_dir} script_dir=${script_dir})"
     [[ "$_update_range_mode" == true ]] && \
