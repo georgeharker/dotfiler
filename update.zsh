@@ -262,7 +262,7 @@ function _update_dotfiler_pull() {
                 return 1
             fi
             local _parent="${reply[1]}"
-            local _rel=${script_dir:A#${_parent:A}/}
+            local _rel=${${script_dir:A}#${_parent:A}/}
             log_debug "update_self: subtree parent=${_parent} rel=${_rel}"
             local _remote _branch _remote_url
             _update_core_resolve_subtree_spec "$script_dir" "$_dotfiler_subtree_spec" \
