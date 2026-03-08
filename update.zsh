@@ -181,11 +181,11 @@ function _update_dotfiler_plan() {
             log_debug "update_self: plan: avail=${_avail}"
             ;;
         subdir)
-            info "update_self: subdir topology — parent repo manages scripts, skipping self-update"
+            verbose "update_self: subdir topology — parent repo manages scripts, skipping self-update"
             _dotfiler_update_avail=1
             ;;
         none|*)
-            warn "update_self: scripts directory is not a git repo — skipping self-update"
+            verbose "update_self: scripts directory is not a git repo — skipping self-update"
             _dotfiler_update_avail=1
             ;;
     esac
@@ -524,8 +524,8 @@ ${#_dotfiler_plan_main_to_remove[@]} to remove"
         local _display="${_name:#main}"; _display="${_display:-dotfiles}"
         local _plan_u="_dotfiler_plan_${_name}_to_unpack"
         local _plan_r="_dotfiler_plan_${_name}_to_remove"
-        local _nu=$(( ${(P)+_plan_u} ? ${#${(P)_plan_u}[@]} : 0 ))
-        local _nr=$(( ${(P)+_plan_r} ? ${#${(P)_plan_r}[@]} : 0 ))
+        local _nu=${#${(P)_plan_u}[@]}
+        local _nr=${#${(P)_plan_r}[@]}
         if (( _nu > 0 || _nr > 0 )); then
             info "${_display}: ${_nu} to update, ${_nr} to remove"
         else
@@ -642,8 +642,8 @@ function _update_phase_pull(){
         # Skip if plan found nothing to do for this component
         local _plan_u="_dotfiler_plan_${_name}_to_unpack"
         local _plan_r="_dotfiler_plan_${_name}_to_remove"
-        local _nu=$(( ${(P)+_plan_u} ? ${#${(P)_plan_u}[@]} : 0 ))
-        local _nr=$(( ${(P)+_plan_r} ? ${#${(P)_plan_r}[@]} : 0 ))
+        local _nu=${#${(P)_plan_u}[@]}
+        local _nr=${#${(P)_plan_r}[@]}
         if (( ! _force && _nu == 0 && _nr == 0 )); then
             verbose "update: phase pull: skipping ${_name} (nothing planned)"
             continue
@@ -673,8 +673,8 @@ function _update_phase_unpack(){
         # Skip if plan found nothing to do for this component
         local _plan_u="_dotfiler_plan_${_name}_to_unpack"
         local _plan_r="_dotfiler_plan_${_name}_to_remove"
-        local _nu=$(( ${(P)+_plan_u} ? ${#${(P)_plan_u}[@]} : 0 ))
-        local _nr=$(( ${(P)+_plan_r} ? ${#${(P)_plan_r}[@]} : 0 ))
+        local _nu=${#${(P)_plan_u}[@]}
+        local _nr=${#${(P)_plan_r}[@]}
         if (( ! _force && _nu == 0 && _nr == 0 )); then
             verbose "update: phase unpack: skipping ${_name} (nothing planned)"
             continue
