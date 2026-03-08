@@ -40,6 +40,10 @@ Options:
 Examples:
     $script_name gui                      # Launch GUI
     $script_name setup -u                 # Run setup with unpack
+    $script_name setup --bootstrap-hook /path/to/zdot/core/dotfiler-hook.zsh
+                                          # Bootstrap: install hook symlink
+    $script_name setup --bootstrap-hook /path/to/zdot/core/dotfiler-hook.zsh -U --all
+                                          # Bootstrap then force-unpack all
     $script_name check-updates --force    # Force update check
     $script_name update --quiet           # Update quietly
     $script_name update-self              # Update dotfiler scripts

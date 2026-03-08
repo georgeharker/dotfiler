@@ -39,6 +39,82 @@ source "${_setup_script_dir}/setup_core.zsh"
 source "${_setup_script_dir}/update_core.zsh"
 
 # ---------------------------------------------------------------------------
+# Bootstrap hook symlink installation
+# ---------------------------------------------------------------------------
+# Install a hook file into ~/.config/dotfiler/hooks/ without needing the
+# linktree or a configured shell.  This is the first step of a fresh install:
+#
+#   dotfiler setup --bootstrap-hook /path/to/zdot/core/dotfiler-hook.zsh
+#
+# Name derivation (in priority order):
+#   1. Filename stem minus "-hook" suffix  e.g. "zdot-hook.zsh" → "zdot"
+#   2. If stem is "dotfiler" (generic name), use the grandparent dir name
+#      e.g. ".../zdot/core/dotfiler-hook.zsh" → grandparent = "zdot"
+#
+# Idempotent: if the symlink already points to the same target, succeeds
+# quietly.  If it points elsewhere, warns and requires --yes/--force to
+# overwrite.
+_setup_bootstrap_hook() {
+    local hook_path="${1:A}"  # resolve to absolute real path
+    local force=${2:-0}
+
+    if [[ ! -f "$hook_path" ]]; then
+        error "bootstrap-hook: file not found: $hook_path"
+        return 1
+    fi
+
+    # Derive component name
+    local filename="${hook_path:t}"          # e.g. dotfiler-hook.zsh
+    local stem="${filename%-hook.zsh}"       # e.g. dotfiler  OR  zdot
+    local name
+    if [[ "$stem" == "dotfiler" || "$stem" == "$filename" ]]; then
+        # Generic name or no -hook suffix: use grandparent dir
+        name="${hook_path:h:h:t}"           # e.g. zdot/core/... → zdot
+    else
+        name="$stem"
+    fi
+
+    if [[ -z "$name" ]]; then
+        error "bootstrap-hook: could not derive component name from: $hook_path"
+        return 1
+    fi
+
+    local hooks_dir="${XDG_CONFIG_HOME:-$HOME/.config}/dotfiler/hooks"
+    local dest="${hooks_dir}/${name}.zsh"
+
+    # Create hooks dir if missing
+    if [[ ! -d "$hooks_dir" ]]; then
+        log_debug "bootstrap-hook: creating hooks dir: $hooks_dir"
+        mkdir -p "$hooks_dir" || {
+            error "bootstrap-hook: failed to create hooks dir: $hooks_dir"
+            return 1
+        }
+    fi
+
+    # Check existing symlink / file
+    if [[ -e "$dest" || -L "$dest" ]]; then
+        local existing_target
+        existing_target=$(readlink "$dest" 2>/dev/null || echo "(not a symlink)")
+        if [[ "$existing_target" == "$hook_path" ]]; then
+            info "bootstrap-hook: $name already linked to $hook_path"
+            return 0
+        fi
+        if (( ! force )); then
+            warn "bootstrap-hook: $dest already exists (→ $existing_target)"
+            warn "  Use --yes or --force to overwrite."
+            return 1
+        fi
+        rm -f "$dest"
+    fi
+
+    ln -s "$hook_path" "$dest" || {
+        error "bootstrap-hook: failed to create symlink $dest → $hook_path"
+        return 1
+    }
+    info "bootstrap-hook: installed $name → $hook_path"
+}
+
+# ---------------------------------------------------------------------------
 # Hook discovery for setup
 # ---------------------------------------------------------------------------
 # Source hook .zsh files from $XDG_CONFIG_HOME/dotfiler/hooks/.
@@ -105,17 +181,17 @@ _setup_list_components() {
 # setup_main — extended CLI parser and dispatcher
 # ---------------------------------------------------------------------------
 function setup_main() {
-    local -a opt_all opt_components opt_list_components
+    local -a opt_all opt_components opt_list_components opt_bootstrap_hooks
     local -a remaining_args
     local -a passthrough_flags
-    local has_unpack=0 has_force_unpack=0
+    local has_unpack=0 has_force_unpack=0 has_yes=0
 
     # -----------------------------------------------------------------------
     # Pre-parse: extract our new flags before passing to setup_core_main
     # -----------------------------------------------------------------------
     # We manually scan argv because zparseopts in setup_core_main doesn't
-    # know about --all / --component.  We strip them and pass the rest
-    # through.
+    # know about --all / --component / --bootstrap-hook.  We strip them and
+    # pass the rest through.
     remaining_args=()
     while (( $# > 0 )); do
         case "$1" in
@@ -131,11 +207,25 @@ function setup_main() {
                 opt_components+=("$2")
                 shift 2
                 ;;
+            --bootstrap-hook|-B)
+                if (( $# < 2 )); then
+                    error "--bootstrap-hook requires a path to the hook file"
+                    return 1
+                fi
+                opt_bootstrap_hooks+=("$2")
+                shift 2
+                ;;
             --list-components)
                 opt_list_components=(--list-components)
                 shift
                 ;;
-            -D|--dry-run|-q|--quiet|-g|--debug|-y|--yes|-n|--no)
+            -D|--dry-run|-q|--quiet|-g|--debug|-n|--no)
+                passthrough_flags+=("$1")
+                remaining_args+=("$1")
+                shift
+                ;;
+            -y|--yes|--force)
+                has_yes=1
                 passthrough_flags+=("$1")
                 remaining_args+=("$1")
                 shift
@@ -157,6 +247,21 @@ function setup_main() {
         esac
     done
     set -- "${remaining_args[@]}"
+
+    # -----------------------------------------------------------------------
+    # --bootstrap-hook: install symlink(s) then continue (or exit)
+    # -----------------------------------------------------------------------
+    if (( ${#opt_bootstrap_hooks} > 0 )); then
+        local bh rc=0
+        for bh in "${opt_bootstrap_hooks[@]}"; do
+            _setup_bootstrap_hook "$bh" "$has_yes" || rc=$?
+        done
+        # If no unpack/all/component requested, done here
+        if (( ! has_unpack && ! has_force_unpack && ${#opt_all} == 0 && ${#opt_components} == 0 )); then
+            return $rc
+        fi
+        (( rc != 0 )) && return $rc
+    fi
 
     # -----------------------------------------------------------------------
     # --list-components: discover and print, then exit
@@ -254,6 +359,7 @@ function setup_unload() {
 
     # Our own functions
     unset -f \
+        _setup_bootstrap_hook \
         _setup_discover_hooks \
         _setup_run_component \
         _setup_list_components \
