@@ -43,8 +43,23 @@ _dotfiler() {
                install)
                    _dotfiler_install_args
                    ;;
-               install-module)
+                install-module)
                    _dotfiler_install_module_args
+                   ;;
+                ingest)
+                   _dotfiler_ingest_args
+                   ;;
+                add)
+                   _dotfiler_add_args
+                   ;;
+                commit)
+                   _dotfiler_commit_args
+                   ;;
+                status)
+                   _dotfiler_status_args
+                   ;;
+                push)
+                   _dotfiler_push_args
                    ;;
             esac
             ;;
@@ -62,6 +77,11 @@ _dotfiler_commands() {
         'update-self:Update dotfiler scripts themselves'
         'install:Run modular installation system (all modules)'
         'install-module:Run specific installation module'
+        'ingest:Move homedir file(s) into the dotfiles repo and symlink back'
+        'add:Stage files in the dotfiles repo (git add)'
+        'commit:Commit staged changes in the dotfiles repo (git commit)'
+        'status:Show working tree, ahead, and behind state'
+        'push:Push commits to remote (git push)'
     )
     _describe 'dotfiler commands' commands
 }
@@ -247,7 +267,69 @@ _dotfiler_module_functions() {
     _describe 'module functions' fallback_functions
 }
 
-# File completion for dotfiles (helps with -i, -u, -t options)
+# Complete ingest command arguments
+_dotfiler_ingest_args() {
+    _arguments \
+        '(- *)--help[Show help message]' \
+        '*:file to ingest:_files'
+}
+
+# Complete add command arguments
+_dotfiler_add_args() {
+    _arguments \
+        '(- *)--help[Show help message]' \
+        '-A[Stage all changes including deletions]' \
+        '-u[Stage modifications and deletions (no new files)]' \
+        '-p[Interactively stage hunks]' \
+        '*:path in dotfiles repo:_dotfiles_files'
+}
+
+# Complete commit command arguments
+_dotfiler_commit_args() {
+    _arguments \
+        '(- *)--help[Show help message]' \
+        '(-m --message)'{-m,--message}'[Commit message]:message:' \
+        '(-a --all)'{-a,--all}'[Stage all tracked modifications and deletions]' \
+        '--amend[Amend the previous commit]' \
+        '(-v --verbose)'{-v,--verbose}'[Show diff in commit message editor]' \
+        '--no-edit[Reuse previous commit message (with --amend)]' \
+        '--allow-empty[Allow commit with no changes]'
+}
+
+# Complete status command arguments
+_dotfiler_status_args() {
+    _arguments \
+        '(- *)--help[Show help message]' \
+        '--fetch[Fetch from remote before checking ahead/behind state]'
+}
+
+# Complete push command arguments
+_dotfiler_push_args() {
+    _arguments \
+        '(- *)--help[Show help message]' \
+        '--force-with-lease[Force push only if remote matches expected state]' \
+        '--force[Force push (use with caution)]' \
+        '--dry-run[Show what would be pushed without pushing]' \
+        '--tags[Push tags as well as commits]' \
+        '-u[Set upstream tracking for the branch]' \
+        '1:remote:_dotfiler_git_remotes' \
+        '2:refspec:'
+}
+
+# Complete git remote names for the dotfiles repo
+_dotfiler_git_remotes() {
+    local dotfiles_dir remotes
+    local script_dir="${${(%):-%x}:A:h}"
+    if [[ -f "$script_dir/helpers.zsh" ]]; then
+        dotfiles_dir=$(zsh -c "source $script_dir/helpers.zsh 2>/dev/null && find_dotfiles_directory" 2>/dev/null)
+    fi
+    if [[ -n "$dotfiles_dir" ]]; then
+        remotes=(${(f)"$(git -C "$dotfiles_dir" remote 2>/dev/null)"})
+        _describe 'remote' remotes
+    fi
+}
+
+
 _dotfiles_files() {
     local dotfiles_dir
     
