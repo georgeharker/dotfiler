@@ -17,148 +17,163 @@ if command -v dotfiler &>/dev/null; then
 fi
 ```
 
-If you use zdot, this is handled automatically by the `dotfiler.zsh` zdot plugin
-— no manual wiring needed.
-
-### The Update Check
-
-At shell startup, dotfiler runs a lightweight check:
-
-1. Fetches from the configured remote
-2. Compares the local HEAD to the remote
-3. If updates are available, either prompts you or applies them silently,
-   depending on the configured mode
-
-You can also trigger a check manually:
-
-```zsh
-dotfiler check-updates          # check now
-dotfiler check-updates --force  # ignore the frequency throttle
-dotfiler check-updates --verbose # show progress output
-dotfiler check-updates --debug  # show full tracing (implies --verbose)
-```
+If you use zdot, this is handled automatically by the zdot integration — see
+[zdot-integration.md](zdot-integration.md).
 
 ### Update Modes
 
-Controlled via zstyle, typically set in your dotfiles init:
+Configure how dotfiler behaves when an update is available:
 
 ```zsh
-zstyle ':dotfiler:update' mode prompt     # ask before updating (default)
-zstyle ':dotfiler:update' mode background # update silently in background
-zstyle ':dotfiler:update' mode disabled   # no automatic updates
+zstyle ':dotfiler:update' mode prompt      # ask before updating (default)
+zstyle ':dotfiler:update' mode auto        # update silently
+zstyle ':dotfiler:update' mode background  # update in a background subshell
+zstyle ':dotfiler:update' mode reminder    # just print a nudge
+zstyle ':dotfiler:update' mode disabled    # no checks at all
 ```
-
-**`prompt`** — the most common choice. At shell startup, if updates are available
-you are shown a prompt and can accept or defer. Updates run interactively so you
-see what changed.
-
-**`background`** — updates apply silently. Output is captured and stored with the
-timestamp. Good for machines where you don't want shell startup interrupted.
-
-**`disabled`** — no automatic checks. Run `dotfiler check-updates` manually when
-you want to update.
 
 ### Update Frequency
 
-To avoid checking on every shell open, dotfiler throttles checks using a
-timestamp file. The default is once per day. Override with:
+By default, dotfiler checks at most once per hour. Override with:
 
 ```zsh
-zstyle ':dotfiler:update' frequency 43200  # seconds — 12 hours
+zstyle ':dotfiler:update' frequency 86400  # seconds; once per day
 ```
-
-Force a check regardless of the timestamp with `--force`.
-
-### What Happens During an Update
-
-1. The main dotfiles repo is pulled from the configured remote
-2. Any registered component hooks (e.g. a zdot hook) run their own update logic
-3. If the repo contains a submodule or subtree (e.g. dotfiler itself), those are
-   updated too
-4. A new timestamp is written on success
 
 ---
 
-## Deployment Techniques and Tradeoffs
+## The Four Update Phases
 
-dotfiler supports three ways to be included in your dotfiles repo. The choice
-affects how dotfiler itself is updated and how portable your setup is.
+When an update is applied, it runs through four phases in strict order:
 
-### 1. Git Submodule
+### 1. Plan
+
+Fetches remote state, computes the commit range that will be applied, and builds
+the list of files to unpack and remove. No changes are made to disk at this
+point. This phase is safe to run in dry-run mode (`dotfiler update --dry-run`).
+
+File discovery uses two independent find passes:
+
+- **Shallow pass** (depth 1 only): top-level entries whose name begins with `.`
+  followed by a letter. Directories are never symlinked — this pass gates which
+  top-level directories are created in `$HOME`.
+- **Deep pass** (all depths, files and symlinks only): all files under the repo
+  root, pruned by exclusion patterns (`.git/`, `.nounpack/`, user-defined
+  exclusions). This pass is independent of the shallow pass.
+
+**Exclusion patterns are the authoritative gate** for controlling whether files
+inside non-dotted top-level directories (e.g. `bin/`, `notes/`) get unpacked.
+Any directory not in the exclusion list will have its files unpacked via the
+deep pass. Files under `.nounpack/` are never included at any depth.
+
+### 2. Pull
+
+All git operations: fetch and merge/rebase each registered repository. The main
+dotfiles repo is pulled first, then each hook's repo in registration order.
+**No unpacking happens until every repo has been pulled to its new HEAD.**
+
+### 3. Unpack
+
+Runs `setup.zsh` for each registered component (main dotfiles first, then hooks
+in registration order). This is where symlinks in `$HOME` are updated to reflect
+the new files on disk.
+
+### 4. Post
+
+Post-update housekeeping: commits updated submodule pointers into the parent
+repo (if applicable), writes SHA marker files for subtree and standalone
+topologies, and warns about any install scripts that may need to be re-run.
+
+---
+
+## Why Dotfiles Run First
+
+Within each phase, the **main dotfiles repo always runs before any hook**.
+
+This ordering is critical for hooks whose code lives *inside* your dotfiles repo
+(such as the zdot hook). Consider a zdot update that also ships a new version of
+`dotfiler-hook.zsh`:
+
+1. **Pull phase**: dotfiles repo is pulled first → new `dotfiler-hook.zsh`
+   arrives on disk inside the dotfiles repo
+2. **Unpack phase**: dotfiles are unpacked first → `dotfiler-hook.zsh` is
+   symlinked from the repo into its linktree destination
+   (`~/.config/zdot/core/dotfiler-hook.zsh`)
+3. **Only then** does zdot's pull and unpack run — using the now-current hook
+   code from the linktree
+
+If the order were reversed, the hook could execute against a version of its own
+code that had arrived via `git pull` but had not yet been symlinked into the
+linktree — a partially-updated, inconsistent state.
+
+The linktree destination is only updated when `setup.zsh` runs successfully.
+Until then it reflects the last fully-installed state, which is always safe to
+execute.
+
+---
+
+## dotfiler Self-Update
+
+dotfiler keeps its own scripts up to date separately. The self-update runs
+**after** the main dotfiles + hooks cycle and does not require an unpack phase
+(dotfiler's scripts are not symlinked via the link-tree — they live in
+`.nounpack/dotfiler/` and are accessed directly).
+
+Self-update frequency is controlled independently:
 
 ```zsh
-# GitHub
-git submodule add https://github.com/georgeharker/dotfiler .nounpack/dotfiler
-
-# Self-hosted / SSH
-git submodule add git@your-host:dotfiler.git .nounpack/dotfiler
+zstyle ':dotfiler:update' self-frequency 86400  # default: 3600
 ```
 
-**How it works:** dotfiler is pinned to a specific commit inside your dotfiles
-repo. Running `dotfiler update` (or the auto-update mechanism) fetches the
-submodule remote and advances the pin.
+---
 
-**Tradeoffs:**
+## Deployment Topologies
 
-| | |
-|---|---|
-| ✓ | Explicit versioning — you control exactly which dotfiler commit is active |
-| ✓ | Updates are atomic — submodule update + parent commit are a unit |
-| ✓ | Easy to roll back by checking out an older parent commit |
-| ✗ | Slightly more complex clone (`git clone --recurse-submodules`) |
-| ✗ | New machines need `git submodule update --init` |
+dotfiler detects how your dotfiles repo is structured and adapts its pull
+strategy accordingly:
 
-**Best for:** Most users. Gives you reproducible, versioned tooling with a clear
-update trail.
+| Topology | Detection | Pull strategy |
+|----------|-----------|---------------|
+| **Submodule** | `.git` is a file (gitdir pointer) | `git submodule update --remote` |
+| **Subtree** | SHA marker file adjacent to component dir | `git subtree pull --squash` |
+| **Standalone** | Own `.git` directory, no parent | `git pull --autostash` |
+| **Subdir** | Parent repo found, no submodule/subtree indicator | No-op (parent manages it) |
 
-### 2. Git Subtree
+Note: `.git` symlinks are resolved correctly — a component stored under a
+linktree directory (where `.git` may be a symlink) is still detected as a
+submodule if appropriate.
+
+### In-Tree Commits (Submodule Topology)
+
+After updating a submodule, dotfiler can automatically commit the new submodule
+pointer into the parent dotfiles repo:
 
 ```zsh
-# GitHub
-git subtree add --prefix=.nounpack/dotfiler \
-    https://github.com/georgeharker/dotfiler main --squash
-
-# Self-hosted / SSH
-git subtree add --prefix=.nounpack/dotfiler \
-    git@your-host:dotfiler.git main --squash
+zstyle ':dotfiler:update' in-tree-commit auto    # commit silently (default)
+zstyle ':dotfiler:update' in-tree-commit prompt  # ask first
+zstyle ':dotfiler:update' in-tree-commit none    # never commit
 ```
 
-**How it works:** dotfiler's source is merged directly into your repo history.
-No `.gitmodules` file, no separate clone step needed.
+---
 
-**Tradeoffs:**
+## Manual Update Commands
 
-| | |
-|---|---|
-| ✓ | Single repo — cloning your dotfiles gives you everything |
-| ✓ | No submodule init step on new machines |
-| ✓ | Full history of dotfiler available locally |
-| ✓ | You can make local patches and merge upstream selectively |
-| ✗ | Your repo history gets dotfiler commits merged in |
-| ✗ | Pulling updates requires a `git subtree pull` command |
+```zsh
+# Check for updates now (ignoring frequency stamp)
+dotfiler check-updates --force
 
-**Best for:** Users who want the simplest clone story; or who are developing
-dotfiler itself and need to work against a local fork; or who want to carefully
-review every change to their tooling before it lands in their setup.
+# Apply update
+dotfiler update
 
-### 3. Standalone (Pre-installed)
+# Dry run — plan only, no pull/unpack
+dotfiler update --dry-run
 
-dotfiler is installed separately on each machine (e.g. via a package manager or
-manual clone), and your dotfiles repo just calls it by name.
+# Debug output
+dotfiler update --debug
 
-**Tradeoffs:**
+# Update only dotfiler scripts themselves
+dotfiler update --update-phases dotfiler
 
-| | |
-|---|---|
-| ✓ | Your dotfiles repo is purely config — no tooling bundled |
-| ✓ | dotfiler can be updated independently of your dotfiles |
-| ✗ | Requires dotfiler to be installed before your dotfiles can be bootstrapped |
-| ✗ | New machine setup has an extra manual step |
-
-**Best for:** Advanced users who manage machine provisioning separately (e.g.
-via Ansible or a corporate IT image).
-
-### Recommendation
-
-Use **submodule** unless you have a specific reason not to. It gives the best
-balance of reproducibility and update control with minimal operational overhead.
+# Update only dotfiles (skip self-update)
+dotfiler update --update-phases dotfiles
+```
