@@ -190,6 +190,7 @@ function _update_dotfiler_plan() {
             ;;
     esac
     verbose "update_self: plan done (update_avail=${_dotfiler_update_avail})"
+    (( _dotfiler_update_avail != 0 )) && info "dotfiler: up to date"
 }
 
 # ---------------------------------------------------------------------------
@@ -452,6 +453,11 @@ function _update_phase_plan(){
     verbose "update: phase plan: main repo — \
 ${#_dotfiler_plan_main_to_unpack[@]} to unpack, \
 ${#_dotfiler_plan_main_to_remove[@]} to remove"
+    if (( ${#_dotfiler_plan_main_to_unpack[@]} > 0 || ${#_dotfiler_plan_main_to_remove[@]} > 0 )); then
+        info "dotfiles: ${#_dotfiler_plan_main_to_unpack[@]} to update, ${#_dotfiler_plan_main_to_remove[@]} to remove"
+    else
+        info "dotfiles: up to date"
+    fi
 
     # ── Component hooks ───────────────────────────────────────────────────
     # In commit/range mode, resolve each hook's component range from the
@@ -515,6 +521,15 @@ ${#_dotfiler_plan_main_to_remove[@]} to remove"
 
         verbose "update: phase plan: calling plan_fn for ${_name}"
         "$_fn"
+        # Report per-component result after plan_fn populates its arrays
+        local _nu _nr
+        _nu=${#${(P)${:-_dotfiler_plan_${_name}_to_unpack}}[@]}
+        _nr=${#${(P)${:-_dotfiler_plan_${_name}_to_remove}}[@]}
+        if (( _nu > 0 || _nr > 0 )); then
+            info "${_name}: ${_nu} to update, ${_nr} to remove"
+        else
+            info "${_name}: up to date"
+        fi
     done
 
     verbose "update: phase plan: done"
@@ -529,6 +544,7 @@ function _update_main_pull(){
     [[ ${#dry_run[@]} -gt 0 ]] && { verbose "update: main pull: skipping (dry-run)"; return 0; }
     [[ ${#commit_hash[@]} -gt 0 || ${#range[@]} -gt 0 ]] && { verbose "update: main pull: skipping (range mode)"; return 0; }
     _update_core_prompt_dirty "$dotfiles_dir" "main pull" || return 1
+    info "dotfiles: pulling..."
     verbose "update: main pull: git pull --autostash ${_update_default_remote} ${_update_default_branch}"
     git -C "$dotfiles_dir" pull -q --autostash \
         "$_update_default_remote" "$_update_default_branch" || {
@@ -619,6 +635,7 @@ function _update_phase_pull(){
         _fn="${_dotfiler_hook_pull_fn[$_name]:-}"
         [[ -z "$_fn" ]] && continue
         verbose "update: phase pull: ${_name} -> ${_fn}"
+        info "${_name}: pulling..."
         "$_fn" || {
             warn "update: pull failed for '${_name}'"
             return 1
@@ -639,6 +656,7 @@ function _update_phase_unpack(){
         _fn="${_dotfiler_hook_unpack_fn[$_name]:-}"
         [[ -z "$_fn" ]] && continue
         verbose "update: phase unpack: ${_name} -> ${_fn}"
+        info "${_name}: unpacking..."
         "$_fn" || warn "update: unpack failed for '${_name}'"
     done
     verbose "update: phase unpack: done"
@@ -724,6 +742,7 @@ function _update_main() {
 
     if _update_should_run_phase dotfiles || _update_should_run_phase hooks; then
         verbose "update: running dotfiles/hooks phases"
+        info "Checking for updates..."
         _update_phase_plan || exit $?
         _update_phase_pull || exit $?
         _update_phase_unpack
@@ -734,6 +753,7 @@ function _update_main() {
 
     if _update_should_run_phase dotfiler; then
         verbose "update: running dotfiler phase"
+        info "Checking dotfiler..."
         _update_dotfiler_init
         _update_dotfiler_plan
         _update_dotfiler_pull || exit $?
