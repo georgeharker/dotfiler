@@ -3,7 +3,7 @@
 
 # Capture script name early before functions change context
 script_name="${${(%):-%x}:A}"
-script_dir="${script_name:h}/../scripts/"
+script_dir="${script_name:h}/../dotfiler/"
 script_dir=${script_dir:A}
 
 # Pull in logging
