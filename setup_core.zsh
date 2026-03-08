@@ -32,9 +32,7 @@
 #   findopt, findoptd, find_prune_args,
 #   _gitignore_rules, _prune_dir_names
 
-# Double-source guard
-[[ -n "${_setup_core_zsh_loaded:-}" ]] && return 0
-_setup_core_zsh_loaded=1
+
 
 # When exec'd directly (not sourced into an environment that already loaded
 # helpers.zsh), pull in the helpers so find_dotfiles_directory etc. are defined.
@@ -1307,9 +1305,6 @@ function setup_core_unload() {
     unset dry_run quiet defyes defno
     unset findopt findoptd find_prune_args
     unset _gitignore_rules _prune_dir_names
-
-    # Guard variable
-    unset _setup_core_zsh_loaded
 
     # All functions defined by this lib
     local fn

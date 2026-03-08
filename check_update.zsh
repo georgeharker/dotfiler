@@ -147,13 +147,14 @@ function _check_update_invoke_hooks() {
         (( _rc == 0 )) && _any_available=0
     done
 
-    # Cleanup: call each hook's registered cleanup_fn to unset impl functions.
+    # Cleanup: call each hook's registered cleanup_fn to unset hook impl functions.
+    # _update_core_cleanup is NOT called here — callers (foreground dispatch) own
+    # that teardown once handle_self_update and handle_update have both returned.
     for _name in "${_dotfiler_registered_hooks[@]}"; do
         _fn="${_dotfiler_hook_cleanup_fn[$_name]:-}"
         [[ -n "$_fn" ]] && "$_fn"
     done
     unset _zdot_dotfiler_scripts_dir ZDOT_DIR 2>/dev/null
-    _update_core_cleanup
 
     return $_any_available
 }
@@ -465,5 +466,8 @@ case "$update_mode" in
     *)
         verbose "check_update: foreground mode (${update_mode}) — running handle_self_update then handle_update"
         handle_self_update
-        handle_update ;;
+        handle_update
+        # Core teardown: only safe here, after both handle_* have returned and
+        # released their locks / written timestamps.
+        _update_core_cleanup ;;
 esac

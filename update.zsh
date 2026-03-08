@@ -43,11 +43,9 @@ helper_script_dir="${script_name:h}"
 
 source "${helper_script_dir}/helpers.zsh"  # also sources logging.zsh
 source "${helper_script_dir}/update_core.zsh"
-# Source setup_core early so unpack phases use the pre-pull version of the
-# code.  The source just defines functions; all mutable state is set up
-# inside setup_core_main → _setup_init on each call and discarded on return.
-# The double-source guard (_setup_core_zsh_loaded) means any later
-# `source setup_core.zsh` inside subshells is a harmless no-op.
+    # Source setup_core early so unpack phases use the pre-pull version of the
+    # code.  The source just defines functions; all mutable state is set up
+    # inside setup_core_main → _setup_init on each call and discarded on return.
 source "${helper_script_dir}/setup_core.zsh"
 
 dotfiles_dir=$(find_dotfiles_directory)
@@ -359,9 +357,7 @@ function _update_dotfiler_unpack() {
     #     --excludes "${script_dir}/dotfiler_exclude"
     # )
     # (
-     #     source "$script_dir/setup_core.zsh"
     #     setup_core_main "${_setup_args[@]}"
-    #     setup_core_unload
     # )
     return 0
 }
@@ -601,15 +597,13 @@ function _update_main_unpack(){
             "${_to_unpack[@]}"
         )
 
-        # Run in a ( subshell ) — pure fork, no zsh startup files re-read,
-        # namespace discarded on exit. setup_core_unload is belt-and-braces.
-        # NOTE: setup_core.zsh is sourced early at the top of this file;
-        # the source below is a no-op (double-source guard fires) but kept
-        # so this block remains self-contained if ever extracted.
+        # Run in a ( subshell ) — pure fork, namespace discarded on exit.
+        # setup_core.zsh is sourced unconditionally at the top of this file so
+        # the subshell inherits the pre-pull version of setup_core functions.
+        # Do NOT re-source here: a post-pull setup_core.zsh must not mix with
+        # the running update state.
         (
-            source "${script_dir}/setup_core.zsh"
             setup_core_main "${_setup_args[@]}"
-            setup_core_unload
         )
         return $?
     fi
