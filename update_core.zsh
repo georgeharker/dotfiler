@@ -643,7 +643,7 @@ _update_core_is_available() {
 
         # Call GitHub API — on failure, skip update (conservative, per ohmyzsh pattern)
         local _curl_auth=() _wget_auth=()
-        if [[ -n "$GH_TOKEN" ]]; then
+        if [[ -n "${GH_TOKEN:-}" ]]; then
             _curl_auth=(-H "Authorization: Bearer ${GH_TOKEN}")
             _wget_auth=(--header="Authorization: Bearer ${GH_TOKEN}")
         fi
@@ -797,7 +797,7 @@ _update_core_is_available_subtree() {
         local _api_url="https://api.github.com/repos/${_repo}/commits/${_branch}"
 
         local _curl_auth=() _wget_auth=()
-        if [[ -n "$GH_TOKEN" ]]; then
+        if [[ -n "${GH_TOKEN:-}" ]]; then
             _curl_auth=(-H "Authorization: Bearer ${GH_TOKEN}")
             _wget_auth=(--header="Authorization: Bearer ${GH_TOKEN}")
         fi

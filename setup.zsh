@@ -129,8 +129,6 @@ _setup_discover_hooks() {
     local hook_dir="${XDG_CONFIG_HOME:-$HOME/.config}/dotfiler/hooks"
     [[ -d "$hook_dir" ]] || return 0
 
-    _update_core_init_registry
-
     local hook_file
     for hook_file in "$hook_dir"/*.zsh(N); do
         log_debug "setup: sourcing hook ${hook_file:t}"
@@ -185,6 +183,8 @@ function setup_main() {
     local -a remaining_args
     local -a passthrough_flags
     local has_unpack=0 has_force_unpack=0 has_yes=0
+
+    _update_core_init_registry
 
     # -----------------------------------------------------------------------
     # Pre-parse: extract our new flags before passing to setup_core_main
@@ -354,8 +354,8 @@ function setup_main() {
 # setup_unload — cleanup everything from both setup.zsh and setup_core.zsh
 # ---------------------------------------------------------------------------
 function setup_unload() {
-    # Unload core first
     setup_core_unload 2>/dev/null
+    _update_core_cleanup
 
     # Our own functions
     unset -f \
