@@ -726,10 +726,10 @@ function _setup_init() {
 
     _setup_link_dest="${link_dest_arg:-$HOME}"
 
-findopt=()
-findoptd=()
-if [[ `uname` == "Darwin" ]]; then
-  findoptd+=("-s")
+    findopt=()
+    findoptd=()
+    if [[ `uname` == "Darwin" ]]; then
+        findoptd+=("-s")
     fi
 
     _gitignore_rules=()
