@@ -1,7 +1,10 @@
 #!/usr/bin/env zsh
 # setup.zsh — multi-component-aware setup orchestrator.
 #
+# Intended to be EXEC'D, not sourced.  Runs in its own subshell.
+#
 # This is the CLI entry point for `dotfiler setup`.  It sources:
+#   helpers.zsh     — path/directory resolution utilities (also sources logging.zsh)
 #   setup_core.zsh  — single-repo operations (gitignore, find, link, unpack)
 #   update_core.zsh — shared primitives (topology, hook registry)
 #
@@ -24,13 +27,12 @@
 #   $2 .. $N  — passthrough flags (--dry-run, --quiet, --debug, --yes, --no)
 
 # ---------------------------------------------------------------------------
-# Bootstrap: locate ourselves, source helpers if not already loaded
+# Bootstrap: locate ourselves, source dependencies unconditionally.
+# This file is exec'd (not sourced) so no ambient environment exists.
 # ---------------------------------------------------------------------------
 _setup_script_dir="${0:A:h}"
 
-if ! (( $+functions[info] )); then
-    source "${_setup_script_dir}/helpers.zsh"
-fi
+source "${_setup_script_dir}/helpers.zsh"  # also sources logging.zsh
 
 # ---------------------------------------------------------------------------
 # Source core libraries

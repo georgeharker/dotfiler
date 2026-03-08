@@ -3,6 +3,8 @@
 # update.zsh — topology-aware self-update for dotfiler scripts, then apply
 # dotfiles updates from git history.
 #
+# Intended to be EXEC'D, not sourced.  Runs in its own subshell.
+#
 # Phase-separated execution model:
 #   dotfiler phase (from update_self.zsh):
 #     INIT    — detect topology of dotfiler scripts directory
@@ -39,8 +41,7 @@ setopt PIPE_FAIL NO_UNSET
 script_name="${${(%):-%x}:A}"
 helper_script_dir="${script_name:h}"
 
-source "${helper_script_dir}/helpers.zsh"
-source "${helper_script_dir}/logging.zsh"
+source "${helper_script_dir}/helpers.zsh"  # also sources logging.zsh
 source "${helper_script_dir}/update_core.zsh"
 # Source setup_core early so unpack phases use the pre-pull version of the
 # code.  The source just defines functions; all mutable state is set up
