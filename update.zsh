@@ -521,9 +521,10 @@ ${#_dotfiler_plan_main_to_remove[@]} to remove"
         verbose "update: phase plan: calling plan_fn for ${_name}"
         "$_fn"
         # Report per-component result after plan_fn populates its arrays
-        local _nu _nr
-        _nu=${#${(P)${:-_dotfiler_plan_${_name}_to_unpack}}[@]}
-        _nr=${#${(P)${:-_dotfiler_plan_${_name}_to_remove}}[@]}
+        local _plan_u="_dotfiler_plan_${_name}_to_unpack"
+        local _plan_r="_dotfiler_plan_${_name}_to_remove"
+        local _nu=${#${(P)_plan_u:-}[@]}
+        local _nr=${#${(P)_plan_r:-}[@]}
         if (( _nu > 0 || _nr > 0 )); then
             info "${_name}: ${_nu} to update, ${_nr} to remove"
         else
@@ -638,9 +639,10 @@ function _update_phase_pull(){
         _fn="${_dotfiler_hook_pull_fn[$_name]:-}"
         [[ -z "$_fn" ]] && continue
         # Skip if plan found nothing to do for this component
-        local _nu _nr
-        _nu=${#${(P)${:-_dotfiler_plan_${_name}_to_unpack}}[@]}
-        _nr=${#${(P)${:-_dotfiler_plan_${_name}_to_remove}}[@]}
+        local _plan_u="_dotfiler_plan_${_name}_to_unpack"
+        local _plan_r="_dotfiler_plan_${_name}_to_remove"
+        local _nu=${#${(P)_plan_u:-}[@]}
+        local _nr=${#${(P)_plan_r:-}[@]}
         if (( ! _force && _nu == 0 && _nr == 0 )); then
             verbose "update: phase pull: skipping ${_name} (nothing planned)"
             continue
@@ -667,9 +669,10 @@ function _update_phase_unpack(){
         _fn="${_dotfiler_hook_unpack_fn[$_name]:-}"
         [[ -z "$_fn" ]] && continue
         # Skip if plan found nothing to do for this component
-        local _nu _nr
-        _nu=${#${(P)${:-_dotfiler_plan_${_name}_to_unpack}}[@]}
-        _nr=${#${(P)${:-_dotfiler_plan_${_name}_to_remove}}[@]}
+        local _plan_u="_dotfiler_plan_${_name}_to_unpack"
+        local _plan_r="_dotfiler_plan_${_name}_to_remove"
+        local _nu=${#${(P)_plan_u:-}[@]}
+        local _nr=${#${(P)_plan_r:-}[@]}
         if (( ! _force && _nu == 0 && _nr == 0 )); then
             verbose "update: phase unpack: skipping ${_name} (nothing planned)"
             continue
