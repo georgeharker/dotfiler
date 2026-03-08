@@ -27,6 +27,13 @@ Commands:
     install             Run modular installation system (all modules)
     install-module      Run specific installation module
 
+  Git wrappers (transparent — each prints the underlying git command):
+    ingest <file>...    Move homedir file(s) into repo and symlink back
+    add [<path>...]     Stage files in the dotfiles repo (git add)
+    commit [options]    Commit staged changes (git commit)
+    status [--fetch]    Show working tree, ahead, and behind state
+    push [options]      Push commits to remote (git push)
+
 Options:
     -h, --help         Show this help message
 
@@ -38,6 +45,11 @@ Examples:
     $script_name update-self              # Update dotfiler scripts
     $script_name install                  # Run all installation modules
     $script_name install-module development-tools  # Run specific module
+    $script_name ingest ~/.zshrc          # Adopt file into dotfiles repo
+    $script_name add .zshrc              # Stage a change
+    $script_name commit -m "Update zshrc" # Commit staged changes
+    $script_name status --fetch           # Full status with network check
+    $script_name push                     # Push to remote
 
 For command-specific help, run:
     $script_name <command> --help
@@ -51,7 +63,7 @@ while [[ $# -gt 0 ]]; do
             usage
             exit 0
             ;;
-        gui|setup|check-updates|update|update-self|install|install-module)
+        gui|setup|check-updates|update|update-self|install|install-module|ingest|add|commit|status|push)
             command="$1"
             shift
             break
@@ -105,6 +117,10 @@ case "$command" in
    install-module)
        # Run install_module script with all remaining arguments
        exec "$script_dir/install_module.zsh" "$@"
+       ;;
+   ingest|add|commit|status|push)
+       # Transparent git wrappers — each prints the underlying git command.
+       exec "$script_dir/git_commands.zsh" "$command" "$@"
        ;;
     *)
         echo "Error: Unknown command '$command'" >&2
