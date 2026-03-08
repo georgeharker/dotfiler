@@ -443,7 +443,7 @@ function _update_phase_plan(){
     # link_dest for the main repo is always $HOME — dotfiles symlinks live there.
     _dotfiler_plan_main_repo_dir="$dotfiles_dir"
     _dotfiler_plan_main_link_dest="$HOME"
-    _update_register_hook main \
+    _update_register_hook dotfiles \
         '' \
         '' \
         '_update_main_pull' \
@@ -458,7 +458,6 @@ ${#_dotfiler_plan_main_to_remove[@]} to remove"
     else
         info "dotfiles: up to date"
     fi
-
     # ── Component hooks ───────────────────────────────────────────────────
     # In commit/range mode, resolve each hook's component range from the
     # dotfiles range via marker files, then set _dotfiler_hint_range_<name>
@@ -495,7 +494,7 @@ ${#_dotfiler_plan_main_to_remove[@]} to remove"
     # ── Call each hook's plan_fn in-process ──────────────────────────────
     local _name _fn
     for _name in "${_dotfiler_registered_hooks[@]}"; do
-        [[ "$_name" == main ]] && continue
+        [[ "$_name" == dotfiles ]] && continue
         _fn="${_dotfiler_hook_plan_fn[$_name]:-}"
         [[ -z "$_fn" ]] && continue
 
@@ -543,6 +542,10 @@ ${#_dotfiler_plan_main_to_remove[@]} to remove"
 function _update_main_pull(){
     [[ ${#dry_run[@]} -gt 0 ]] && { verbose "update: main pull: skipping (dry-run)"; return 0; }
     [[ ${#commit_hash[@]} -gt 0 || ${#range[@]} -gt 0 ]] && { verbose "update: main pull: skipping (range mode)"; return 0; }
+    if (( ! _force && ${#_dotfiler_plan_main_to_unpack[@]} == 0 && ${#_dotfiler_plan_main_to_remove[@]} == 0 )); then
+        verbose "update: main pull: skipping (nothing to update)"
+        return 0
+    fi
     _update_core_prompt_dirty "$dotfiles_dir" "main pull" || return 1
     info "dotfiles: pulling..."
     verbose "update: main pull: git pull --autostash ${_update_default_remote} ${_update_default_branch}"
@@ -634,6 +637,14 @@ function _update_phase_pull(){
     for _name in "${_dotfiler_registered_hooks[@]}"; do
         _fn="${_dotfiler_hook_pull_fn[$_name]:-}"
         [[ -z "$_fn" ]] && continue
+        # Skip if plan found nothing to do for this component
+        local _nu _nr
+        _nu=${#${(P)${:-_dotfiler_plan_${_name}_to_unpack}}[@]}
+        _nr=${#${(P)${:-_dotfiler_plan_${_name}_to_remove}}[@]}
+        if (( ! _force && _nu == 0 && _nr == 0 )); then
+            verbose "update: phase pull: skipping ${_name} (nothing planned)"
+            continue
+        fi
         verbose "update: phase pull: ${_name} -> ${_fn}"
         info "${_name}: pulling..."
         "$_fn" || {
@@ -655,6 +666,14 @@ function _update_phase_unpack(){
     for _name in "${_dotfiler_registered_hooks[@]}"; do
         _fn="${_dotfiler_hook_unpack_fn[$_name]:-}"
         [[ -z "$_fn" ]] && continue
+        # Skip if plan found nothing to do for this component
+        local _nu _nr
+        _nu=${#${(P)${:-_dotfiler_plan_${_name}_to_unpack}}[@]}
+        _nr=${#${(P)${:-_dotfiler_plan_${_name}_to_remove}}[@]}
+        if (( ! _force && _nu == 0 && _nr == 0 )); then
+            verbose "update: phase unpack: skipping ${_name} (nothing planned)"
+            continue
+        fi
         verbose "update: phase unpack: ${_name} -> ${_fn}"
         info "${_name}: unpacking..."
         "$_fn" || warn "update: unpack failed for '${_name}'"
