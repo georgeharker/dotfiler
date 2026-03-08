@@ -580,10 +580,15 @@ _update_core_should_update() {
     local _stamp=$1 _freq=${2:-3600} _force=${3:-}
     [[ "$_force" == "true" ]] && return 0
 
-    local LAST_EPOCH
+    local LAST_EPOCH EXIT_STATUS
     if ! source "$_stamp" 2>/dev/null || [[ -z "$LAST_EPOCH" ]]; then
         _update_core_write_timestamp "$_stamp"
         return 1
+    fi
+
+    # If the last run recorded a failure, always retry — do not throttle.
+    if [[ -n "$EXIT_STATUS" ]] && (( EXIT_STATUS != 0 )); then
+        return 0
     fi
 
     zmodload zsh/datetime 2>/dev/null

@@ -177,11 +177,12 @@ function update_dotfiles() {
         verbose "check_update: running ${script_dir}/update.zsh interactively ${_update_args[*]}"
         if "${script_dir}/update.zsh" "${_update_args[@]}"; then
             verbose "check_update: success — writing timestamp"
-            _update_core_write_timestamp "$dotfiles_timestamp"
+            _update_core_write_timestamp "$dotfiles_timestamp" 0 ""
             return 0
         else
             local _rc=$?
             error "check_update: update.zsh failed (exit ${_rc}) — re-run with --debug for details"
+            _update_core_write_timestamp "$dotfiles_timestamp" $_rc "Update failed (exit ${_rc})"
             return $_rc
         fi
     fi
@@ -229,6 +230,14 @@ function handle_self_update() {
     local _self_freq
     _update_core_get_update_frequency ':dotfiler:update'; local _self_freq=$REPLY
 
+    # Warn if the previous self-update run recorded a failure.
+    local _prev_exit _prev_error
+    { local EXIT_STATUS ERROR; source "$_self_stamp" 2>/dev/null
+      _prev_exit=${EXIT_STATUS:-}; _prev_error=${ERROR:-}; }
+    if [[ -n "$_prev_exit" ]] && (( _prev_exit != 0 )); then
+        warn "dotfiler: previous self-update failed${_prev_error:+: ${_prev_error}}"
+    fi
+
     log_debug "check_update: handle_self_update: stamp=${_self_stamp} freq=${_self_freq} force=${force_update}"
     if ! _update_core_should_update "$_self_stamp" "$_self_freq" "$force_update"; then
         log_debug "check_update: handle_self_update: not yet due — skipping"
@@ -261,10 +270,10 @@ function handle_self_update() {
 
     log_debug "check_update: handle_self_update: _avail=${_avail} (0=update available, 1=up to date)"
 
-    # _avail==1 means up to date or indeterminate — write stamp and return cleanly.
+    # _avail==1 means up to date or indeterminate — write clean stamp and return.
     if (( _avail == 1 )); then
         log_debug "check_update: handle_self_update: up to date — writing timestamp"
-        _update_core_write_timestamp "$_self_stamp"
+        _update_core_write_timestamp "$_self_stamp" 0 ""
         return 0
     fi
 
@@ -275,11 +284,12 @@ function handle_self_update() {
     log_debug "check_update: handle_self_update: update available — running update.zsh ${_self_update_args[*]}"
     if "${script_dir}/update.zsh" "${_self_update_args[@]}"; then
         log_debug "check_update: handle_self_update: self-update succeeded"
-        _update_core_write_timestamp "$_self_stamp"
+        _update_core_write_timestamp "$_self_stamp" 0 ""
         return 0
     else
         local _rc=$?
         error "check_update: self-update failed (exit ${_rc}) — re-run with --debug for details"
+        _update_core_write_timestamp "$_self_stamp" $_rc "Self-update failed (exit ${_rc})"
         return $_rc
     fi
 }
@@ -330,6 +340,14 @@ function handle_update() {
 
     local _dotfiles_freq
     _update_core_get_update_frequency ':dotfiler:update'; local _dotfiles_freq=$REPLY
+
+    # Warn if the previous dotfiles update run recorded a failure.
+    local _prev_exit _prev_error
+    { local EXIT_STATUS ERROR; source "$dotfiles_timestamp" 2>/dev/null
+      _prev_exit=${EXIT_STATUS:-}; _prev_error=${ERROR:-}; }
+    if [[ -n "$_prev_exit" ]] && (( _prev_exit != 0 )); then
+        warn "dotfiles: previous update failed${_prev_error:+: ${_prev_error}}"
+    fi
 
     log_debug "check_update: handle_update: stamp=${dotfiles_timestamp} freq=${_dotfiles_freq} force=${force_update}"
     if ! _update_core_should_update "$dotfiles_timestamp" "$_dotfiles_freq" "$force_update"; then

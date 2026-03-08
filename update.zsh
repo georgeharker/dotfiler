@@ -217,14 +217,15 @@ function _update_dotfiler_pull() {
                     verbose "update_self: git pull --autostash ${_remote} ${_branch}"
                     git -C "$script_dir" pull --ff-only --autostash "$_remote" "$_branch" || {
                         error "update_self: git pull failed."
+                        _update_core_write_timestamp "$_dotfiler_self_stamp" 1 "git pull failed"
                         return 1
                     }
                     log_debug "update_self: pull succeeded — writing stamp"
-                    _update_core_write_timestamp "$_dotfiler_self_stamp"
+                    _update_core_write_timestamp "$_dotfiler_self_stamp" 0 ""
                 fi
             else
                 verbose "update_self: scripts already up to date"
-                (( _dry_run )) || _update_core_write_timestamp "$_dotfiler_self_stamp"
+                (( _dry_run )) || _update_core_write_timestamp "$_dotfiler_self_stamp" 0 ""
             fi
             ;;
 
@@ -254,6 +255,7 @@ function _update_dotfiler_pull() {
                 git -C "$_parent" submodule update --remote -- "$_rel" || {
                     (( _stashed )) && _update_core_pop_stash "$_parent" "update_self submodule"
                     error "update_self: submodule update failed."
+                    _update_core_write_timestamp "$_dotfiler_self_stamp" 1 "submodule update failed"
                     return 1
                 }
                 (( _stashed )) && _update_core_pop_stash "$_parent" "update_self submodule"
@@ -263,7 +265,7 @@ function _update_dotfiler_pull() {
                     "dotfiler: update scripts submodule" \
                     "$_mode"
                 log_debug "update_self: submodule pull succeeded — writing stamp"
-                _update_core_write_timestamp "$_dotfiler_self_stamp"
+                _update_core_write_timestamp "$_dotfiler_self_stamp" 0 ""
             fi
             ;;
 
@@ -318,12 +320,14 @@ function _update_dotfiler_pull() {
                         "dotfiler: update scripts subtree" \
                         "$_mode"
                     log_debug "update_self: subtree pull succeeded — writing stamp"
+                    _update_core_write_timestamp "$_dotfiler_self_stamp" 0 ""
                     (( _stashed )) && _update_core_pop_stash "$_parent" "update_self subtree"
                 else
                     (( _stashed )) && _update_core_pop_stash "$_parent" "update_self subtree"
                     error "update_self: subtree pull failed."
+                    _update_core_write_timestamp "$_dotfiler_self_stamp" $_subtree_rc "subtree pull failed"
+                    return 1
                 fi
-                _update_core_write_timestamp "$_dotfiler_self_stamp"
             fi
             ;;
 
@@ -333,6 +337,7 @@ function _update_dotfiler_pull() {
             verbose "update_self: pull: topology=${_dotfiler_topology} — nothing to do"
             ;;
     esac
+    (( _dotfiler_update_avail == 0 )) && (( ! _dry_run )) && info "dotfiler: updated"
     verbose "update_self: pull done"
 }
 
@@ -550,9 +555,10 @@ function _update_main_pull(){
     verbose "update: main pull: git pull --autostash ${_update_default_remote} ${_update_default_branch}"
     git -C "$dotfiles_dir" pull -q --autostash \
         "$_update_default_remote" "$_update_default_branch" || {
-        warn "Update failed"
+        warn "dotfiles: pull failed"
         return 1
     }
+    info "dotfiles: updated"
     verbose "update: main pull: done"
     return 0
 }
@@ -647,7 +653,7 @@ function _update_phase_pull(){
         verbose "update: phase pull: ${_name} -> ${_fn}"
         info "${_display}: pulling..."
         "$_fn" || {
-            warn "update: pull failed for '${_name}'"
+            warn "${_display}: pull failed"
             return 1
         }
     done
@@ -677,7 +683,10 @@ function _update_phase_unpack(){
         local _display="${_name:#main}"; _display="${_display:-dotfiles}"
         verbose "update: phase unpack: ${_name} -> ${_fn}"
         info "${_display}: unpacking..."
-        "$_fn" || warn "update: unpack failed for '${_name}'"
+        "$_fn" || {
+            warn "${_display}: unpack failed"
+            return 1
+        }
     done
     verbose "update: phase unpack: done"
     return 0
