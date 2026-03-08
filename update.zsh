@@ -443,7 +443,7 @@ function _update_phase_plan(){
     # link_dest for the main repo is always $HOME — dotfiles symlinks live there.
     _dotfiler_plan_main_repo_dir="$dotfiles_dir"
     _dotfiler_plan_main_link_dest="$HOME"
-    _update_register_hook dotfiles \
+    _update_register_hook main \
         '' \
         '' \
         '_update_main_pull' \
@@ -494,7 +494,7 @@ ${#_dotfiler_plan_main_to_remove[@]} to remove"
     # ── Call each hook's plan_fn in-process ──────────────────────────────
     local _name _fn
     for _name in "${_dotfiler_registered_hooks[@]}"; do
-        [[ "$_name" == dotfiles ]] && continue
+        [[ "$_name" == main ]] && continue
         _fn="${_dotfiler_hook_plan_fn[$_name]:-}"
         [[ -z "$_fn" ]] && continue
 
@@ -520,15 +520,16 @@ ${#_dotfiler_plan_main_to_remove[@]} to remove"
 
         verbose "update: phase plan: calling plan_fn for ${_name}"
         "$_fn"
-        # Report per-component result after plan_fn populates its arrays
+        # Report per-component result — map internal 'main' to display name 'dotfiles'
+        local _display="${_name:#main}"; _display="${_display:-dotfiles}"
         local _plan_u="_dotfiler_plan_${_name}_to_unpack"
         local _plan_r="_dotfiler_plan_${_name}_to_remove"
         local _nu=$(( ${(P)+_plan_u} ? ${#${(P)_plan_u}[@]} : 0 ))
         local _nr=$(( ${(P)+_plan_r} ? ${#${(P)_plan_r}[@]} : 0 ))
         if (( _nu > 0 || _nr > 0 )); then
-            info "${_name}: ${_nu} to update, ${_nr} to remove"
+            info "${_display}: ${_nu} to update, ${_nr} to remove"
         else
-            info "${_name}: up to date"
+            info "${_display}: up to date"
         fi
     done
 
@@ -647,8 +648,9 @@ function _update_phase_pull(){
             verbose "update: phase pull: skipping ${_name} (nothing planned)"
             continue
         fi
+        local _display="${_name:#main}"; _display="${_display:-dotfiles}"
         verbose "update: phase pull: ${_name} -> ${_fn}"
-        info "${_name}: pulling..."
+        info "${_display}: pulling..."
         "$_fn" || {
             warn "update: pull failed for '${_name}'"
             return 1
@@ -677,8 +679,9 @@ function _update_phase_unpack(){
             verbose "update: phase unpack: skipping ${_name} (nothing planned)"
             continue
         fi
+        local _display="${_name:#main}"; _display="${_display:-dotfiles}"
         verbose "update: phase unpack: ${_name} -> ${_fn}"
-        info "${_name}: unpacking..."
+        info "${_display}: unpacking..."
         "$_fn" || warn "update: unpack failed for '${_name}'"
     done
     verbose "update: phase unpack: done"
