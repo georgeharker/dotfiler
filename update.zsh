@@ -640,14 +640,17 @@ function _update_phase_pull(){
     for _name in "${_dotfiler_registered_hooks[@]}"; do
         _fn="${_dotfiler_hook_pull_fn[$_name]:-}"
         [[ -z "$_fn" ]] && continue
-        # Skip if plan found nothing to do for this component
-        local _plan_u="_dotfiler_plan_${_name}_to_unpack"
-        local _plan_r="_dotfiler_plan_${_name}_to_remove"
-        local _nu=${#${(P)_plan_u}[@]}
-        local _nr=${#${(P)_plan_r}[@]}
-        if (( ! _force && _nu == 0 && _nr == 0 )); then
-            verbose "update: phase pull: skipping ${_name} (nothing planned)"
-            continue
+        # Skip if plan found nothing to do for this component.
+        # For component hooks: the range is the authoritative signal — file
+        # lists can be empty if commits only touch files outside the link tree,
+        # but the pull still needs to happen to advance HEAD.
+        # For the main repo: _update_main_pull carries its own guard.
+        if [[ "$_name" != main ]]; then
+            local _plan_range="_dotfiler_plan_${_name}_range"
+            if (( ! _force )) && [[ -z "${(P)_plan_range}" ]]; then
+                verbose "update: phase pull: skipping ${_name} (nothing planned)"
+                continue
+            fi
         fi
         local _display="${_name:#main}"; _display="${_display:-dotfiles}"
         verbose "update: phase pull: ${_name} -> ${_fn}"
