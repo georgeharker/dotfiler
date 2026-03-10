@@ -417,7 +417,7 @@ _update_core_resolve_remote_sha() {
     if [[ -n "$_repo" ]]; then
         local _api_url="https://api.github.com/repos/${_repo}/commits/${_branch}"
         local _curl_auth=() _wget_auth=()
-        if [[ -n "$GH_TOKEN" ]]; then
+        if [[ -n "${GH_TOKEN:-}" ]]; then
             _curl_auth=(-H "Authorization: Bearer ${GH_TOKEN}")
             _wget_auth=(--header="Authorization: Bearer ${GH_TOKEN}")
         fi
@@ -707,9 +707,21 @@ _update_core_is_available() {
             else
                 exit 1
             fi
-        ) || return 1   # API failure → skip (conservative)
+        ) || {
+            # API unavailable (no curl/wget, network error, or rate-limited
+            # without a token) — fall back to standard git fetch path.
+            log_debug "update_core: GitHub API unavailable, falling back to git fetch"
+            _update_core_is_available_fetch "$_repo_dir" "$_allow_diverged"
+            return $?
+        }
 
-        [[ -z "$_remote_head" ]] && return 1   # empty response → skip
+        if [[ -z "$_remote_head" ]]; then
+            # Empty response (unauthenticated rate limit returns 403, but just
+            # in case we get an empty 200) — fall back to git fetch.
+            log_debug "update_core: GitHub API returned empty response, falling back to git fetch"
+            _update_core_is_available_fetch "$_repo_dir" "$_allow_diverged"
+            return $?
+        fi
 
         log_debug "update_core: local=${_local_head:0:8} remote(API)=${_remote_head:0:8}"
 
@@ -895,21 +907,38 @@ _update_core_is_available_subtree() {
 # The arrays must be declared (typeset -aU) by the caller before this call.
 # Callers should copy them out immediately; they are overwritten on each call.
 _update_core_build_file_lists() {
+    setopt local_options extended_glob no_unset
     local _repo_dir=$1 _diff_range=$2
-    local _git_commits _line _hash _message _git_log
+    local _line _hash _message _git_log
     local _update_type _file_refs
 
     _update_core_files_to_unpack=()
     _update_core_files_to_remove=()
 
-    _git_commits=$(git -C "$_repo_dir" log --reverse -m \
+    # Fetch hash, subject, and full body in one git call to avoid a separate
+    # subprocess per commit just for subtree-squash detection.
+    # Use NUL (%x00) as a record terminator after the body; split on NUL below.
+    # Format per commit: <hash> TAB <subject> NL <body> NUL
+    local _all_commits
+    _all_commits=$(git -C "$_repo_dir" log --reverse -m \
         --diff-filter=ADMRC --no-decorate \
-        --pretty=format:"%H%x09%s" \
+        --pretty=tformat:"%H%x09%s%n%B%x00" \
         "${_diff_range}" 2>/dev/null)
 
-    for _line in ${(f)_git_commits}; do
-        _hash=${_line%%$'\t'*}
-        _message=${_line#*$'\t'}
+    # Split on NUL to get one record per commit.
+    # Each record is: "<hash>\t<subject>\n<body lines...>"
+    local _record _body _first_line
+    for _record in "${(@ps:\x00:)_all_commits}"; do
+        # Strip leading newlines (artefact of the NUL split).
+        _record=${_record##$'\n'#}
+        [[ -n "$_record" ]] || continue
+
+        _first_line=${_record%%$'\n'*}
+        _hash=${_first_line%%$'\t'*}
+        _message=${_first_line#*$'\t'}
+        _body=${_record#*$'\n'}
+
+        [[ -n "$_hash" ]] || continue
         log_debug "update_core: commit ${_hash[1,12]}: ${_message}"
 
         # Skip squashed subtree commits. git-subtree pull/add grafts a squash
@@ -921,10 +950,8 @@ _update_core_build_file_lists() {
         # Squash commits are identified by both git-subtree-dir: and
         # git-subtree-split: trailers in the commit body (always present
         # together when using git subtree pull --squash).
-        local _commit_body
-        _commit_body=$(git -C "$_repo_dir" log -1 --format="%B" "$_hash" 2>/dev/null)
-        if [[ "$_commit_body" == *$'\n''git-subtree-dir: '* && \
-              "$_commit_body" == *$'\n''git-subtree-split: '* ]]; then
+        if [[ "$_body" == *$'\n''git-subtree-dir: '* && \
+              "$_body" == *$'\n''git-subtree-split: '* ]]; then
             log_debug "  skipping squashed subtree commit"
             continue
         fi
