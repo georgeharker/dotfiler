@@ -438,53 +438,58 @@ function _update_phase_plan(){
     [[ "${1:-}" == --phase=* ]] && { _phase="${1#--phase=}"; shift; }
 
     # ── Main repo range computation ──────────────────────────────────────
-    if [[ ${#commit_hash[@]} -gt 0 ]]; then
-        local _target="${commit_hash[1]}"
-        local _parent
-        _parent=$(git -C "$dotfiles_dir" rev-parse "${_target}^" 2>/dev/null) || {
-            warn "Cannot resolve parent of ${_target}"; return 1
-        }
-        _update_diff_range="${_parent}..${_target}"
-        info "Using commit hash mode: ${_update_diff_range}"
+    # Phase dotfiles only. In Phase 2, main is already registered and its
+    # range already computed; components self-direct independently.
+    if [[ "$_phase" == dotfiles ]]; then
+        if [[ ${#commit_hash[@]} -gt 0 ]]; then
+            local _target="${commit_hash[1]}"
+            local _parent
+            _parent=$(git -C "$dotfiles_dir" rev-parse "${_target}^" 2>/dev/null) || {
+                warn "Cannot resolve parent of ${_target}"; return 1
+            }
+            _update_diff_range="${_parent}..${_target}"
+            info "Using commit hash mode: ${_update_diff_range}"
 
-    elif [[ ${#range[@]} -gt 0 ]]; then
-        _update_diff_range="${range[1]}"
-        info "Using range mode: ${_update_diff_range}"
+        elif [[ ${#range[@]} -gt 0 ]]; then
+            _update_diff_range="${range[1]}"
+            info "Using range mode: ${_update_diff_range}"
 
-    else
-        _update_default_remote=$(_update_core_get_default_remote "$dotfiles_dir")
-        _update_default_branch=$(_update_core_get_default_branch \
-            "$dotfiles_dir" "$_update_default_remote")
-        git -C "$dotfiles_dir" fetch -q \
-            "$_update_default_remote" "$_update_default_branch"
-        _update_diff_range="HEAD..${_update_default_remote}/${_update_default_branch}"
-        verbose "update: Using ${_update_default_remote}/${_update_default_branch} mode: ${_update_diff_range}"
-    fi
+        else
+            _update_default_remote=$(_update_core_get_default_remote "$dotfiles_dir")
+            _update_default_branch=$(_update_core_get_default_branch \
+                "$dotfiles_dir" "$_update_default_remote")
+            git -C "$dotfiles_dir" fetch -q \
+                "$_update_default_remote" "$_update_default_branch"
+            _update_diff_range="HEAD..${_update_default_remote}/${_update_default_branch}"
+            verbose "update: Using ${_update_default_remote}/${_update_default_branch} mode: ${_update_diff_range}"
+        fi
 
-    # ── Main repo file lists ──────────────────────────────────────────────
-    typeset -gaU _update_core_files_to_unpack _update_core_files_to_remove
-    _update_core_build_file_lists "$dotfiles_dir" "$_update_diff_range"
-    _dotfiler_plan_main_to_unpack=("${_update_core_files_to_unpack[@]}")
-    _dotfiler_plan_main_to_remove=("${_update_core_files_to_remove[@]}")
+        # ── Main repo file lists ──────────────────────────────────────────
+        typeset -gaU _update_core_files_to_unpack _update_core_files_to_remove
+        _update_core_build_file_lists "$dotfiles_dir" "$_update_diff_range"
+        _dotfiler_plan_main_to_unpack=("${_update_core_files_to_unpack[@]}")
+        _dotfiler_plan_main_to_remove=("${_update_core_files_to_remove[@]}")
 
-    # Register main repo with its phase functions.
-    # link_dest for the main repo is always $HOME — dotfiles symlinks live there.
-    _dotfiler_plan_main_repo_dir="$dotfiles_dir"
-    _dotfiler_plan_main_link_dest="$HOME"
-    _update_register_hook main \
-        '' \
-        '' \
-        '_update_main_pull' \
-        '_update_main_unpack' \
-        '_update_main_post'
+        # Register main hook once — idempotent by design (only runs in Phase 1).
+        _dotfiler_plan_main_repo_dir="$dotfiles_dir"
+        _dotfiler_plan_main_link_dest="$HOME"
+        _update_register_hook main \
+            '' \
+            '' \
+            '_update_main_pull' \
+            '_update_main_unpack' \
+            '_update_main_post'
 
-    verbose "update: phase plan: main repo" \
-        "${#_dotfiler_plan_main_to_unpack[@]} to unpack" \
-        "${#_dotfiler_plan_main_to_remove[@]} to remove"
-    if (( ${#_dotfiler_plan_main_to_unpack[@]} > 0 || ${#_dotfiler_plan_main_to_remove[@]} > 0 )); then
-        info "dotfiles: ${#_dotfiler_plan_main_to_unpack[@]} to update, ${#_dotfiler_plan_main_to_remove[@]} to remove"
-    else
-        info "dotfiles: up to date"
+        verbose "update: phase plan: main repo" \
+            "${#_dotfiler_plan_main_to_unpack[@]} to unpack" \
+            "${#_dotfiler_plan_main_to_remove[@]} to remove"
+        if (( ${#_dotfiler_plan_main_to_unpack[@]} > 0 \
+            || ${#_dotfiler_plan_main_to_remove[@]} > 0 )); then
+            info "dotfiles: ${#_dotfiler_plan_main_to_unpack[@]} to update," \
+                "${#_dotfiler_plan_main_to_remove[@]} to remove"
+        else
+            info "dotfiles: up to date"
+        fi
     fi
 
     # ── Component hooks ───────────────────────────────────────────────────
@@ -492,14 +497,12 @@ function _update_phase_plan(){
     # git history at old_sha..new_sha via marker files / submodule pointers,
     # set _dotfiler_hint_range_<name>, then call plan_fn --phase=dotfiles.
     # Hook uses the hint to pin the target SHA to exactly what dotfiles records.
-    # If dotfiles did not move (old==new), there is no Phase 1 work for any
-    # component — skip the loop entirely; Phase 2 handles self-directed checks.
-    # If resolution fails (no marker yet / first run / SHA unchanged), warn and
-    # skip that component for Phase 1 — Phase 2 will self-direct.
+    # If dotfiles did not move (old==new), there is no Phase 1 hint to resolve —
+    # plan_fn still runs but will find an empty range and no-op cleanly.
+    # If resolution fails (no marker yet / first run / SHA unchanged), plan_fn
+    # runs with no hint and no-ops cleanly; Phase 2 will self-direct.
     # Phase components: hooks already sourced and registered; each plan_fn
     # fetches its own remote and computes its own tip range.
-    local _old_sha="${_update_diff_range%%..*}"
-    local _new_sha="${_update_diff_range#*..}"
 
     local _hooks_dir
     zstyle -s ':dotfiler:hooks' dir _hooks_dir \
@@ -508,7 +511,11 @@ function _update_phase_plan(){
 
     # ── Source each hook — each calls _update_register_hook ──────────────
     # Skipped in Phase 2 — hooks are already registered and fns defined.
+    # _old_sha/_new_sha only meaningful in Phase 1 — scoped here accordingly.
+    local _old_sha="" _new_sha=""
     if [[ "$_phase" == dotfiles ]]; then
+        _old_sha="${_update_diff_range%%..*}"
+        _new_sha="${_update_diff_range#*..}"
         local _hook
         for _hook in "$_hooks_dir"/*.zsh(N); do
             [[ -f "$_hook" ]] || continue
@@ -704,7 +711,7 @@ function _update_phase_pull(){
         [[ -z "$_fn" ]] && continue
         if [[ "$_name" != main ]]; then
             local _plan_range="_dotfiler_plan_${_name}_range"
-            if (( ! _force )) && [[ -z "${(P)_plan_range}" ]]; then
+            if (( ! _force )) && [[ -z "${(P)_plan_range:-}" ]]; then
                 verbose "update: phase pull: skipping ${_name} (nothing planned)"
                 continue
             fi
@@ -731,8 +738,8 @@ function _update_phase_unpack(){
         # Skip if plan found nothing to do for this component
         local _plan_u="_dotfiler_plan_${_name}_to_unpack"
         local _plan_r="_dotfiler_plan_${_name}_to_remove"
-        local _nu=${#${(P)_plan_u}[@]}
-        local _nr=${#${(P)_plan_r}[@]}
+        local _nu=${#${(P)_plan_u}[@]:-0}
+        local _nr=${#${(P)_plan_r}[@]:-0}
         if (( ! _force && _nu == 0 && _nr == 0 )); then
             verbose "update: phase unpack: skipping ${_name} (nothing planned)"
             continue
