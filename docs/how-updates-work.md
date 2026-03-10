@@ -42,15 +42,32 @@ zstyle ':dotfiler:update' frequency 86400  # seconds; once per day
 
 ---
 
-## The Four Update Phases
+## Two Rounds of Four Phases
 
-When an update is applied, it runs through four phases in strict order:
+An update runs in two rounds, each consisting of four phases in strict order.
+All plan state is reset between rounds so that no variables set in Round 1 can
+influence Round 2.
+
+**Round 1 — dotfiles-driven:** the main dotfiles repo is the authority.
+Component hints (e.g. which zdot commit dotfiles now records) are resolved from
+the incoming dotfiles commit range and handed to each hook's plan function.
+
+**Round 2 — self-directed:** each component checks its own remote for updates
+that are not yet reflected in dotfiles (e.g. zdot commits that were pushed since
+the last dotfiles submodule pin bump).
 
 ### 1. Plan
 
 Fetches remote state, computes the commit range that will be applied, and builds
 the list of files to unpack and remove. No changes are made to disk at this
 point. This phase is safe to run in dry-run mode (`dotfiler update --dry-run`).
+
+**Hint resolution (Round 1 only):** when dotfiles has incoming commits, dotfiler
+reads the old and new submodule/marker pointer for each registered hook from
+the dotfiles commit range. This is only performed when `_new_sha` is strictly
+ahead of `_old_sha` — verified with `git merge-base --is-ancestor`. If dotfiles
+is up to date, ahead of remote, or diverged, no hints are set and components are
+left to Round 2 for self-directed checks.
 
 File discovery uses two independent find passes:
 
@@ -71,6 +88,14 @@ deep pass. Files under `.nounpack/` are never included at any depth.
 All git operations: fetch and merge/rebase each registered repository. The main
 dotfiles repo is pulled first, then each hook's repo in registration order.
 **No unpacking happens until every repo has been pulled to its new HEAD.**
+
+A pull is skipped for a component when:
+- its plan range is empty (nothing to do), or
+- its current HEAD already matches the target SHA recorded in dotfiles
+  (e.g. it was already advanced by the shell-hook before `dotfiler update` ran)
+
+Each hook is responsible for emitting its own `pulling...` and `up to date`
+messages from inside its pull function. The framework does not emit these.**
 
 ### 3. Unpack
 

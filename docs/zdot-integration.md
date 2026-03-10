@@ -56,15 +56,34 @@ interactive shell login (rate-limited by a timestamp file). It also installs the
 
 ### Lifecycle for a zdot Update
 
-1. Shell starts, zdot's `update.zsh` fires its startup hook
-2. Frequency check: if updated recently, skip
-3. dotfiler checks for updates to the main dotfiles repo and to zdot
-4. If updates are available, applies them in the correct phase order:
+The update runs in two rounds:
+
+**Round 1 — dotfiles-driven.** dotfiler reads the dotfiles commit range
+(`HEAD..origin/main`) and extracts the old and new zdot submodule pointer.
+This hint is only resolved when `origin/main` is strictly ahead of `HEAD`
+(verified with `git merge-base --is-ancestor`). If dotfiles is up to date,
+ahead of remote, or diverged, no hint is set and zdot is left entirely to
+Round 2. When a hint is set, zdot's plan computes the file list for that range
+and pull advances zdot to the new submodule pointer — but only if zdot is not
+already at that commit.
+
+**Round 2 — self-directed.** zdot checks its own remote for commits that
+postdate the current dotfiles submodule pin. The framework emits
+`Checking for component updates beyond dotfiles...`, then zdot's plan emits
+`Checking zdot...` and either `zdot: up to date` or proceeds to pull.
 
 ```
-PULL:    main dotfiles repo  →  zdot repo
-UNPACK:  main dotfiles       →  zdot
-POST:    commit submodule pin in parent repo (if applicable)
+ROUND 1:
+  PLAN:    dotfiles range computed  →  zdot hint resolved (if incoming commits)
+  PULL:    main dotfiles repo       →  zdot (if hint set and not already at target)
+  UNPACK:  main dotfiles            →  zdot
+  POST:    commit submodule pin in parent repo (if applicable)
+
+ROUND 2:
+  PLAN:    zdot checks own remote   →  Checking zdot...
+  PULL:    zdot (if behind remote)
+  UNPACK:  zdot (if files changed)
+  POST:    (none)
 ```
 
 Pulling the main dotfiles repo first ensures that any new version of zdot's own

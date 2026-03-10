@@ -12,6 +12,18 @@ reference implementation.
 
 ## Hook Lifecycle
 
+dotfiler runs two rounds of update per `dotfiler update` invocation. All plan
+state (`_dotfiler_plan_*` and `_dotfiler_hint_range_*` variables) is fully reset
+between rounds so no Round 1 state bleeds into Round 2.
+
+**Round 1 (dotfiles-driven):** the framework resolves a hint range for each
+registered hook from the incoming dotfiles commit range, then invokes each hook's
+plan/pull/unpack/post with `--phase=dotfiles`.
+
+**Round 2 (self-directed):** each hook checks its own remote independently,
+invoked with `--phase=components`. The framework emits `Checking for component
+updates beyond dotfiles...` at the start of this round.
+
 When dotfiler runs an update check or applies an update, it invokes each
 registered hook through five phases:
 
@@ -25,6 +37,19 @@ registered hook through five phases:
 
 Not all phases need to be implemented. Pass empty strings for phases you don't
 need.
+
+### Messaging Ownership
+
+In Round 1 (`--phase=dotfiles`), the framework emits the per-hook status line
+(`up to date` or file counts) after calling the plan function — hooks do not
+need to emit this themselves.
+
+In Round 2 (`--phase=components`), **hooks own all their own messaging**. The
+framework is silent. A hook should emit a `Checking <name>...` line at the start
+of its plan function, and `<name>: up to date` or `<name>: pulling...` /
+`<name>: updated` from its pull function.
+
+The framework never emits `pulling...` — that is always the hook's responsibility.
 
 ### Phase Ordering
 
