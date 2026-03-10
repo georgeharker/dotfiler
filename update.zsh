@@ -533,36 +533,47 @@ function _update_phase_plan(){
         local _comp_dir="${_dotfiler_hook_component_dir[$_name]:-}"
         local _topology="${_dotfiler_hook_topology[$_name]:-}"
 
+        # Pre-declare plan arrays (belt and braces — hook plan_fn also declares
+        # them, but guard here so report block is safe if plan_fn exits early).
+        typeset -gaU "_dotfiler_plan_${_name}_to_unpack" \
+                     "_dotfiler_plan_${_name}_to_remove"
+
         if [[ "$_phase" == components ]]; then
             # Phase components: self-directed. No hint, no dotfiles reference.
             # Each hook's plan_fn uses _update_core_component_tip_range internally.
             verbose "update: phase 2 plan: calling plan_fn for ${_name} (self-directed)"
             "$_fn" --phase=components
         else
-            # Phase dotfiles: resolve component range from dotfiles marker files /
-            # submodule pointers at old_sha..new_sha. If dotfiles did not move,
-            # there is no Phase 1 work — skip. Phase 2 will self-direct.
-            if [[ "$_old_sha" == "$_new_sha" ]]; then
-                verbose "update: phase 1 plan: skipping ${_name} (dotfiles did not move)"
-                continue
-            fi
+            # Phase dotfiles: attempt to resolve the component's range from
+            # dotfiles git history at old_sha..new_sha via marker files /
+            # submodule pointers. Always call plan_fn — it is null-range aware
+            # and will no-op cleanly if there is nothing to do.
+            #
+            # Resolution outcomes:
+            #   hint set   — dotfiles moved and recorded a new component SHA;
+            #                plan_fn pins to exactly what dotfiles records
+            #   no hint    — dotfiles didn't move, marker missing, or SHA
+            #                unchanged; plan_fn runs with --phase=dotfiles and
+            #                no hint, setting an empty range (nothing to do in
+            #                Phase 1; Phase 2 will self-direct to tip)
             if [[ -z "$_comp_dir" || -z "$_topology" ]]; then
-                warn "update: hook '${_name}' did not register component_dir/topology — cannot resolve range hint; skipping"
-                continue
-            fi
-            _update_core_resolve_component_range \
-                "$dotfiles_dir" "$_old_sha" "$_new_sha" \
-                "$_comp_dir" "$_topology"
-            if [[ -n "$REPLY" ]]; then
-                verbose "update: resolved ${_name} range from dotfiles: ${REPLY}"
-                typeset -g "_dotfiler_hint_range_${_name}=${REPLY}"
-                verbose "update: phase 1 plan: calling plan_fn for ${_name} (--phase=dotfiles)"
-                "$_fn" --phase=dotfiles
+                warn "update: hook '${_name}' did not register component_dir/topology — cannot resolve range hint"
+            elif [[ "$_old_sha" != "$_new_sha" ]]; then
+                _update_core_resolve_component_range \
+                    "$dotfiles_dir" "$_old_sha" "$_new_sha" \
+                    "$_comp_dir" "$_topology"
+                if [[ -n "$REPLY" ]]; then
+                    verbose "update: resolved ${_name} range from dotfiles: ${REPLY}"
+                    typeset -g "_dotfiler_hint_range_${_name}=${REPLY}"
+                else
+                    verbose "update: ${_name}: dotfiles moved but component SHA unchanged"
+                fi
             else
-                # Resolution failed — marker missing or SHA unchanged in dotfiles.
-                # No Phase 1 work for this component; Phase 2 will self-direct.
-                verbose "update: phase 1 plan: skipping ${_name} (cannot resolve range from dotfiles)"
+                verbose "update: ${_name}: dotfiles did not move — no Phase 1 hint"
             fi
+
+            verbose "update: phase 1 plan: calling plan_fn for ${_name} (--phase=dotfiles)"
+            "$_fn" --phase=dotfiles
         fi
 
         # Report per-component result
