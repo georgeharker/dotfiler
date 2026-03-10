@@ -1085,6 +1085,23 @@ _update_core_resolve_component_range() {
 
     [[ -z "$_old_comp" || -z "$_new_comp" ]] && return 1
     [[ "$_old_comp" == "$_new_comp" ]] && return 1
+
+    # If the component is already at the new target (advanced independently,
+    # e.g. via shell-hook or manual pull), there is nothing to pull.
+    # Check the component's current position against _new_comp so the hint
+    # is never set and hooks need no per-topology guard of their own.
+    local _current_comp
+    case "$_topology" in
+        subtree)
+            _update_core_read_sha_marker "$_comp_dir" 2>/dev/null
+            _current_comp="$REPLY"
+            ;;
+        submodule|standalone|*)
+            _current_comp=$(git -C "$_comp_dir" rev-parse HEAD 2>/dev/null)
+            ;;
+    esac
+    [[ -n "$_current_comp" && "$_current_comp" == "$_new_comp" ]] && return 1
+
     REPLY="${_old_comp}..${_new_comp}"
     return 0
 }
