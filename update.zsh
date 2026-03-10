@@ -629,9 +629,19 @@ function _update_main_pull(){
 }
 
 function _update_main_unpack(){
-    local _link_dest="$_dotfiler_plan_main_link_dest"
     local -a _to_remove=("${_dotfiler_plan_main_to_remove[@]}")
     local -a _to_unpack=("${_dotfiler_plan_main_to_unpack[@]}")
+
+    # Nothing planned — guard against missing scalar plan vars.
+    if [[ ${#_to_remove[@]} -eq 0 && ${#_to_unpack[@]} -eq 0 ]]; then
+        return 0
+    fi
+
+    local _link_dest="${_dotfiler_plan_main_link_dest:-}"
+    if [[ -z "$_link_dest" ]]; then
+        warn "_update_main_unpack: link_dest not set, skipping"
+        return 0
+    fi
 
     if [[ ${#_to_remove[@]} -gt 0 ]]; then
         action "Removing files"
@@ -738,8 +748,8 @@ function _update_phase_unpack(){
         # Skip if plan found nothing to do for this component
         local _plan_u="_dotfiler_plan_${_name}_to_unpack"
         local _plan_r="_dotfiler_plan_${_name}_to_remove"
-        local _nu=${#${(P)_plan_u}[@]:-0}
-        local _nr=${#${(P)_plan_r}[@]:-0}
+        local _nu=${#${(P)_plan_u}[@]}
+        local _nr=${#${(P)_plan_r}[@]}
         if (( ! _force && _nu == 0 && _nr == 0 )); then
             verbose "update: phase unpack: skipping ${_name} (nothing planned)"
             continue
