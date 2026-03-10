@@ -565,7 +565,13 @@ function _update_phase_plan(){
             #                Phase 1; Phase 2 will self-direct to tip)
             if [[ -z "$_comp_dir" || -z "$_topology" ]]; then
                 warn "update: hook '${_name}' did not register component_dir/topology — cannot resolve range hint"
-            elif [[ "$_old_sha" != "$_new_sha" ]]; then
+            elif [[ "$_old_sha" != "$_new_sha" ]] \
+                && git -C "$dotfiles_dir" merge-base --is-ancestor \
+                       "$_old_sha" "$_new_sha" 2>/dev/null; then
+                # Only resolve when _new_sha is strictly ahead of _old_sha —
+                # i.e. there are genuine incoming commits. If dotfiles is ahead
+                # of remote (or diverged), the range is empty/inverted and
+                # component hints would point backwards to older SHAs.
                 _update_core_resolve_component_range \
                     "$dotfiles_dir" "$_old_sha" "$_new_sha" \
                     "$_comp_dir" "$_topology"
