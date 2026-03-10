@@ -59,6 +59,9 @@ source "${_setup_script_dir}/update_core.zsh"
 _setup_bootstrap_hook() {
     local hook_path="${1:A}"  # resolve to absolute real path
     local force=${2:-0}
+    local hooks_dir="${3:-${XDG_CONFIG_HOME:-$HOME/.config}/dotfiler/hooks}"
+    local in_dotfiles=${4:-0}
+    local dotfiles_dir="${5:-}"
 
     if [[ ! -f "$hook_path" ]]; then
         error "bootstrap-hook: file not found: $hook_path"
@@ -81,7 +84,6 @@ _setup_bootstrap_hook() {
         return 1
     fi
 
-    local hooks_dir="${XDG_CONFIG_HOME:-$HOME/.config}/dotfiler/hooks"
     local dest="${hooks_dir}/${name}.zsh"
 
     # Create hooks dir if missing
@@ -114,6 +116,37 @@ _setup_bootstrap_hook() {
         return 1
     }
     info "bootstrap-hook: installed $name → $hook_path"
+
+    # If writing into the dotfiles repo, offer to commit so it replicates
+    # to other machines on pull.
+    (( in_dotfiles )) || return 0
+
+    local _repo_root="${dotfiles_dir}"
+    local _rel_dest=${dest#${_repo_root}/}
+    local _commit_msg="dotfiler: add ${name} bootstrap hook"
+
+    local _do_commit=0
+    if (( force )); then
+        _do_commit=1
+    else
+        print -n "bootstrap-hook: commit '$_commit_msg' to $(basename $_repo_root)? [y/N] "
+        local _reply
+        read -r _reply
+        [[ "$_reply" == [yY] || "$_reply" == [yY][eE][sS] ]] && _do_commit=1
+    fi
+
+    if (( _do_commit )); then
+        local _stashed=0
+        _update_core_maybe_stash "$_repo_root" "bootstrap-hook commit" || return 0
+        _stashed=$REPLY
+        git -C "$_repo_root" add "$_rel_dest" && \
+            git -C "$_repo_root" commit -m "$_commit_msg" && \
+            info "bootstrap-hook: committed '$_commit_msg'"
+        (( _stashed )) && _update_core_pop_stash "$_repo_root" "bootstrap-hook commit"
+    else
+        info "bootstrap-hook: skipped commit — run 'git add $_rel_dest && git commit' manually"
+    fi
+    return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -128,7 +161,7 @@ _setup_bootstrap_hook() {
 # infrastructure, so hooks that guard on $+functions[...] for update-side
 # functions (as they should) will skip update-only initialisation.
 _setup_discover_hooks() {
-    local hook_dir="${XDG_CONFIG_HOME:-$HOME/.config}/dotfiler/hooks"
+    local hook_dir="${1:-${XDG_CONFIG_HOME:-$HOME/.config}/dotfiler/hooks}"
     [[ -d "$hook_dir" ]] || return 0
 
     local hook_file
@@ -184,7 +217,7 @@ function setup_main() {
     local -a opt_all opt_components opt_list_components opt_bootstrap_hooks
     local -a remaining_args
     local -a passthrough_flags
-    local has_unpack=0 has_force_unpack=0 has_yes=0
+    local has_unpack=0 has_force_unpack=0 has_yes=0 has_bootstrap=0
 
     _update_core_init_registry
 
@@ -209,12 +242,17 @@ function setup_main() {
                 opt_components+=("$2")
                 shift 2
                 ;;
+            --bootstrap)
+                has_bootstrap=1
+                shift
+                ;;
             --bootstrap-hook|-B)
                 if (( $# < 2 )); then
                     error "--bootstrap-hook requires a path to the hook file"
                     return 1
                 fi
                 opt_bootstrap_hooks+=("$2")
+                has_bootstrap=1
                 shift 2
                 ;;
             --list-components)
@@ -251,12 +289,44 @@ function setup_main() {
     set -- "${remaining_args[@]}"
 
     # -----------------------------------------------------------------------
+    # Resolve hooks directory: dotfiles-local in bootstrap mode, XDG otherwise
+    # -----------------------------------------------------------------------
+    # In bootstrap mode the linktree hasn't been set up yet, so we read hooks
+    # directly from the dotfiles repo.  Derive the dotfiles dir from --repo-dir
+    # if passed, otherwise fall back to the first non-flag positional arg, then
+    # cwd — the same precedence setup_core_main uses.
+    local _hooks_dir
+    if (( has_bootstrap )); then
+        local _dotfiles_dir="$PWD"
+        local _a _next=""
+        for _a in "${remaining_args[@]}"; do
+            if [[ -n "$_next" ]]; then
+                _dotfiles_dir="$_a"
+                break
+            elif [[ "$_a" == --repo-dir=* ]]; then
+                _dotfiles_dir="${_a#--repo-dir=}"
+                break
+            elif [[ "$_a" == --repo-dir ]]; then
+                _next=1
+            elif [[ "$_a" != -* ]]; then
+                _dotfiles_dir="$_a"
+                break
+            fi
+        done
+        _dotfiles_dir="${_dotfiles_dir:A}"
+        _hooks_dir="${_dotfiles_dir}/.config/dotfiler/hooks"
+        info "bootstrap: reading hooks from $_hooks_dir"
+    else
+        _hooks_dir="${XDG_CONFIG_HOME:-$HOME/.config}/dotfiler/hooks"
+    fi
+
+    # -----------------------------------------------------------------------
     # --bootstrap-hook: install symlink(s) then continue (or exit)
     # -----------------------------------------------------------------------
     if (( ${#opt_bootstrap_hooks} > 0 )); then
         local bh rc=0
         for bh in "${opt_bootstrap_hooks[@]}"; do
-            _setup_bootstrap_hook "$bh" "$has_yes" || rc=$?
+            _setup_bootstrap_hook "$bh" "$has_yes" "$_hooks_dir" "$has_bootstrap" "${_dotfiles_dir:-}" || rc=$?
         done
         # If no unpack/all/component requested, done here
         if (( ! has_unpack && ! has_force_unpack && ${#opt_all} == 0 && ${#opt_components} == 0 )); then
@@ -269,7 +339,7 @@ function setup_main() {
     # --list-components: discover and print, then exit
     # -----------------------------------------------------------------------
     if (( ${#opt_list_components} > 0 )); then
-        _setup_discover_hooks
+        _setup_discover_hooks "$_hooks_dir"
         _setup_list_components
         return 0
     fi
@@ -322,7 +392,7 @@ function setup_main() {
     # Phase 2: hook components (only when --all or --component)
     # -----------------------------------------------------------------------
     if (( ${#opt_all} > 0 || ${#opt_components} > 0 )); then
-        _setup_discover_hooks
+        _setup_discover_hooks "$_hooks_dir"
 
         if (( ${#opt_all} > 0 )); then
             # --all: iterate every hook that has a setup_fn
