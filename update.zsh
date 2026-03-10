@@ -489,11 +489,15 @@ function _update_phase_plan(){
 
     # ── Component hooks ───────────────────────────────────────────────────
     # Phase dotfiles: resolve each hook's component range from the dotfiles
-    # range via marker files / submodule pointers, set
-    # _dotfiler_hint_range_<name>, then call plan_fn --phase=dotfiles.
+    # git history at old_sha..new_sha via marker files / submodule pointers,
+    # set _dotfiler_hint_range_<name>, then call plan_fn --phase=dotfiles.
     # Hook uses the hint to pin the target SHA to exactly what dotfiles records.
-    # If resolution fails (no marker yet / first run), warn and fall through to
-    # the hook's own self-directed fetch inside plan_fn (no --phase flag).
+    # If dotfiles did not move (old==new), there is no Phase 1 work for any
+    # component — skip the loop entirely; Phase 2 handles self-directed checks.
+    # If resolution fails (no marker yet / first run / SHA unchanged), warn and
+    # skip that component for Phase 1 — Phase 2 will self-direct.
+    # Phase components: hooks already sourced and registered; each plan_fn
+    # fetches its own remote and computes its own tip range.
     local _old_sha="${_update_diff_range%%..*}"
     local _new_sha="${_update_diff_range#*..}"
 
@@ -530,37 +534,34 @@ function _update_phase_plan(){
         local _topology="${_dotfiler_hook_topology[$_name]:-}"
 
         if [[ "$_phase" == components ]]; then
-            # Phase components: self-directed. No hint.
+            # Phase components: self-directed. No hint, no dotfiles reference.
             # Each hook's plan_fn uses _update_core_component_tip_range internally.
             verbose "update: phase 2 plan: calling plan_fn for ${_name} (self-directed)"
             "$_fn" --phase=components
         else
-            # Phase 1: parent-directed. Resolve component range from dotfiles
-            # marker files / submodule pointers at old/new dotfiles SHAs.
-            # If resolution succeeds, set hint and pass --phase=dotfiles.
-            # If resolution fails (first run / no marker yet), fall through to
-            # the hook's own self-directed fetch (without --phase flag).
-            local _plan_phase_arg=""
-            if [[ -n "$_comp_dir" && -n "$_topology" ]]; then
-                _update_core_resolve_component_range \
-                    "$dotfiles_dir" "$_old_sha" "$_new_sha" \
-                    "$_comp_dir" "$_topology"
-                if [[ -n "$REPLY" ]]; then
-                    verbose "update: resolved ${_name} range from dotfiles: ${REPLY}"
-                    typeset -g "_dotfiler_hint_range_${_name}=${REPLY}"
-                    _plan_phase_arg="--phase=dotfiles"
-                else
-                    verbose "update: cannot resolve ${_name} range from dotfiles — hook will self-direct"
-                fi
-            else
-                warn "update: hook '${_name}' did not register component_dir/topology — cannot resolve range hint"
+            # Phase dotfiles: resolve component range from dotfiles marker files /
+            # submodule pointers at old_sha..new_sha. If dotfiles did not move,
+            # there is no Phase 1 work — skip. Phase 2 will self-direct.
+            if [[ "$_old_sha" == "$_new_sha" ]]; then
+                verbose "update: phase 1 plan: skipping ${_name} (dotfiles did not move)"
+                continue
             fi
-
-            verbose "update: phase 1 plan: calling plan_fn for ${_name}${_plan_phase_arg:+ (${_plan_phase_arg})}"
-            if [[ -n "$_plan_phase_arg" ]]; then
-                "$_fn" "$_plan_phase_arg"
+            if [[ -z "$_comp_dir" || -z "$_topology" ]]; then
+                warn "update: hook '${_name}' did not register component_dir/topology — cannot resolve range hint; skipping"
+                continue
+            fi
+            _update_core_resolve_component_range \
+                "$dotfiles_dir" "$_old_sha" "$_new_sha" \
+                "$_comp_dir" "$_topology"
+            if [[ -n "$REPLY" ]]; then
+                verbose "update: resolved ${_name} range from dotfiles: ${REPLY}"
+                typeset -g "_dotfiler_hint_range_${_name}=${REPLY}"
+                verbose "update: phase 1 plan: calling plan_fn for ${_name} (--phase=dotfiles)"
+                "$_fn" --phase=dotfiles
             else
-                "$_fn"
+                # Resolution failed — marker missing or SHA unchanged in dotfiles.
+                # No Phase 1 work for this component; Phase 2 will self-direct.
+                verbose "update: phase 1 plan: skipping ${_name} (cannot resolve range from dotfiles)"
             fi
         fi
 
