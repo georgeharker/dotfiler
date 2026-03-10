@@ -590,7 +590,7 @@ function _update_phase_plan(){
         local _nu=${#${(P)_plan_u}[@]}
         local _nr=${#${(P)_plan_r}[@]}
         if (( _nu > 0 || _nr > 0 )); then
-            info "${_display}: ${_nu} to update, ${_nr} to remove"
+            info "${_display}: ${_nu} files to update, ${_nr} files to remove"
         else
             info "${_display}: up to date"
         fi
@@ -728,7 +728,6 @@ function _update_phase_pull(){
         fi
         local _display="${_name:#main}"; _display="${_display:-dotfiles}"
         verbose "update: phase pull: ${_name} -> ${_fn} (phase=${_phase})"
-        info "${_display}: pulling..."
         "$_fn" "--phase=${_phase}" || { warn "${_display}: pull failed"; return 1; }
     done
     verbose "update: phase pull: done"
