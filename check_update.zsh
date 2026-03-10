@@ -1,7 +1,7 @@
 #!/bin/zsh
 
 # Capture script name early before functions change context
-script_name="${${(%):-%x}:A}"
+script_name="${${(%):-%x}:a}"
 helper_script_dir="${script_name:h}"
 
 source "${helper_script_dir}/helpers.zsh"

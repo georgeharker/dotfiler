@@ -30,7 +30,7 @@
 # Bootstrap: locate ourselves, source dependencies unconditionally.
 # This file is exec'd (not sourced) so no ambient environment exists.
 # ---------------------------------------------------------------------------
-_setup_script_dir="${0:A:h}"
+_setup_script_dir="${0:a:h}"
 
 source "${_setup_script_dir}/helpers.zsh"  # also sources logging.zsh
 
@@ -297,7 +297,7 @@ function setup_main() {
     # cwd — the same precedence setup_core_main uses.
     local _hooks_dir
     if (( has_bootstrap )); then
-        local _dotfiles_dir="$PWD"
+        local _dotfiles_dir=""
         local _a _next=""
         for _a in "${remaining_args[@]}"; do
             if [[ -n "$_next" ]]; then
@@ -313,6 +313,13 @@ function setup_main() {
                 break
             fi
         done
+        if [[ -z "$_dotfiles_dir" ]]; then
+            _dotfiles_dir=$(find_dotfiles_directory)
+        fi
+        if [[ -z "$_dotfiles_dir" || ! -d "$_dotfiles_dir" ]]; then
+            error "bootstrap: cannot determine dotfiles directory; pass it as an argument"
+            return 1
+        fi
         _dotfiles_dir="${_dotfiles_dir:A}"
         _hooks_dir="${_dotfiles_dir}/.config/dotfiler/hooks"
         info "bootstrap: reading hooks from $_hooks_dir"

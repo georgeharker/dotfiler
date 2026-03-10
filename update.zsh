@@ -38,7 +38,7 @@ setopt PIPE_FAIL NO_UNSET
 # Bootstrap
 # ---------------------------------------------------------------------------
 
-script_name="${${(%):-%x}:A}"
+script_name="${${(%):-%x}:a}"
 helper_script_dir="${script_name:h}"
 
 source "${helper_script_dir}/helpers.zsh"  # also sources logging.zsh

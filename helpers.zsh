@@ -1,14 +1,14 @@
 #!/bin/zsh
 
 # Capture script name early before functions change context
-script_name="${${(%):-%x}:A}"
+script_name="${${(%):-%x}:a}"
 script_dir="${script_name:h}"
 
 source "${script_dir}/logging.zsh"
 
 # Simple script directory finder (no zstyle - used internally to avoid circular deps)
 find_script_directory_simple() {
-    local script_path="${(%):-%x}:A"
+    local script_path="${${(%):-%x}:A}"
     echo "${script_path:h}"
 }
 
@@ -46,38 +46,41 @@ resolve_dotfiles_path() {
 
 find_dotfiles_script_directory() {
     local script_dir
-    
+
     if zstyle -s ':dotfiles:scripts' path script_dir; then
         echo "$(resolve_dotfiles_path "$script_dir")"
         return 0
     fi
-    
-    local script_path="${(%):-%x}:A"
+
+    local script_path="${${(%):-%x}:A}"
     script_dir="${script_path:h}"
     echo "${script_dir}"
     return 0
 }
 
-# Function to find dotfiles directory reliably
+# Find the dotfiles directory. Always uses :A (symlink-following) via
+# find_script_directory_simple so we always resolve back to the real
+# dotfiles location regardless of how the script was invoked.
 find_dotfiles_directory() {
     local dotfiles_dir
-    
+
     # 1. Check zstyle override first (highest priority)
     if zstyle -s ':dotfiles:directory' path dotfiles_dir; then
         echo "${dotfiles_dir:A}"
         return 0
     fi
-    
-    # 2. Get script dir with symlink resolution via :A modifier
-    local script_dir=$(find_script_directory_simple)
-    
+
+    # 2. Get script dir with symlink resolution
+    local script_dir
+    script_dir=$(find_script_directory_simple)
+
     # 3. Try git root detection from script location
     local git_root
     if git_root=$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null); then
         echo "$git_root"
         return 0
     fi
-    
+
     # 4. Ultimate fallback
     echo "${HOME}/.dotfiles"
 }
