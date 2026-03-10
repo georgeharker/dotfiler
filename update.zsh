@@ -583,16 +583,20 @@ function _update_phase_plan(){
             "$_fn" --phase=dotfiles
         fi
 
-        # Report per-component result
+        # Report per-component result. In Phase 2 (components), hooks own their
+        # own messaging (they emit "Checking ...", "up to date", "pulling...", etc.)
+        # so the framework stays silent for non-main hooks.
         local _display="${_name:#main}"; _display="${_display:-dotfiles}"
         local _plan_u="_dotfiler_plan_${_name}_to_unpack"
         local _plan_r="_dotfiler_plan_${_name}_to_remove"
         local _nu=${#${(P)_plan_u}[@]}
         local _nr=${#${(P)_plan_r}[@]}
-        if (( _nu > 0 || _nr > 0 )); then
-            info "${_display}: ${_nu} files to update, ${_nr} files to remove"
-        else
-            info "${_display}: up to date"
+        if [[ "$_phase" == dotfiles ]]; then
+            if (( _nu > 0 || _nr > 0 )); then
+                info "${_display}: ${_nu} files to update, ${_nr} files to remove"
+            else
+                info "${_display}: up to date"
+            fi
         fi
     done
 
@@ -832,13 +836,25 @@ function _update_cleanup() {
 }
 
 # ---------------------------------------------------------------------------
+# _update_plan_reset — clear all inter-phase plan and hint state.
+# Must be called before Phase 1 and between Phase 1 and Phase 2 to ensure
+# no stale vars from a prior run or prior phase influence hook behaviour.
+# ---------------------------------------------------------------------------
+
+function _update_plan_reset() {
+    unset "${(@k)parameters[(I)_dotfiler_plan_*]}" 2>/dev/null
+    unset "${(@k)parameters[(I)_dotfiler_hint_range_*]}" 2>/dev/null
+    typeset -gaU _dotfiler_plan_main_to_unpack _dotfiler_plan_main_to_remove
+}
+
+# ---------------------------------------------------------------------------
 # _update_main
 # ---------------------------------------------------------------------------
 
 function _update_main() {
     _update_parse_args "$@" || exit $?
     _update_core_init_registry
-    typeset -gaU _dotfiler_plan_main_to_unpack _dotfiler_plan_main_to_remove
+    _update_plan_reset
 
     verbose "update: starting (dotfiles_dir=${dotfiles_dir} script_dir=${script_dir})"
     [[ "$_update_range_mode" == true ]] && \
@@ -865,11 +881,8 @@ function _update_main() {
         if [[ "$_update_range_mode" != true ]]; then
             verbose "update: phase 2 (self-directed) begin"
             info "Checking for component updates beyond dotfiles..."
-            # Clear hint ranges so plan_fns self-direct
-            unset "${(@k)parameters[(I)_dotfiler_hint_range_*]}" 2>/dev/null
-            # Clear plan vars so Phase 2 plans from scratch
-            unset "${(@k)parameters[(I)_dotfiler_plan_*]}" 2>/dev/null
-            typeset -gaU _dotfiler_plan_main_to_unpack _dotfiler_plan_main_to_remove
+            # Clear hint ranges and plan vars so Phase 2 plans from scratch.
+            _update_plan_reset
             # --phase=components: hooks already registered in Phase 1, fns already defined
             _update_phase_plan --phase=components || exit $?
             _update_phase_pull || exit $?
