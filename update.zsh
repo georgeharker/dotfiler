@@ -162,6 +162,7 @@ function _update_dotfiler_init() {
 
 function _update_dotfiler_plan() {
     verbose "update_self: plan begin (topology=${_dotfiler_topology})"
+    local _old _new _range
     case $_dotfiler_topology in
         standalone|submodule)
             local _avail
@@ -169,6 +170,15 @@ function _update_dotfiler_plan() {
             _update_core_is_available "$script_dir" && _avail=0 || _avail=$?
             _dotfiler_update_avail=$_avail
             log_debug "update_self: plan: avail=${_avail}"
+            if (( _avail == 0 )); then
+                _update_core_component_tip_range "$script_dir" "$_dotfiler_topology"
+                _range="$REPLY"
+                _update_core_build_file_lists "$script_dir" "$_range"
+                typeset -ga _dotfiler_self_to_unpack _dotfiler_self_to_remove
+                _dotfiler_self_to_unpack=("${_update_core_files_to_unpack[@]}")
+                _dotfiler_self_to_remove=("${_update_core_files_to_remove[@]}")
+                log_debug "update_self: plan: ${#_dotfiler_self_to_unpack} to unpack, ${#_dotfiler_self_to_remove} to remove"
+            fi
             ;;
         subtree)
             local _avail
@@ -178,6 +188,16 @@ function _update_dotfiler_plan() {
                 "$_dotfiler_subtree_url" && _avail=0 || _avail=$?
             _dotfiler_update_avail=$_avail
             log_debug "update_self: plan: avail=${_avail}"
+            if (( _avail == 0 )); then
+                _update_core_component_tip_range "$script_dir" subtree \
+                    "$_dotfiler_subtree_url" "${_dotfiler_subtree_spec#* }"
+                _range="$REPLY"
+                _update_core_build_file_lists "$script_dir" "$_range"
+                typeset -ga _dotfiler_self_to_unpack _dotfiler_self_to_remove
+                _dotfiler_self_to_unpack=("${_update_core_files_to_unpack[@]}")
+                _dotfiler_self_to_remove=("${_update_core_files_to_remove[@]}")
+                log_debug "update_self: plan: ${#_dotfiler_self_to_unpack} to unpack, ${#_dotfiler_self_to_remove} to remove"
+            fi
             ;;
         subdir)
             verbose "update_self: subdir topology — parent repo manages scripts, skipping self-update"
@@ -410,6 +430,12 @@ function _update_safe_rm(){
 
 function _update_phase_plan(){
     verbose "update: phase plan: begin"
+    # --phase=dotfiles : Phase 1 — parent-directed. Source hooks, resolve
+    #                    component ranges from dotfiles git history.
+    # --phase=components : Phase 2 — self-directed. Hooks already sourced;
+    #                    each component fetches own remote and advances to tip.
+    local _phase=dotfiles
+    [[ "${1:-}" == --phase=* ]] && { _phase="${1#--phase=}"; shift; }
 
     # ── Main repo range computation ──────────────────────────────────────
     if [[ ${#commit_hash[@]} -gt 0 ]]; then
@@ -452,27 +478,24 @@ function _update_phase_plan(){
         '_update_main_unpack' \
         '_update_main_post'
 
-    verbose "update: phase plan: main repo — \
-${#_dotfiler_plan_main_to_unpack[@]} to unpack, \
-${#_dotfiler_plan_main_to_remove[@]} to remove"
+    verbose "update: phase plan: main repo" \
+        "${#_dotfiler_plan_main_to_unpack[@]} to unpack" \
+        "${#_dotfiler_plan_main_to_remove[@]} to remove"
     if (( ${#_dotfiler_plan_main_to_unpack[@]} > 0 || ${#_dotfiler_plan_main_to_remove[@]} > 0 )); then
         info "dotfiles: ${#_dotfiler_plan_main_to_unpack[@]} to update, ${#_dotfiler_plan_main_to_remove[@]} to remove"
     else
         info "dotfiles: up to date"
     fi
+
     # ── Component hooks ───────────────────────────────────────────────────
-    # In commit/range mode, resolve each hook's component range from the
-    # dotfiles range via marker files, then set _dotfiler_hint_range_<name>
-    # before calling the plan_fn. Hook uses the hint if set; falls back to
-    # independent fetch if not (e.g. no marker yet on first run).
-    local _range_mode=false
-    local _old_sha="" _new_sha=""
-    if [[ ${#commit_hash[@]} -gt 0 || ${#range[@]} -gt 0 ]]; then
-        _range_mode=true
-        _old_sha="${_update_diff_range%%..*}"
-        _new_sha="${_update_diff_range#*..}"
-        info "update: commit/range mode — hooks will attempt range resolution"
-    fi
+    # Phase dotfiles: resolve each hook's component range from the dotfiles
+    # range via marker files / submodule pointers, set
+    # _dotfiler_hint_range_<name>, then call plan_fn --phase=dotfiles.
+    # Hook uses the hint to pin the target SHA to exactly what dotfiles records.
+    # If resolution fails (no marker yet / first run), warn and fall through to
+    # the hook's own self-directed fetch inside plan_fn (no --phase flag).
+    local _old_sha="${_update_diff_range%%..*}"
+    local _new_sha="${_update_diff_range#*..}"
 
     local _hooks_dir
     zstyle -s ':dotfiler:hooks' dir _hooks_dir \
@@ -480,18 +503,21 @@ ${#_dotfiler_plan_main_to_remove[@]} to remove"
     [[ -d "$_hooks_dir" ]] || return 0
 
     # ── Source each hook — each calls _update_register_hook ──────────────
-    local _hook
-    for _hook in "$_hooks_dir"/*.zsh(N); do
-        [[ -f "$_hook" ]] || continue
-        verbose "update: phase plan: sourcing hook ${_hook:t}"
-        local _before=${#_dotfiler_registered_hooks}
-        source "$_hook"
-        if (( ${#_dotfiler_registered_hooks} == _before )); then
-            verbose "update: hook '${_hook:t}' did not register (up-to-date or n/a)"
-        else
-            verbose "update: hook '${_hook:t}' registered: ${_dotfiler_registered_hooks[-1]}"
-        fi
-    done
+    # Skipped in Phase 2 — hooks are already registered and fns defined.
+    if [[ "$_phase" == dotfiles ]]; then
+        local _hook
+        for _hook in "$_hooks_dir"/*.zsh(N); do
+            [[ -f "$_hook" ]] || continue
+            verbose "update: phase plan: sourcing hook ${_hook:t}"
+            local _before=${#_dotfiler_registered_hooks}
+            source "$_hook"
+            if (( ${#_dotfiler_registered_hooks} == _before )); then
+                verbose "update: hook '${_hook:t}' did not register (up-to-date or n/a)"
+            else
+                verbose "update: hook '${_hook:t}' registered: ${_dotfiler_registered_hooks[-1]}"
+            fi
+        done
+    fi
 
     # ── Call each hook's plan_fn in-process ──────────────────────────────
     local _name _fn
@@ -500,29 +526,45 @@ ${#_dotfiler_plan_main_to_remove[@]} to remove"
         _fn="${_dotfiler_hook_plan_fn[$_name]:-}"
         [[ -z "$_fn" ]] && continue
 
-        # Resolve component range hint from dotfiles range if in range mode.
-        # component_dir and topology are known from registration — no detection needed.
-        if [[ "$_range_mode" == true ]]; then
-            local _comp_dir="${_dotfiler_hook_component_dir[$_name]:-}"
-            local _topology="${_dotfiler_hook_topology[$_name]:-}"
+        local _comp_dir="${_dotfiler_hook_component_dir[$_name]:-}"
+        local _topology="${_dotfiler_hook_topology[$_name]:-}"
+
+        if [[ "$_phase" == components ]]; then
+            # Phase components: self-directed. No hint.
+            # Each hook's plan_fn uses _update_core_component_tip_range internally.
+            verbose "update: phase 2 plan: calling plan_fn for ${_name} (self-directed)"
+            "$_fn" --phase=components
+        else
+            # Phase 1: parent-directed. Resolve component range from dotfiles
+            # marker files / submodule pointers at old/new dotfiles SHAs.
+            # If resolution succeeds, set hint and pass --phase=dotfiles.
+            # If resolution fails (first run / no marker yet), fall through to
+            # the hook's own self-directed fetch (without --phase flag).
+            local _plan_phase_arg=""
             if [[ -n "$_comp_dir" && -n "$_topology" ]]; then
                 _update_core_resolve_component_range \
                     "$dotfiles_dir" "$_old_sha" "$_new_sha" \
                     "$_comp_dir" "$_topology"
                 if [[ -n "$REPLY" ]]; then
-                    verbose "update: resolved ${_name} range: ${REPLY}"
+                    verbose "update: resolved ${_name} range from dotfiles: ${REPLY}"
                     typeset -g "_dotfiler_hint_range_${_name}=${REPLY}"
+                    _plan_phase_arg="--phase=dotfiles"
                 else
-                    warn "update: cannot resolve ${_name} range from dotfiles range — hook will fetch independently"
+                    verbose "update: cannot resolve ${_name} range from dotfiles — hook will self-direct"
                 fi
             else
                 warn "update: hook '${_name}' did not register component_dir/topology — cannot resolve range hint"
             fi
+
+            verbose "update: phase 1 plan: calling plan_fn for ${_name}${_plan_phase_arg:+ (${_plan_phase_arg})}"
+            if [[ -n "$_plan_phase_arg" ]]; then
+                "$_fn" "$_plan_phase_arg"
+            else
+                "$_fn"
+            fi
         fi
 
-        verbose "update: phase plan: calling plan_fn for ${_name}"
-        "$_fn"
-        # Report per-component result — map internal 'main' to display name 'dotfiles'
+        # Report per-component result
         local _display="${_name:#main}"; _display="${_display:-dotfiles}"
         local _plan_u="_dotfiler_plan_${_name}_to_unpack"
         local _plan_r="_dotfiler_plan_${_name}_to_remove"
@@ -544,6 +586,10 @@ ${#_dotfiler_plan_main_to_remove[@]} to remove"
 # ---------------------------------------------------------------------------
 
 function _update_main_pull(){
+    # Accept --phase=dotfiles|components for interface consistency with component
+    # hook pull functions. Behaviour does not vary by phase — the dotfiles repo
+    # is always pulled to its remote tip in Phase 1 (that is the point of Phase 1).
+    [[ "${1:-}" == --phase=* ]] && shift
     [[ ${#dry_run[@]} -gt 0 ]] && { verbose "update: main pull: skipping (dry-run)"; return 0; }
     [[ ${#commit_hash[@]} -gt 0 || ${#range[@]} -gt 0 ]] && { verbose "update: main pull: skipping (range mode)"; return 0; }
     if (( ! _force && ${#_dotfiler_plan_main_to_unpack[@]} == 0 && ${#_dotfiler_plan_main_to_remove[@]} == 0 )); then
@@ -617,6 +663,8 @@ function _update_main_unpack(){
 }
 
 function _update_main_post(){
+    # Accept --phase=dotfiles|components for interface consistency.
+    [[ "${1:-}" == --phase=* ]] && shift
     local -a _to_unpack=("${_dotfiler_plan_main_to_unpack[@]}")
     [[ ${#_to_unpack[@]} -eq 0 ]] && return 0
     local -a _modified_install=()
@@ -636,15 +684,12 @@ function _update_main_post(){
 
 function _update_phase_pull(){
     verbose "update: phase pull: begin"
+    local _phase=components
+    [[ "${1:-}" == --phase=* ]] && { _phase="${1#--phase=}"; shift; }
     local _name _fn
     for _name in "${_dotfiler_registered_hooks[@]}"; do
         _fn="${_dotfiler_hook_pull_fn[$_name]:-}"
         [[ -z "$_fn" ]] && continue
-        # Skip if plan found nothing to do for this component.
-        # For component hooks: the range is the authoritative signal — file
-        # lists can be empty if commits only touch files outside the link tree,
-        # but the pull still needs to happen to advance HEAD.
-        # For the main repo: _update_main_pull carries its own guard.
         if [[ "$_name" != main ]]; then
             local _plan_range="_dotfiler_plan_${_name}_range"
             if (( ! _force )) && [[ -z "${(P)_plan_range}" ]]; then
@@ -653,12 +698,9 @@ function _update_phase_pull(){
             fi
         fi
         local _display="${_name:#main}"; _display="${_display:-dotfiles}"
-        verbose "update: phase pull: ${_name} -> ${_fn}"
+        verbose "update: phase pull: ${_name} -> ${_fn} (phase=${_phase})"
         info "${_display}: pulling..."
-        "$_fn" || {
-            warn "${_display}: pull failed"
-            return 1
-        }
+        "$_fn" "--phase=${_phase}" || { warn "${_display}: pull failed"; return 1; }
     done
     verbose "update: phase pull: done"
     return 0
@@ -701,12 +743,14 @@ function _update_phase_unpack(){
 
 function _update_phase_post(){
     verbose "update: phase post: begin"
+    local _phase=components
+    [[ "${1:-}" == --phase=* ]] && { _phase="${1#--phase=}"; shift; }
     local _name _fn
     for _name in "${_dotfiler_registered_hooks[@]}"; do
         _fn="${_dotfiler_hook_post_fn[$_name]:-}"
         [[ -z "$_fn" ]] && continue
-        verbose "update: phase post: ${_name} -> ${_fn}"
-        "$_fn" || warn "update: post failed for '${_name}'"
+        verbose "update: phase post: ${_name} -> ${_fn} (phase=${_phase})"
+        "$_fn" "--phase=${_phase}" || warn "update: post failed for '${_name}'"
     done
     verbose "update: phase post: done"
     return 0
@@ -773,12 +817,39 @@ function _update_main() {
         verbose "update: range mode active (repo=${dotfiles_dir})"
 
     if _update_should_run_phase dotfiles || _update_should_run_phase hooks; then
-        verbose "update: running dotfiles/hooks phases"
+        # ── Phase 1: parent-directed ──────────────────────────────────────
+        # Dotfiles drives component updates. Component ranges are resolved from
+        # dotfiles marker files / submodule pointers. Pull pins each component
+        # to exactly the SHA dotfiles records. No new dotfiles commits produced.
+        verbose "update: phase 1 (parent-directed) begin"
         info "Checking for updates..."
         _update_phase_plan || exit $?
-        _update_phase_pull || exit $?
+        _update_phase_pull --phase=dotfiles || exit $?
         _update_phase_unpack
-        _update_phase_post
+        _update_phase_post --phase=dotfiles
+
+        # ── Phase 2: self-directed ────────────────────────────────────────
+        # Component remotes may be ahead of what dotfiles records. Each component
+        # fetches its own remote independently and advances to tip if new commits
+        # exist. Produces per-component dotfiles commits to record updated SHAs.
+        # Skipped when --range / --commit-hash was given: the user asked to replay
+        # a specific dotfiles state; self-directed tip advancement would overshoot.
+        if [[ "$_update_range_mode" != true ]]; then
+            verbose "update: phase 2 (self-directed) begin"
+            info "Checking for component updates beyond dotfiles..."
+            # Clear hint ranges so plan_fns self-direct
+            unset "${(@k)parameters[(I)_dotfiler_hint_range_*]}" 2>/dev/null
+            # Clear plan vars so Phase 2 plans from scratch
+            unset "${(@k)parameters[(I)_dotfiler_plan_*]}" 2>/dev/null
+            typeset -gaU _dotfiler_plan_main_to_unpack _dotfiler_plan_main_to_remove
+            # --phase=components: hooks already registered in Phase 1, fns already defined
+            _update_phase_plan --phase=components || exit $?
+            _update_phase_pull || exit $?
+            _update_phase_unpack
+            _update_phase_post
+        else
+            verbose "update: phase 2 skipped (range mode)"
+        fi
     else
         verbose "update: skipping dotfiles/hooks phases"
     fi

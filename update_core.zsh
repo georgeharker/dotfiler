@@ -77,6 +77,48 @@ _update_core_get_default_branch() {
     print -n "${_branch:-main}"
 }
 
+# _update_core_component_tip_range <comp_dir> <topology> [<subtree_url> <branch>]
+# Compute the Phase 2 (self-directed) range for a component: where it is now
+# to the current remote tip.  Fetches to materialise remote objects locally.
+#
+# Current-position semantics differ by topology:
+#   standalone|submodule : HEAD of the component git repo
+#   subtree              : SHA marker file (HEAD belongs to the parent repo)
+#
+# Sets REPLY="old_sha..new_sha" (empty string on failure / nothing to do).
+# Returns 0 on success, 1 on failure.
+_update_core_component_tip_range() {
+    local _comp_dir=$1 _topology=$2 _subtree_url=${3:-} _branch=${4:-}
+    local _old _new _remote
+    REPLY=""
+
+    case "$_topology" in
+        subtree)
+            # Current position is the SHA marker, not HEAD.
+            # Fetch from the subtree's own remote URL — not the parent repo's
+            # default remote, which points to a different repository entirely.
+            _update_core_read_sha_marker "$_comp_dir" || return 1
+            _old="$REPLY"
+            [[ -n "$_subtree_url" && -n "$_branch" ]] || return 1
+            _new=$(_update_core_resolve_remote_sha "$_subtree_url" "$_branch") \
+                || return 1
+            git -C "$_comp_dir" fetch -q "$_subtree_url" "$_branch" 2>/dev/null
+            ;;
+        submodule|standalone|*)
+            # Current position is the component repo HEAD.
+            _remote=$(_update_core_get_default_remote "$_comp_dir")
+            _branch=$(_update_core_get_default_branch "$_comp_dir" "$_remote")
+            _old=$(git -C "$_comp_dir" rev-parse HEAD 2>/dev/null) || return 1
+            git -C "$_comp_dir" fetch -q "$_remote" "$_branch" 2>/dev/null
+            _new=$(git -C "$_comp_dir" rev-parse \
+                "${_remote}/${_branch}" 2>/dev/null) || return 1
+            ;;
+    esac
+
+    [[ "$_old" == "$_new" ]] && { REPLY=""; return 0; }
+    REPLY="${_old}..${_new}"
+}
+
 # ---------------------------------------------------------------------------
 # Stdin guard
 # ---------------------------------------------------------------------------
