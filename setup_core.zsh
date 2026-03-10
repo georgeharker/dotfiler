@@ -107,7 +107,38 @@ read_exclusion_patterns() {
     done < "$exclusion_file"
 }
 
-# build_find_prune_args
+# exclude_component_dirs
+#
+#   Reads the hook registry and adds each component's graft point as an
+#   enforce-level exclusion so the dotfiles unpack never installs files that
+#   belong to a component.  Only applies to non-subdir topologies (submodule,
+#   subtree, standalone) — subdir components live inside dotfiles and are
+#   managed as normal dotfiles.
+#
+#   Must be called after _setup_discover_hooks has populated the registry
+#   and before setup_core_main processes files.
+exclude_component_dirs() {
+    local _dotfiles_dir="${1:A}"
+    local _name _comp_dir _topology _rel
+
+    for _name in "${_dotfiler_registered_hooks[@]}"; do
+        _comp_dir="${_dotfiler_hook_component_dir[$_name]:-}"
+        _topology="${_dotfiler_hook_topology[$_name]:-}"
+
+        [[ -z "$_comp_dir" || "$_topology" == subdir ]] && continue
+
+        # Make relative to dotfiles root for pattern matching
+        _rel="${_comp_dir#${_dotfiles_dir}/}"
+        # Skip if it didn't strip (component outside dotfiles tree)
+        [[ "$_rel" == "$_comp_dir" ]] && continue
+
+        log_debug "setup: auto-excluding component graft point: $_rel (topology: $_topology)"
+        _gitignore_rules+=("enforce:/${_rel}/")
+        _prune_dir_names+=("${_rel##*/}")
+    done
+}
+
+
 #
 #   Builds the global `find_prune_args` array used to prune excluded
 #   directories during traversal for performance.  This is NOT authoritative;
@@ -736,6 +767,11 @@ function _setup_init() {
     # Layer 1: enforce (.git/ .nounpack/ etc.)
     read_exclusion_patterns --enforce
 
+    # Layer 1b: auto-exclude registered component graft points (enforce level).
+    # Components manage their own files via their hook; the dotfiles unpack
+    # must never install into their directory.
+    exclude_component_dirs "$dotfiles_dir"
+
     # Layer 2: always_exclude — glob patterns applied to every repo.
     # Sought in dotfiles root first, fallback to dotfiler's own dir.
     local _dotfiles_root _always_exclude
@@ -758,6 +794,15 @@ function _setup_init() {
     fi
 
     build_find_prune_args
+
+    if [[ -n "${DOTFILER_DEBUG:-}" ]]; then
+        log_debug "setup: exclusion rules (${#_gitignore_rules[@]} total):"
+        local _rule
+        for _rule in "${_gitignore_rules[@]}"; do
+            log_debug "  $_rule"
+        done
+        log_debug "setup: prune dir names: ${_prune_dir_names[*]}"
+    fi
 
     (( dry_run_bool )) && warn "=== DRY RUN MODE ==="
 }
