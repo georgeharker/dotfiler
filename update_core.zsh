@@ -903,7 +903,12 @@ _update_core_build_file_lists() {
     # Use NUL (%x00) as a record terminator after the body; split on NUL below.
     # Format per commit: <hash> TAB <subject> NL <body> NUL
     local _all_commits
-    _all_commits=$(git -C "$_repo_dir" log --reverse -m \
+    # --first-parent: for merge commits, only diff against parent 1 (the
+    # local/mainline side).  Without this, -m diffs against every parent,
+    # which for subtree merges means diffing against the subrepo root and
+    # listing every non-subtree file as "added".  --first-parent gives us
+    # "what the merge brought in from remote" which is correct for unpacking.
+    _all_commits=$(git -C "$_repo_dir" log --reverse --first-parent \
         --diff-filter=ADMRC --no-decorate \
         --pretty=tformat:"%H%x09%s%n%B%x00" \
         "${_diff_range}" 2>/dev/null)
@@ -939,9 +944,9 @@ _update_core_build_file_lists() {
             continue
         fi
 
-        _git_log=$(git -C "$_repo_dir" log -m --name-status \
-            --diff-filter=ADMRC --no-decorate --pretty=format: \
-            "${_hash}...${_hash}^" 2>/dev/null)
+        _git_log=$(git -C "$_repo_dir" diff-tree -r --no-commit-id \
+            --diff-filter=ADMRC --name-status \
+            "${_hash}^" "${_hash}" 2>/dev/null)
 
         for _line in ${(f)_git_log}; do
             [[ "$_line" =~ "^[ADMRC][0-9]*"$'\t'".*$" ]] || continue
