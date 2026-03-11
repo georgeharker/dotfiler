@@ -400,13 +400,19 @@ _update_core_read_sha_marker() {
 
 # _update_core_write_sha_marker <subtree_dir> <sha>
 # Persists <sha> as the last-updated marker for the subtree.
-# Returns 0 on success, 1 on write failure.
+# Skips the write (and the debug log) if the marker already contains <sha>.
+# Returns 0 on success or already-current, 1 on write failure.
 _update_core_write_sha_marker() {
     local _subtree_dir=${1:?subtree directory required}
     local _sha=${2:?sha required}
     _update_core_sha_marker_path "$_subtree_dir"
     local _path=$REPLY
+    # Read existing value — skip write if already current.
+    if _update_core_read_sha_marker "$_subtree_dir" && [[ "$REPLY" == "$_sha" ]]; then
+        return 0
+    fi
     if printf '%s\n' "$_sha" > "$_path" 2>/dev/null; then
+        log_debug "update_core: wrote sha marker: $_path (sha=${_sha})"
         return 0
     fi
     return 1

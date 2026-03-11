@@ -252,40 +252,45 @@ function _update_dotfiler_pull() {
         # -------------------------------------------------------------------
         submodule)
         # -------------------------------------------------------------------
-            _update_core_get_parent_root "$script_dir"
-            if [[ "${reply[2]}" != superproject ]]; then
-                error "update_self: cannot find parent repo for submodule."
-                return 1
-            fi
-            local _parent="${reply[1]}"
-            local _submod_root
-            _submod_root=$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null)
-            local _rel=${_submod_root#${_parent}/}
-            log_debug "update_self: submodule parent=${_parent} rel=${_rel}"
-            local _mode
-            _update_core_get_in_tree_commit_mode ':dotfiler:update'; local _mode=$REPLY
-            log_debug "update_self: in-tree-commit mode=${_mode}"
-            if (( _dry_run )); then
-                info "update_self: [dry-run] would: git -C ${_parent} submodule update --remote -- ${_rel}"
+            if (( _dotfiler_update_avail != 0 )); then
+                verbose "update_self: scripts already up to date"
+                (( _dry_run )) || _update_core_write_timestamp "$_dotfiler_self_stamp" 0 ""
             else
-                local _stashed=0
-                _update_core_maybe_stash "$_parent" "update_self submodule" || return 1
-                _stashed=$REPLY
-                verbose "update_self: git submodule update --remote -- ${_rel}"
-                git -C "$_parent" submodule update --remote -- "$_rel" || {
-                    (( _stashed )) && _update_core_pop_stash "$_parent" "update_self submodule"
-                    error "update_self: submodule update failed."
-                    _update_core_write_timestamp "$_dotfiler_self_stamp" 1 "submodule update failed"
+                _update_core_get_parent_root "$script_dir"
+                if [[ "${reply[2]}" != superproject ]]; then
+                    error "update_self: cannot find parent repo for submodule."
                     return 1
-                }
-                (( _stashed )) && _update_core_pop_stash "$_parent" "update_self submodule"
-                _update_core_commit_parent \
-                    "$_parent" "$_rel" \
-                    "dotfiler submodule updated" \
-                    "dotfiler: update scripts submodule" \
-                    "$_mode"
-                log_debug "update_self: submodule pull succeeded — writing stamp"
-                _update_core_write_timestamp "$_dotfiler_self_stamp" 0 ""
+                fi
+                local _parent="${reply[1]}"
+                local _submod_root
+                _submod_root=$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null)
+                local _rel=${_submod_root#${_parent}/}
+                log_debug "update_self: submodule parent=${_parent} rel=${_rel}"
+                local _mode
+                _update_core_get_in_tree_commit_mode ':dotfiler:update'; local _mode=$REPLY
+                log_debug "update_self: in-tree-commit mode=${_mode}"
+                if (( _dry_run )); then
+                    info "update_self: [dry-run] would: git -C ${_parent} submodule update --remote -- ${_rel}"
+                else
+                    local _stashed=0
+                    _update_core_maybe_stash "$_parent" "update_self submodule" || return 1
+                    _stashed=$REPLY
+                    verbose "update_self: git submodule update --remote -- ${_rel}"
+                    git -C "$_parent" submodule update --remote -- "$_rel" || {
+                        (( _stashed )) && _update_core_pop_stash "$_parent" "update_self submodule"
+                        error "update_self: submodule update failed."
+                        _update_core_write_timestamp "$_dotfiler_self_stamp" 1 "submodule update failed"
+                        return 1
+                    }
+                    (( _stashed )) && _update_core_pop_stash "$_parent" "update_self submodule"
+                    _update_core_commit_parent \
+                        "$_parent" "$_rel" \
+                        "dotfiler submodule updated" \
+                        "dotfiler: update scripts submodule" \
+                        "$_mode"
+                    log_debug "update_self: submodule pull succeeded — writing stamp"
+                    _update_core_write_timestamp "$_dotfiler_self_stamp" 0 ""
+                fi
             fi
             ;;
 
@@ -307,46 +312,58 @@ function _update_dotfiler_pull() {
                 return 1
             }
             _remote="$reply[1]" _branch="$reply[2]" _remote_url="$reply[3]"
-            local _mode
-            _update_core_get_in_tree_commit_mode ':dotfiler:update'; local _mode=$REPLY
-            log_debug "update_self: subtree remote=${_remote} branch=${_branch} in-tree-commit=${_mode}"
-            if (( _dry_run )); then
-                info "update_self: [dry-run] would: git subtree pull --prefix=${_rel} ${_remote} ${_branch} --squash"
-            else
-                local _stashed=0
-                _update_core_maybe_stash "$_parent" "update_self subtree" || return 1
-                _stashed=$REPLY
-                verbose "update_self: git subtree pull --prefix=${_rel} ${_remote} ${_branch} --squash"
-                local _subtree_out _subtree_rc
-                _subtree_out=$(git -C "$_parent" subtree pull \
-                    --prefix="$_rel" "$_remote" "$_branch" --squash 2>&1)
-                _subtree_rc=$?
-                log_debug "update_self: subtree pull output: ${_subtree_out}"
-                if (( _subtree_rc == 0 )); then
-                    local _pulled_sha
-                    _pulled_sha=$(_update_core_resolve_remote_sha "$_remote_url" "$_branch" 2>/dev/null)
-                    if [[ -n "$_pulled_sha" ]]; then
-                        log_debug "update_self: writing SHA marker ${_pulled_sha}"
-                        _update_core_write_sha_marker "$script_dir" "$_pulled_sha"
+            if (( _dotfiler_update_avail != 0 )); then
+                # Up to date — idempotent marker write covers hand-merge case.
+                verbose "update_self: scripts already up to date"
+                if (( ! _dry_run )); then
+                    local _current_sha
+                    _current_sha=$(_update_core_resolve_remote_sha "$_remote_url" "$_branch" 2>/dev/null)
+                    if [[ -n "$_current_sha" ]]; then
+                        _update_core_write_sha_marker "$script_dir" "$_current_sha"
                     fi
-                    _update_core_sha_marker_path "$script_dir"
-                    local _marker_path=$REPLY
-                    if [[ "$_mode" != "none" && -f "$_marker_path" ]]; then
-                        git -C "$_parent" add "$_marker_path" 2>/dev/null
-                    fi
-                    _update_core_commit_parent \
-                        "$_parent" "$_rel" \
-                        "dotfiler subtree updated" \
-                        "dotfiler: update scripts subtree" \
-                        "$_mode"
-                    log_debug "update_self: subtree pull succeeded — writing stamp"
                     _update_core_write_timestamp "$_dotfiler_self_stamp" 0 ""
-                    (( _stashed )) && _update_core_pop_stash "$_parent" "update_self subtree"
+                fi
+            else
+                local _mode
+                _update_core_get_in_tree_commit_mode ':dotfiler:update'; local _mode=$REPLY
+                log_debug "update_self: subtree remote=${_remote} branch=${_branch} in-tree-commit=${_mode}"
+                if (( _dry_run )); then
+                    info "update_self: [dry-run] would: git subtree pull --prefix=${_rel} ${_remote} ${_branch} --squash"
                 else
-                    (( _stashed )) && _update_core_pop_stash "$_parent" "update_self subtree"
-                    error "update_self: subtree pull failed."
-                    _update_core_write_timestamp "$_dotfiler_self_stamp" $_subtree_rc "subtree pull failed"
-                    return 1
+                    local _stashed=0
+                    _update_core_maybe_stash "$_parent" "update_self subtree" || return 1
+                    _stashed=$REPLY
+                    verbose "update_self: git subtree pull --prefix=${_rel} ${_remote} ${_branch} --squash"
+                    local _subtree_out _subtree_rc
+                    _subtree_out=$(git -C "$_parent" subtree pull \
+                        --prefix="$_rel" "$_remote" "$_branch" --squash 2>&1)
+                    _subtree_rc=$?
+                    log_debug "update_self: subtree pull output: ${_subtree_out}"
+                    if (( _subtree_rc == 0 )); then
+                        local _pulled_sha
+                        _pulled_sha=$(_update_core_resolve_remote_sha "$_remote_url" "$_branch" 2>/dev/null)
+                        if [[ -n "$_pulled_sha" ]]; then
+                            _update_core_write_sha_marker "$script_dir" "$_pulled_sha"
+                        fi
+                        _update_core_sha_marker_path "$script_dir"
+                        local _marker_path=$REPLY
+                        if [[ "$_mode" != "none" && -f "$_marker_path" ]]; then
+                            git -C "$_parent" add "$_marker_path" 2>/dev/null
+                        fi
+                        _update_core_commit_parent \
+                            "$_parent" "$_rel" \
+                            "dotfiler subtree updated" \
+                            "dotfiler: update scripts subtree" \
+                            "$_mode"
+                        log_debug "update_self: subtree pull succeeded — writing stamp"
+                        _update_core_write_timestamp "$_dotfiler_self_stamp" 0 ""
+                        (( _stashed )) && _update_core_pop_stash "$_parent" "update_self subtree"
+                    else
+                        (( _stashed )) && _update_core_pop_stash "$_parent" "update_self subtree"
+                        error "update_self: subtree pull failed."
+                        _update_core_write_timestamp "$_dotfiler_self_stamp" $_subtree_rc "subtree pull failed"
+                        return 1
+                    fi
                 fi
             fi
             ;;
