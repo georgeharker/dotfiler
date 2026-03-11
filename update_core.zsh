@@ -210,6 +210,18 @@ _update_core_write_timestamp() {
 # Update availability check (no GitHub API fallback — stays in check_update.zsh)
 # ---------------------------------------------------------------------------
 
+# _update_core_safe_rm <path>
+# Dry-run-aware rm -f.  Checks the caller's dry_run[] array.
+# Shared by update.zsh and zdot update-impl.zsh.
+_update_core_safe_rm() {
+    if [[ ${#dry_run[@]} -gt 0 ]]; then
+        action "[DRY RUN] Would remove: $1"
+    else
+        rm -f "$1"
+    fi
+    return 0
+}
+
 # _update_core_is_available_fetch <repo_dir> [allow_diverged]
 # Returns 0 if an update is available (local is behind, or diverged and
 # allow_diverged=1), 1 to skip (up to date or local is ahead), 2 on error.
@@ -400,39 +412,61 @@ _update_core_write_sha_marker() {
     return 1
 }
 
+# ---------------------------------------------------------------------------
+# GitHub API helper — single implementation for all API-first checks
+# ---------------------------------------------------------------------------
+
+# _update_core_github_api_get <api_url>
+# Performs an authenticated GET against the GitHub API.
+# Prints the response body to stdout.  Returns 0 on success, 1 on failure.
+# Uses GH_TOKEN (or GITHUB_TOKEN) for authentication when available.
+_update_core_github_api_get() {
+    local _api_url=$1
+    local _curl_auth=() _wget_auth=()
+    # GH_TOKEN (gh cli convention) with GITHUB_TOKEN fallback (CI / actions)
+    local _token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+    if [[ -n "$_token" ]]; then
+        _curl_auth=(-H "Authorization: Bearer ${_token}")
+        _wget_auth=(--header="Authorization: Bearer ${_token}")
+    fi
+
+    if (( ${+commands[curl]} )); then
+        curl --connect-timeout 10 --max-time 30 -fsSL \
+            -H 'Accept: application/vnd.github.v3.sha' \
+            "${_curl_auth[@]}" "$_api_url" 2>/dev/null
+    elif (( ${+commands[wget]} )); then
+        wget --timeout=30 -O- \
+            --header='Accept: application/vnd.github.v3.sha' \
+            "${_wget_auth[@]}" "$_api_url" 2>/dev/null
+    else
+        return 1
+    fi
+}
+
+# _update_core_extract_github_repo <url>
+# If <url> is a GitHub URL, sets REPLY to "owner/repo" and returns 0.
+# Otherwise sets REPLY="" and returns 1.
+_update_core_extract_github_repo() {
+    local _url=$1
+    case "$_url" in
+        https://github.com/*) REPLY=${${_url#https://github.com/}%.git}; return 0 ;;
+        git@github.com:*)     REPLY=${${_url#git@github.com:}%.git}; return 0 ;;
+        *)                    REPLY=""; return 1 ;;
+    esac
+}
+
 # _update_core_resolve_remote_sha <remote_url> <branch>
 # Fetches the HEAD SHA for <branch> from <remote_url>.
 # Prints the SHA to stdout.  Returns 0 on success, 1 on failure.
 # Tries the GitHub API first (lightweight), then falls back to git ls-remote.
 _update_core_resolve_remote_sha() {
     local _remote_url=$1 _branch=${2:-main}
-    local _sha="" _repo=""
+    local _sha=""
 
     # --- GitHub API path ---
-    case "$_remote_url" in
-        https://github.com/*) _repo=${${_remote_url#https://github.com/}%.git} ;;
-        git@github.com:*)     _repo=${${_remote_url#git@github.com:}%.git} ;;
-    esac
-
-    if [[ -n "$_repo" ]]; then
-        local _api_url="https://api.github.com/repos/${_repo}/commits/${_branch}"
-        local _curl_auth=() _wget_auth=()
-        if [[ -n "${GH_TOKEN:-}" ]]; then
-            _curl_auth=(-H "Authorization: Bearer ${GH_TOKEN}")
-            _wget_auth=(--header="Authorization: Bearer ${GH_TOKEN}")
-        fi
-
-        _sha=$(
-            if (( ${+commands[curl]} )); then
-                curl --connect-timeout 10 --max-time 30 -fsSL \
-                    -H 'Accept: application/vnd.github.v3.sha' \
-                    "${_curl_auth[@]}" "$_api_url" 2>/dev/null
-            elif (( ${+commands[wget]} )); then
-                wget --timeout=30 -O- \
-                    --header='Accept: application/vnd.github.v3.sha' \
-                    "${_wget_auth[@]}" "$_api_url" 2>/dev/null
-            fi
-        )
+    if _update_core_extract_github_repo "$_remote_url"; then
+        local _api_url="https://api.github.com/repos/${REPLY}/commits/${_branch}"
+        _sha=$(_update_core_github_api_get "$_api_url")
         if [[ -n "$_sha" ]]; then
             printf '%s' "$_sha"
             return 0
@@ -673,43 +707,16 @@ _update_core_is_available() {
     fi
 
     # --- GitHub API path (API-first, no git fetch) ---
-    local _repo
-    case "$_remote_url" in
-        https://github.com/*) _repo=${${_remote_url#https://github.com/}%.git} ;;
-        git@github.com:*)     _repo=${${_remote_url#git@github.com:}%.git} ;;
-        *)                    _repo="" ;;
-    esac
-
-    if [[ -n "$_repo" ]]; then
-        local _api_url="https://api.github.com/repos/${_repo}/commits/${_branch}"
+    if _update_core_extract_github_repo "$_remote_url"; then
+        local _api_url="https://api.github.com/repos/${REPLY}/commits/${_branch}"
         local _local_head _remote_head
 
         # Use HEAD directly — rev-parse "$_branch" fails in detached-HEAD state
         # (e.g. freshly updated submodule), whereas HEAD always resolves.
         _local_head=$(git -C "$_repo_dir" rev-parse HEAD 2>/dev/null) || return 1
 
-        # Call GitHub API — on failure, skip update (conservative, per ohmyzsh pattern)
-        local _curl_auth=() _wget_auth=()
-        if [[ -n "${GH_TOKEN:-}" ]]; then
-            _curl_auth=(-H "Authorization: Bearer ${GH_TOKEN}")
-            _wget_auth=(--header="Authorization: Bearer ${GH_TOKEN}")
-        fi
-
-        _remote_head=$(
-            if (( ${+commands[curl]} )); then
-                curl --connect-timeout 10 --max-time 30 -fsSL \
-                    -H 'Accept: application/vnd.github.v3.sha' \
-                    "${_curl_auth[@]}" "$_api_url" 2>/dev/null
-            elif (( ${+commands[wget]} )); then
-                wget --timeout=30 -O- \
-                    --header='Accept: application/vnd.github.v3.sha' \
-                    "${_wget_auth[@]}" "$_api_url" 2>/dev/null
-            else
-                exit 1
-            fi
-        ) || {
-            # API unavailable (no curl/wget, network error, or rate-limited
-            # without a token) — fall back to standard git fetch path.
+        # Call GitHub API — on failure, fall back to standard git fetch path.
+        _remote_head=$(_update_core_github_api_get "$_api_url") || {
             log_debug "update_core: GitHub API unavailable, falling back to git fetch"
             _update_core_is_available_fetch "$_repo_dir" "$_allow_diverged"
             return $?
@@ -845,35 +852,11 @@ _update_core_is_available_subtree() {
     fi
 
     # --- GitHub API path (API-first, no git fetch) ---
-    local _repo
-    case "$_remote_url" in
-        https://github.com/*) _repo=${${_remote_url#https://github.com/}%.git} ;;
-        git@github.com:*)     _repo=${${_remote_url#git@github.com:}%.git} ;;
-        *)                    _repo="" ;;
-    esac
+    if _update_core_extract_github_repo "$_remote_url"; then
+        local _api_url="https://api.github.com/repos/${REPLY}/commits/${_branch}"
 
-    if [[ -n "$_repo" ]]; then
-        local _api_url="https://api.github.com/repos/${_repo}/commits/${_branch}"
-
-        local _curl_auth=() _wget_auth=()
-        if [[ -n "${GH_TOKEN:-}" ]]; then
-            _curl_auth=(-H "Authorization: Bearer ${GH_TOKEN}")
-            _wget_auth=(--header="Authorization: Bearer ${GH_TOKEN}")
-        fi
-
-        _remote_head=$(
-            if (( ${+commands[curl]} )); then
-                curl --connect-timeout 10 --max-time 30 -fsSL \
-                    -H 'Accept: application/vnd.github.v3.sha' \
-                    "${_curl_auth[@]}" "$_api_url" 2>/dev/null
-            elif (( ${+commands[wget]} )); then
-                wget --timeout=30 -O- \
-                    --header='Accept: application/vnd.github.v3.sha' \
-                    "${_wget_auth[@]}" "$_api_url" 2>/dev/null
-            else
-                exit 1
-            fi
-        ) || return 1   # API failure → skip (conservative)
+        _remote_head=$(_update_core_github_api_get "$_api_url") \
+            || return 1   # API failure → skip (conservative)
 
         [[ -z "$_remote_head" ]] && return 1   # empty response → skip
 
@@ -1211,6 +1194,9 @@ _update_core_cleanup() {
         _update_core_acquire_lock \
         _update_core_release_lock \
         _update_core_write_timestamp \
+        _update_core_github_api_get \
+        _update_core_extract_github_repo \
+        _update_core_safe_rm \
         _update_core_is_available \
         _update_core_is_available_fetch \
         _update_core_is_available_subtree \

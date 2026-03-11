@@ -401,18 +401,6 @@ function _update_dotfiler_unpack() {
 # See _update_core_init_registry and _update_register_hook there.
 
 # ---------------------------------------------------------------------------
-# Helpers: safe operations (dry-run aware)
-# ---------------------------------------------------------------------------
-
-function _update_safe_rm(){
-    if [[ ${#dry_run[@]} -gt 0 ]]; then
-        action "[DRY RUN] Would remove: $1"
-    else
-        rm -f "$1"
-    fi
-}
-
-# ---------------------------------------------------------------------------
 # PHASE 1 — PLAN
 # ---------------------------------------------------------------------------
 # Compute diff range and file lists for the main repo, then source each hook
@@ -661,7 +649,7 @@ function _update_main_unpack(){
             _dest="${_link_dest}/${_file}"
             if [[ -L "$_dest" ]]; then
                 action "cleaning up $_dest"
-                _update_safe_rm "$_dest"
+                _update_core_safe_rm "$_dest"
             else
                 warn "$_dest is not a symlink, not removing"
             fi
@@ -801,7 +789,6 @@ function _update_phase_post(){
 function _update_cleanup() {
     unset -f \
         _update_register_hook \
-        _update_safe_rm \
         _update_dotfiler_init \
         _update_dotfiler_plan \
         _update_dotfiler_pull \
@@ -815,7 +802,6 @@ function _update_cleanup() {
         _update_phase_post \
         _update_should_run_phase \
         _update_parse_args \
-        _update_safe_rm \
         _update_cleanup \
         2>/dev/null
     unset -A \

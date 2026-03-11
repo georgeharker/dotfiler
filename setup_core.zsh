@@ -547,7 +547,7 @@ function link_if_needed(){
   log_debug "link_if_needed src=$src dest=$dest"
   info_nonl "checking $src to $dest .."
   if [[ -L "$dest" ]]; then
-    linkfile=`readlink $dest`
+    linkfile=$(readlink $dest)
     if [[ "$src" != "$linkfile" ]]; then
       error ".. Failed to link $src to $dest, conflicting link ($linkfile)"
     else
@@ -556,7 +556,7 @@ function link_if_needed(){
   elif [[ -f "$dest" ]] && [[ -f "$src" ]]; then
     info ".. $dest exists checking contents for diffs"
     # check if the contents are the same
-    diffs="${(f@)$(diff $src $dest)}"
+    diffs="${(f@)$(diff "$src" "$dest")}"
     if [[ ${#diffs[@]} -gt 0 ]]; then
       warn "Diffs (${#diffs[@]}):"
       for each ("$diffs[@]")
@@ -567,7 +567,7 @@ function link_if_needed(){
     else
       msg=".. file $dest exists and is identical, replace with link?"
     fi
-    if `prompt_yes_no "$msg"`; then
+    if prompt_yes_no "$msg"; then
       safe_rm $dest
       dolink $src $dest
     else
@@ -632,13 +632,13 @@ function copy_in_if_needed(){
     if [[ -f "$src" ]]; then
       info ".. checking contents for diffs"
       # check if the contents are the same
-      diffs=`diff "$src" "$dest"`
+      diffs=$(diff "$src" "$dest")
       if [[ "$diffs" == "" ]]; then
         info ".. ok"
       else
         warn ".. File $dest exists and differs from $src"
         msg="Update tracked file $dest with contents from $src?"
-        if `prompt_yes_no "$msg"`; then
+        if prompt_yes_no "$msg"; then
           safe_cp "$src" "$dest"
           action ".. Updated $dest with contents from $src"
         else
@@ -648,13 +648,13 @@ function copy_in_if_needed(){
     elif [[ -d "$src" ]]; then
       info ".. checking directory contents for diffs"
       # Check if directory contents are the same
-      diffs=`diff "$src" "$dest"`
+      diffs=$(diff "$src" "$dest")
       if [[ "$diffs" == "" ]]; then
         info ".. ok"
       else
         warn ".. Directory $dest exists and differs from $src"
         msg="Update tracked directory $dest with contents from $src?"
-        if `prompt_yes_no "$msg"`; then
+        if prompt_yes_no "$msg"; then
           safe_cp_r "$src"/* "$dest"/
           action ".. Updated $dest with contents from $src"
         else
@@ -666,7 +666,7 @@ function copy_in_if_needed(){
     fi
   else
     msg="Track $src"
-    if `prompt_yes_no "$msg"`; then
+    if prompt_yes_no "$msg"; then
       safe_mkdir $destdir
       safe_cp_r $src $destdir
       action ".. Copied $src to $dest"
@@ -757,7 +757,7 @@ function _setup_init() {
 
     findopt=()
     findoptd=()
-    if [[ `uname` == "Darwin" ]]; then
+    if [[ $(uname) == "Darwin" ]]; then
         findoptd+=("-s")
     fi
 
@@ -807,6 +807,31 @@ function _setup_init() {
     (( dry_run_bool )) && warn "=== DRY RUN MODE ==="
 }
 
+# _setup_save_exclusion_state
+#   Save the current exclusion rules and prune dir names into function-local
+#   arrays _saved_rules and _saved_prune, then reset and reload for a
+#   self-contained find operation.  Caller must declare:
+#     local -a _saved_rules _saved_prune
+#   before calling, and pass the exclude_file to reload from.
+_setup_save_exclusion_state() {
+    local exclude_file="$1"
+    _saved_rules=("${_gitignore_rules[@]}")
+    _saved_prune=("${_prune_dir_names[@]}")
+    _gitignore_rules=()
+    _prune_dir_names=()
+    read_exclusion_patterns --enforce
+    [[ -n "$exclude_file" ]] && read_exclusion_patterns "$exclude_file"
+    return 0
+}
+
+# _setup_restore_exclusion_state
+#   Restore exclusion rules and prune dir names saved by _setup_save_exclusion_state.
+_setup_restore_exclusion_state() {
+    _gitignore_rules=("${_saved_rules[@]}")
+    _prune_dir_names=("${_saved_prune[@]}")
+    return 0
+}
+
 # setup_find_shallow start_dir exclude_file
 #
 #   Print all top-level dot-entries (mindepth 1 maxdepth 1, name .[a-zA-Z]*)
@@ -819,12 +844,8 @@ function setup_find_shallow() {
     local -a _fopt=() _foptd=()
     [[ "$(uname)" == "Darwin" ]] && _foptd+=("-s")
 
-    local -a _saved_rules=("${_gitignore_rules[@]}")
-    local -a _saved_prune=("${_prune_dir_names[@]}")
-    _gitignore_rules=()
-    _prune_dir_names=()
-    read_exclusion_patterns --enforce
-    [[ -n "$exclude_file" ]] && read_exclusion_patterns "$exclude_file"
+    local -a _saved_rules _saved_prune
+    _setup_save_exclusion_state "$exclude_file"
 
     local find_output
     find_output=$(find $_foptd "$start_dir" $_fopt -mindepth 1 -maxdepth 1 -name "\.[a-zA-Z]*")
@@ -835,8 +856,7 @@ function setup_find_shallow() {
         print -- "$f"
     done
 
-    _gitignore_rules=("${_saved_rules[@]}")
-    _prune_dir_names=("${_saved_prune[@]}")
+    _setup_restore_exclusion_state
 }
 
 # setup_find_deep start_dir exclude_file
@@ -852,12 +872,8 @@ function setup_find_deep() {
     local -a _fopt=() _foptd=()
     [[ "$(uname)" == "Darwin" ]] && _foptd+=("-s")
 
-    local -a _saved_rules=("${_gitignore_rules[@]}")
-    local -a _saved_prune=("${_prune_dir_names[@]}")
-    _gitignore_rules=()
-    _prune_dir_names=()
-    read_exclusion_patterns --enforce
-    [[ -n "$exclude_file" ]] && read_exclusion_patterns "$exclude_file"
+    local -a _saved_rules _saved_prune
+    _setup_save_exclusion_state "$exclude_file"
 
     local -a _local_prune=()
     build_find_prune_args   # populates find_prune_args
@@ -878,8 +894,7 @@ function setup_find_deep() {
         print -- "$f"
     done
 
-    _gitignore_rules=("${_saved_rules[@]}")
-    _prune_dir_names=("${_saved_prune[@]}")
+    _setup_restore_exclusion_state
 }
 
 # setup_run_unpack dir_override link_dest dry_run_bool quiet_bool [file ...]
@@ -901,16 +916,42 @@ function setup_run_unpack() {
     _setup_do_unpack "${normalized[@]}"
 }
 
-# _setup_do_unpack [file ...]
+# setup_run_force_unpack dir_override link_dest dry_run_bool quiet_bool [file ...]
+#
+#   Like setup_run_unpack but ignores exclusions.
+function setup_run_force_unpack() {
+    _setup_init "$1" "$2" "$3" "$4" 0 0
+    shift 4
+    # Normalize paths before passing to inner loop
+    local -a normalized=() p n
+    for p in "$@"; do
+        n=$(normalize_path_to_dest_relative "$p" 1) || {
+            error "Failed to normalize force_unpack path: $p"
+            return 1
+        }
+        normalized+=("$n")
+    done
+    _setup_do_unpack --force "${normalized[@]}"
+}
+
+# _setup_do_unpack [--force] [file ...]
 #   Inner unpack loop. Requires globals from _setup_init.
+#   --force: skip exclusion checks and use stricter error handling for missing files.
 function _setup_do_unpack() {
-    local -a unpack_files=("$@")
+    local _force=0
+    [[ "${1:-}" == "--force" ]] && { _force=1; shift; }
+    local -a _unpack_files=("$@")
+    local _label="Linking" _label_all="Linking all files"
+    (( _force )) && { _label="Force linking"; _label_all="Force linking all files (ignoring exclusions)"; }
 
     # Check if specific files were provided
-    if [[ ${#unpack_files[@]} -gt 0 ]]; then
-        # Unpack specific files (using home-relative paths, already normalized)
-        info "Linking specific files: ${unpack_files[*]}"
-        for target_file in ${unpack_files[@]}; do
+    if [[ ${#_unpack_files[@]} -gt 0 ]]; then
+        if (( _force )); then
+            info "${_label} specific files (ignoring exclusions): ${_unpack_files[*]}"
+        else
+            info "${_label} specific files: ${_unpack_files[*]}"
+        fi
+        for target_file in "${_unpack_files[@]}"; do
             # Skip empty entries
             [[ -z "$target_file" ]] && continue
 
@@ -919,12 +960,17 @@ function _setup_do_unpack() {
 
             # Check if file exists in dotfiles directory
             if [[ ! -f "$dotfiles_file" ]] && [[ ! -d "$dotfiles_file" ]]; then
-                warn "File not found in dotfiles directory: $target_file"
-                continue
+                if (( _force )); then
+                    error "File not found in dotfiles directory: $target_file"
+                    return 1
+                else
+                    warn "File not found in dotfiles directory: $target_file"
+                    continue
+                fi
             fi
 
-            # Check if file should be excluded (only for regular unpack, not force unpack)
-            if should_exclude_file "$dotfiles_file"; then
+            # Check if file should be excluded (only for regular unpack)
+            if (( ! _force )) && should_exclude_file "$dotfiles_file"; then
                 report "Skipping excluded file: $target_file (use -U to force unpack)"
                 continue
             fi
@@ -934,7 +980,7 @@ function _setup_do_unpack() {
         done
     else
         # Unpack all files
-        info "Linking all files"
+        info "$_label_all"
         local find_output files
         # Shallow: depth-1 dotfiles entries only.  No prune needed — maxdepth 1
         # means find never descends anyway.  should_exclude_file() filters results.
@@ -944,10 +990,16 @@ function _setup_do_unpack() {
         for file in "${files[@]}"; do
             [[ -n "$file" ]] || continue
             log_debug "shallow: considering $file"
-            should_exclude_file "$file" 0 && continue
+            if (( ! _force )); then
+                should_exclude_file "$file" 0 && continue
+            fi
             link_if_needed "$file" || return 1
         done
-        info "creating directory links"
+        if (( _force )); then
+            info "creating directory links (force)"
+        else
+            info "creating directory links"
+        fi
         # Deep: prune excluded dirs then print all files/symlinks.
         # -mindepth 1 as a global flag (before expression) skips the root itself
         # but still lets -prune fire on depth-1 dirs like .git.  Works on both
@@ -966,80 +1018,32 @@ function _setup_do_unpack() {
         for file in "${files[@]}"; do
             [[ -n "$file" ]] || continue
             log_debug "deep: considering $file"
-            should_exclude_file "$file" 0 && continue
+            if (( ! _force )); then
+                should_exclude_file "$file" 0 && continue
+            fi
             link_if_needed "$file" || return 1
         done
     fi
+    return 0
 }
 
-# setup_run_force_unpack dir_override link_dest dry_run_bool quiet_bool [file ...]
-#
-#   Like setup_run_unpack but ignores exclusions.
-function setup_run_force_unpack() {
-    _setup_init "$1" "$2" "$3" "$4" 0 0
-    shift 4
-    # Normalize paths before passing to inner loop
-    local -a normalized=() p n
-    for p in "$@"; do
-        n=$(normalize_path_to_dest_relative "$p" 1) || {
-            error "Failed to normalize force_unpack path: $p"
+# _setup_normalize_path_array <array_name> <label> [force_dest_rel]
+#   Normalizes all paths in the named array to be relative to _setup_link_dest.
+#   On failure, prints an error and returns 1.
+_setup_normalize_path_array() {
+    local _arr_name=$1 _label=$2 _force_dest_rel=${3:-0}
+    local -a _result=()
+    local _p _n
+    eval "local -a _src=(\"\${${_arr_name}[@]}\")"
+    for _p in "${_src[@]}"; do
+        _n=$(normalize_path_to_dest_relative "$_p" "$_force_dest_rel") || {
+            error "Failed to normalize ${_label} path: $_p"
             return 1
         }
-        normalized+=("$n")
+        _result+=("$_n")
     done
-    _setup_do_force_unpack "${normalized[@]}"
-}
-
-# _setup_do_force_unpack [file ...]
-#   Inner force-unpack loop. Requires globals from _setup_init.
-#   Paths must already be normalized (home-relative).
-function _setup_do_force_unpack() {
-    local -a force_unpack_files=("$@")
-
-    # Check if specific files were provided
-    if [[ ${#force_unpack_files[@]} -gt 0 ]]; then
-        # Force unpack specific files (ignore exclusions, using home-relative paths)
-        info "Force linking specific files (ignoring exclusions): ${force_unpack_files[*]}"
-        for target_file in ${force_unpack_files[@]}; do
-            # Skip empty entries
-            [[ -z "$target_file" ]] && continue
-
-            # target_file is a home-relative path, construct dotfiles path
-            local dotfiles_file="${dotfiles_dir}/${target_file}"
-
-            # Check if file exists in dotfiles directory
-            if [[ ! -f "$dotfiles_file" ]] && [[ ! -d "$dotfiles_file" ]]; then
-                error "File not found in dotfiles directory: $target_file"
-                return 1
-            fi
-
-            # Link the file (no exclusion check for force unpack)
-            link_if_needed "$dotfiles_file" || return 1
-        done
-    else
-        # Force unpack all files (ignore exclusions)
-        info "Force linking all files (ignoring exclusions)"
-        local find_output files
-        find_output=$(find $findoptd $dotfiles_dir $findopt -mindepth 1 -maxdepth 1 -name "\.[a-zA-Z]*")
-        files=(${(f)find_output})
-        for file in "${files[@]}"; do
-            [[ -n "$file" ]] || continue
-            link_if_needed "$file" || return 1
-        done
-        info "creating directory links (force)"
-        if [[ ${#find_prune_args[@]} -gt 0 ]]; then
-            find_output=$(find $findoptd $dotfiles_dir -mindepth 1 $findopt \
-                \( "${find_prune_args[@]}" \) -o \
-                \( -type f -o -type l \) -print)
-        else
-            find_output=$(find $findoptd $dotfiles_dir -mindepth 1 $findopt \( -type f -o -type l \))
-        fi
-        files=(${(f)find_output})
-        for file in "${files[@]}"; do
-            [[ -n "$file" ]] || continue
-            link_if_needed "$file" || return 1
-        done
-fi
+    eval "${_arr_name}=(\"\${_result[@]}\")"
+    return 0
 }
 
 # setup_run_all dir_override link_dest dry_run_bool quiet_bool [defyes_bool [defno_bool]]
@@ -1061,80 +1065,25 @@ fi
 # Normalize all paths to be relative to home directory
 # This ensures consistent behavior whether paths are provided as absolute or relative
 if [[ ${#ingest[@]} -gt 0 ]]; then
-  local normalized_ingest=()
-  local pwd_rel_path
-  for pwd_rel_path in "${ingest[@]}"; do
-    local normalized=$(normalize_path_to_dest_relative "$pwd_rel_path")
-    if [[ $? -eq 0 ]]; then
-      normalized_ingest+=("$normalized")
-    else
-      error "Failed to normalize ingest path: $pwd_rel_path"
-                return 1
-    fi
-  done
-  ingest=("${normalized_ingest[@]}")
+    _setup_normalize_path_array ingest "ingest" || return 1
 fi
 
 if [[ ${#track[@]} -gt 0 ]]; then
-  local normalized_track=()
-  local pwd_rel_path
-  for pwd_rel_path in "${track[@]}"; do
-    local normalized=$(normalize_path_to_dest_relative "$pwd_rel_path")
-    if [[ $? -eq 0 ]]; then
-      normalized_track+=("$normalized")
-    else
-      error "Failed to normalize track path: $pwd_rel_path"
-                return 1
-    fi
-  done
-  track=("${normalized_track[@]}")
+    _setup_normalize_path_array track "track" || return 1
 fi
 
 if [[ ${#untrack[@]} -gt 0 ]]; then
-  local normalized_untrack=()
-  local pwd_rel_path
-  for pwd_rel_path in "${untrack[@]}"; do
-    local normalized=$(normalize_path_to_dest_relative "$pwd_rel_path")
-    if [[ $? -eq 0 ]]; then
-      normalized_untrack+=("$normalized")
-    else
-      error "Failed to normalize untrack path: $pwd_rel_path"
-                return 1
-    fi
-  done
-  untrack=("${normalized_untrack[@]}")
+    _setup_normalize_path_array untrack "untrack" || return 1
 fi
 
 if [[ ${#unpack_files[@]} -gt 0 ]]; then
-  local normalized_unpack=()
-  local pwd_rel_path
-  for pwd_rel_path in "${unpack_files[@]}"; do
-    # NOTE: unpack is an implicitly home relative path
-    local normalized=$(normalize_path_to_dest_relative "$pwd_rel_path" 1)
-    if [[ $? -eq 0 ]]; then
-      normalized_unpack+=("$normalized")
-    else
-      error "Failed to normalize unpack path: $pwd_rel_path"
-                return 1
-    fi
-  done
-  unpack_files=("${normalized_unpack[@]}")
+    # NOTE: unpack paths are implicitly home-relative
+    _setup_normalize_path_array unpack_files "unpack" 1 || return 1
 fi
 
 if [[ ${#force_unpack_files[@]} -gt 0 ]]; then
-  local normalized_force_unpack=()
-  local pwd_rel_path
-  for pwd_rel_path in "${force_unpack_files[@]}"; do
-    # NOTE: unpack is an implicitly home relative path
-    local normalized=$(normalize_path_to_dest_relative "$pwd_rel_path" 1)
-    if [[ $? -eq 0 ]]; then
-      normalized_force_unpack+=("$normalized")
-    else
-      error "Failed to normalize force_unpack path: $pwd_rel_path"
-                return 1
-    fi
-  done
-  force_unpack_files=("${normalized_force_unpack[@]}")
+    # NOTE: unpack paths are implicitly home-relative
+    _setup_normalize_path_array force_unpack_files "force_unpack" 1 || return 1
 fi
 
 # Copy in files
@@ -1182,7 +1131,7 @@ fi
 
 # Force extract files (ignores exclusions)
 if [[ ${#force_unpack[@]} -gt 0 ]]; then
-        _setup_do_force_unpack "${force_unpack_files[@]}"
+        _setup_do_unpack --force "${force_unpack_files[@]}"
       fi
 }
 
@@ -1199,12 +1148,8 @@ function setup_find() {
     local -a _fopt=() _foptd=()
     [[ "$(uname)" == "Darwin" ]] && _foptd+=("-s")
 
-    local -a _saved_rules=("${_gitignore_rules[@]}")
-    local -a _saved_prune=("${_prune_dir_names[@]}")
-    _gitignore_rules=()
-    _prune_dir_names=()
-    read_exclusion_patterns --enforce
-    [[ -n "$exclude_file" ]] && read_exclusion_patterns "$exclude_file"
+    local -a _saved_rules _saved_prune
+    _setup_save_exclusion_state "$exclude_file"
     build_find_prune_args
 
     local find_output f
@@ -1235,8 +1180,7 @@ function setup_find() {
         print -- "$f"
     done
 
-    _gitignore_rules=("${_saved_rules[@]}")
-    _prune_dir_names=("${_saved_prune[@]}")
+    _setup_restore_exclusion_state
 }
 
 # setup_core_main "$@"
@@ -1360,9 +1304,11 @@ function setup_core_unload() {
          safe_mkdir safe_ln safe_rm safe_cp safe_cp_r safe_git \
          dolink link_if_needed copy_in_if_needed untrack_if_needed \
          _setup_init \
+         _setup_normalize_path_array \
+         _setup_save_exclusion_state _setup_restore_exclusion_state \
          setup_find_shallow setup_find_deep setup_find \
          setup_run_unpack _setup_do_unpack \
-         setup_run_force_unpack _setup_do_force_unpack \
+         setup_run_force_unpack \
          setup_run_all \
          setup_core_main \
          setup_core_unload
