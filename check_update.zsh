@@ -396,7 +396,7 @@ function handle_update() {
 
     # Prompt mode: ask the user.
     log_debug "check_update: handle_update: prompt mode — asking user"
-    info_nonl "Would you like to update? [Y/n] "
+    info_nonl "[dotfiler] Would you like to update? [Y/n] "
     read -r -k 1 option
     [[ "$option" = $'\n' ]] || echo
     case "$option" in
