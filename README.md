@@ -1,3 +1,5 @@
+![](docs/images/dotfiler.png)
+
 # Dotfiler
 
 Keep your shell, editor, and tool config in sync across every machine you use.
