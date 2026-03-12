@@ -233,7 +233,7 @@ function _update_dotfiler_pull() {
                     local _remote _branch
                     _remote=$(_update_core_get_default_remote "$script_dir")
                     _branch=$(_update_core_get_default_branch "$script_dir" "$_remote")
-                    _update_core_prompt_dirty "$script_dir" "update_self standalone" || return 1
+                     _update_core_prompt_dirty "$script_dir" "dotfiler (standalone)" || return 1
                     verbose "update_self: git pull --autostash ${_remote} ${_branch}"
                     git -C "$script_dir" pull --ff-only --autostash "$_remote" "$_branch" || {
                         error "update_self: git pull failed."
@@ -273,16 +273,16 @@ function _update_dotfiler_pull() {
                     info "update_self: [dry-run] would: git -C ${_parent} submodule update --remote -- ${_rel}"
                 else
                     local _stashed=0
-                    _update_core_maybe_stash "$_parent" "update_self submodule" || return 1
+                    _update_core_maybe_stash "$_parent" "dotfiles repo (dotfiler submodule)" || return 1
                     _stashed=$REPLY
                     verbose "update_self: git submodule update --remote -- ${_rel}"
                     git -C "$_parent" submodule update --remote -- "$_rel" || {
-                        (( _stashed )) && _update_core_pop_stash "$_parent" "update_self submodule"
+                        (( _stashed )) && _update_core_pop_stash "$_parent" "dotfiles repo (dotfiler submodule)"
                         error "update_self: submodule update failed."
                         _update_core_write_timestamp "$_dotfiler_self_stamp" 1 "submodule update failed"
                         return 1
                     }
-                    (( _stashed )) && _update_core_pop_stash "$_parent" "update_self submodule"
+                    (( _stashed )) && _update_core_pop_stash "$_parent" "dotfiles repo (dotfiler submodule)"
                     _update_core_commit_parent \
                         "$_parent" "$_rel" \
                         "dotfiler submodule updated" \
@@ -331,7 +331,7 @@ function _update_dotfiler_pull() {
                     info "update_self: [dry-run] would: git subtree pull --prefix=${_rel} ${_remote} ${_branch} --squash"
                 else
                     local _stashed=0
-                    _update_core_maybe_stash "$_parent" "update_self subtree" || return 1
+                    _update_core_maybe_stash "$_parent" "dotfiles repo (dotfiler subtree)" || return 1
                     _stashed=$REPLY
                     verbose "update_self: git subtree pull --prefix=${_rel} ${_remote} ${_branch} --squash"
                     local _subtree_out _subtree_rc
@@ -357,9 +357,9 @@ function _update_dotfiler_pull() {
                             "$_mode"
                         log_debug "update_self: subtree pull succeeded — writing stamp"
                         _update_core_write_timestamp "$_dotfiler_self_stamp" 0 ""
-                        (( _stashed )) && _update_core_pop_stash "$_parent" "update_self subtree"
+                        (( _stashed )) && _update_core_pop_stash "$_parent" "dotfiles repo (dotfiler subtree)"
                     else
-                        (( _stashed )) && _update_core_pop_stash "$_parent" "update_self subtree"
+                        (( _stashed )) && _update_core_pop_stash "$_parent" "dotfiles repo (dotfiler subtree)"
                         error "update_self: subtree pull failed."
                         _update_core_write_timestamp "$_dotfiler_self_stamp" $_subtree_rc "subtree pull failed"
                         return 1

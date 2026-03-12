@@ -513,20 +513,20 @@ _update_core_prompt_dirty() {
     verbose "update_core: ${_label}: repo ${_dir} is dirty"
 
     if _update_core_has_typed_input; then
-        warn "update_core: ${_label}: repo is dirty — merge will fail"
-        warn "update_core: stash or commit changes manually before updating"
+        warn "${_label}: repo is dirty — merge will fail"
+        warn "stash or commit changes manually before updating"
         return 1
     fi
 
-    print -n "update_core: ${_label}: repo has uncommitted changes — merge will fail. Stash and continue? [y/N] "
+    print -n "${_label}: repo has uncommitted changes — merge will fail. Stash and continue? [y/N] "
     local _ans
     read -r -k1 _ans; print ""
     if [[ "$_ans" != [yY] ]]; then
-        warn "update_core: ${_label}: skipping (dirty repo)"
+        warn "${_label}: skipping (dirty repo)"
         return 1
     fi
-    warn "update_core: ${_label}: stashing — note: if merge fails your changes will remain stashed"
-    warn "update_core: ${_label}: recover with: git -C ${_dir} stash pop"
+    warn "${_label}: stashing — note: if merge fails your changes will remain stashed"
+    warn "${_label}: recover with: git -C ${_dir} stash pop"
     return 0
 }
 
@@ -545,19 +545,19 @@ _update_core_maybe_stash() {
     verbose "update_core: ${_label}: repo ${_dir} is dirty"
 
     if _update_core_has_typed_input; then
-        warn "update_core: ${_label}: repo is dirty — cannot prompt, skipping update"
-        warn "update_core: stash or commit changes manually before updating"
+        warn "${_label}: repo is dirty — cannot prompt, skipping update"
+        warn "stash or commit changes manually before updating"
         return 1
     fi
 
-    print -n "update_core: ${_label}: repo has uncommitted changes. Stash and continue? [y/N] "
+    print -n "${_label}: repo has uncommitted changes. Stash and continue? [y/N] "
     local _ans
     read -r -k1 _ans; print ""
-    [[ "$_ans" != [yY] ]] && { warn "update_core: ${_label}: skipping (dirty repo)"; return 1; }
+    [[ "$_ans" != [yY] ]] && { warn "${_label}: skipping (dirty repo)"; return 1; }
 
     log_debug "update_core: ${_label}: stashing in ${_dir}"
     git -C "$_dir" stash push -q -m "dotfiler: stash before ${_label}" || {
-        warn "update_core: ${_label}: git stash failed — skipping"
+        warn "${_label}: git stash failed — skipping"
         return 1
     }
     REPLY=1
@@ -570,8 +570,8 @@ _update_core_pop_stash() {
     local _dir=$1 _label=${2:-update}
     log_debug "update_core: ${_label}: popping stash in ${_dir}"
     git -C "$_dir" stash pop -q || {
-        warn "update_core: ${_label}: stash pop had conflicts — resolve manually"
-        warn "update_core: run: git -C ${_dir} stash pop"
+        warn "${_label}: stash pop had conflicts — resolve manually"
+        warn "run: git -C ${_dir} stash pop"
     }
 }
 
@@ -609,8 +609,8 @@ _update_core_commit_parent() {
     case $_mode in
         auto)
             if ! _update_core_check_foreign_staged "$_parent" "$_rel"; then
-                warn "update_core: foreign staged changes in parent repo — skipping auto-commit (${_label})"
-                warn "update_core: commit manually: git -C ${_parent} add ${_rel} && git -C ${_parent} commit"
+                warn "${_label}: foreign staged changes in parent repo — skipping auto-commit"
+                warn "commit manually: git -C ${_parent} add ${_rel} && git -C ${_parent} commit"
                 return 0
             fi
             git -C "$_parent" add "$_rel" 2>/dev/null
@@ -623,10 +623,10 @@ _update_core_commit_parent() {
         prompt)
             _update_core_has_typed_input && return 0
             if ! _update_core_check_foreign_staged "$_parent" "$_rel"; then
-                warn "update_core: foreign staged changes in parent repo — skipping commit (${_label})"
+                warn "${_label}: foreign staged changes in parent repo — skipping commit"
                 return 0
             fi
-            print -n "update_core: ${_label} — commit in parent repo? [y/N] "
+            print -n "${_label} — commit in parent repo? [y/N] "
             local _ans
             read -r -k1 _ans; print ""
             if [[ "$_ans" == (y|Y) ]]; then
@@ -639,7 +639,7 @@ _update_core_commit_parent() {
             fi
             ;;
         none|*)
-            info "update_core: ${_label} — parent repo is dirty (commit manually)"
+            info "${_label} — parent repo is dirty (commit manually)"
             return 0
             ;;
     esac
