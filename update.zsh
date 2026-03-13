@@ -150,148 +150,244 @@ function _update_dotfiler_init() {
 
     verbose "update_self: topology=${_dotfiler_topology}"
     log_debug "update_self: stamp=${_dotfiler_self_stamp}"
+
+    verbose "update_self: init done (topology=${_dotfiler_topology})"
+    # Registration into the hook dispatch system happens inside _update_phase_plan,
+    # after main registers, so the dispatch order is: main → dotfiler → hooks.
 }
 
 
 # ---------------------------------------------------------------------------
-# _update_dotfiler_plan
+# _update_dotfiler_plan [--phase=dotfiles|components]
 #
-# Fetch remotes and check whether an update is available.
-# Sets _dotfiler_update_avail (0=available, non-zero=up-to-date or error).
+# Phase-aware plan function for the dotfiler scripts.  Called by the hook
+# dispatch loop in _update_phase_plan — receives --phase= the same way
+# hook plan_fn's do.
+#
+# --phase=dotfiles  (Phase 1, parent-directed)
+#   Uses _dotfiler_hint_range_dotfiler resolved from dotfiles history.
+#   If no hint: no-ops cleanly; Phase 2 will self-direct if upstream is ahead.
+#
+# --phase=components  (Phase 2, self-directed)
+#   Checks own upstream, computes tip range, builds file lists.
+#
+# No --phase arg: treated as components (dotfiler-only run).
 # ---------------------------------------------------------------------------
 
 function _update_dotfiler_plan() {
-    verbose "update_self: plan begin (topology=${_dotfiler_topology})"
-    local _old _new _range
-    case $_dotfiler_topology in
-        standalone|submodule)
-            local _avail
-            log_debug "update_self: plan: checking availability"
-            _update_core_is_available "$script_dir" && _avail=0 || _avail=$?
-            _dotfiler_update_avail=$_avail
-            log_debug "update_self: plan: avail=${_avail}"
-            if (( _avail == 0 )); then
-                _update_core_component_tip_range "$script_dir" "$_dotfiler_topology"
-                _range="$REPLY"
-                _update_core_build_file_lists "$script_dir" "$_range"
-                typeset -ga _dotfiler_self_to_unpack _dotfiler_self_to_remove
-                _dotfiler_self_to_unpack=("${_update_core_files_to_unpack[@]}")
-                _dotfiler_self_to_remove=("${_update_core_files_to_remove[@]}")
-                log_debug "update_self: plan: ${#_dotfiler_self_to_unpack} to unpack, ${#_dotfiler_self_to_remove} to remove"
-            fi
-            ;;
-        subtree)
-            local _avail
-            log_debug "update_self: plan: checking availability (subtree spec='${_dotfiler_subtree_spec}')"
-            _update_core_is_available_subtree \
-                "$script_dir" "$_dotfiler_subtree_spec" \
-                "$_dotfiler_subtree_url" && _avail=0 || _avail=$?
-            _dotfiler_update_avail=$_avail
-            log_debug "update_self: plan: avail=${_avail}"
-            if (( _avail == 0 )); then
+    local _phase=components
+    [[ "${1:-}" == --phase=* ]] && _phase="${1#--phase=}"
+
+    verbose "update_self: plan begin (topology=${_dotfiler_topology} phase=${_phase})"
+    typeset -ga _dotfiler_plan_dotfiler_to_unpack _dotfiler_plan_dotfiler_to_remove
+
+    # Sentinel: empty range = nothing to do (mirrors zdot convention).
+    # pull/post/unpack all guard on [[ -z "$_dotfiler_plan_dotfiler_range" ]].
+    _dotfiler_plan_dotfiler_range=""
+    _dotfiler_plan_dotfiler_topology="$_dotfiler_topology"
+    _dotfiler_plan_dotfiler_pull_outcome=skip
+
+    # ── Determine old/new SHAs and remote/branch ──────────────────────────
+    local _old="" _new="" _remote="" _branch=""
+
+    if [[ "$_phase" == dotfiles ]]; then
+        # Phase 1: use hint range resolved from dotfiles history, if available.
+        local _hint="${_dotfiler_hint_range_dotfiler:-}"
+        if [[ -z "$_hint" ]]; then
+            verbose "update_self: plan: phase=dotfiles — no hint (dotfiles unchanged or no marker yet)"
+            return 0
+        fi
+        # subdir/none: parent pull already advanced scripts — nothing to do.
+        case $_dotfiler_topology in
+            subdir|none|*)
+                verbose "update_self: plan: phase=dotfiles topology=${_dotfiler_topology} — parent manages scripts"
+                return 0
+                ;;
+            standalone|submodule|subtree)
+                ;;
+        esac
+        _old="${_hint%%..*}"
+        _new="${_hint##*..}"
+        # Fetch to materialise the component SHAs locally before diffing.
+        if [[ "$_dotfiler_topology" == subtree ]]; then
+            _remote="$_dotfiler_subtree_url"
+            _branch="${_dotfiler_subtree_spec#* }"
+        else
+            _remote=$(_update_core_get_default_remote "$script_dir")
+            _branch=$(_update_core_get_default_branch "$script_dir" "$_remote")
+        fi
+        log_debug "update_self: plan: phase=dotfiles fetching ${_remote}/${_branch} to materialise ${_new}"
+        git -C "$script_dir" fetch -q "$_remote" "$_branch" 2>/dev/null || true
+        verbose "update_self: plan: phase=dotfiles — using hint range ${_hint}"
+
+    else
+        # Phase 2 / standalone run: self-directed, check own upstream.
+        _update_core_is_dotfiler_available \
+            "$script_dir" "$_dotfiler_subtree_spec" "$_dotfiler_subtree_url" \
+            || { verbose "update_self: plan done — dotfiler up to date"; info "dotfiler: up to date"; return 0; }
+
+        # Compute tip range for file-list building.
+        case $_dotfiler_topology in
+            subtree)
+                _update_core_resolve_subtree_spec "$script_dir" \
+                    "$_dotfiler_subtree_spec" "$_dotfiler_subtree_url" || {
+                    error "update_self: plan: could not resolve subtree spec"; return 1
+                }
+                _remote="$reply[1]" _branch="$reply[2]"
                 _update_core_component_tip_range "$script_dir" subtree \
-                    "$_dotfiler_subtree_url" "${_dotfiler_subtree_spec#* }"
-                _range="$REPLY"
-                _update_core_build_file_lists "$script_dir" "$_range"
-                typeset -ga _dotfiler_self_to_unpack _dotfiler_self_to_remove
-                _dotfiler_self_to_unpack=("${_update_core_files_to_unpack[@]}")
-                _dotfiler_self_to_remove=("${_update_core_files_to_remove[@]}")
-                log_debug "update_self: plan: ${#_dotfiler_self_to_unpack} to unpack, ${#_dotfiler_self_to_remove} to remove"
-            fi
-            ;;
-        subdir)
-            verbose "update_self: subdir topology — parent repo manages scripts, skipping self-update"
-            _dotfiler_update_avail=1
-            ;;
-        none|*)
-            verbose "update_self: scripts directory is not a git repo — skipping self-update"
-            _dotfiler_update_avail=1
-            ;;
-    esac
-    verbose "update_self: plan done (update_avail=${_dotfiler_update_avail})"
-    (( _dotfiler_update_avail != 0 )) && info "dotfiler: up to date"
+                    "$_dotfiler_subtree_url" "$_branch"
+                ;;
+            *)
+                _remote=$(_update_core_get_default_remote "$script_dir")
+                _branch=$(_update_core_get_default_branch "$script_dir" "$_remote")
+                _update_core_component_tip_range "$script_dir" "$_dotfiler_topology"
+                ;;
+        esac
+        local _tip_range="$REPLY"
+        if [[ -z "$_tip_range" ]]; then
+            verbose "update_self: plan done — dotfiler up to date"; info "dotfiler: up to date"; return 0
+        fi
+        _old="${_tip_range%%..*}"
+        _new="${_tip_range##*..}"
+    fi
+
+    # ── _old == _new guard ────────────────────────────────────────────────
+    # Can occur when hint resolution gives identical SHAs (e.g. marker already
+    # matches remote). Treat as nothing to do, not as an error.
+    if [[ "$_old" == "$_new" ]]; then
+        log_debug "update_self: plan: old==new (${_old[1,12]}) — nothing to do"
+        return 0
+    fi
+
+    # ── Store context for pull/post to consume ────────────────────────────
+    # Avoids re-deriving remote/branch/parent in each subsequent phase fn.
+    _dotfiler_plan_dotfiler_remote="$_remote"
+    _dotfiler_plan_dotfiler_branch="$_branch"
+    _dotfiler_plan_dotfiler_subtree_spec="$_dotfiler_subtree_spec"
+    _dotfiler_plan_dotfiler_subtree_url="$_dotfiler_subtree_url"
+
+    # ── Build file lists and set range sentinel ───────────────────────────
+    local _range="${_old}..${_new}"
+    _update_core_build_file_lists "$script_dir" "$_range"
+    _dotfiler_plan_dotfiler_to_unpack=("${_update_core_files_to_unpack[@]}")
+    _dotfiler_plan_dotfiler_to_remove=("${_update_core_files_to_remove[@]}")
+    log_debug "update_self: plan: ${#_dotfiler_plan_dotfiler_to_unpack} to unpack," \
+        "${#_dotfiler_plan_dotfiler_to_remove} to remove"
+
+    # Set sentinel last — non-empty range signals "update available" to all
+    # downstream phase functions and to the _update_phase_pull skip gate.
+    _dotfiler_plan_dotfiler_range="$_range"
+    verbose "update_self: plan done (range=${_range})"
 }
 
 # ---------------------------------------------------------------------------
-# _update_dotfiler_pull
+# _update_dotfiler_pull [--phase=dotfiles|components]
 #
 # Perform the actual git operations to update the scripts dir.
+# Phase 1 (dotfiles): pin to the exact SHA resolved from dotfiles history.
+# Phase 2 (components): advance to remote tip.
+#
+# Reads all context from _dotfiler_plan_dotfiler_* — no re-derivation.
+# Writes failure stamps inline (pull is the only phase that runs on error).
+# Success stamps are written by post after marker/pointer work completes.
 # ---------------------------------------------------------------------------
 
 function _update_dotfiler_pull() {
-    verbose "update_self: pull begin (topology=${_dotfiler_topology})"
-    case $_dotfiler_topology in
+    local _phase=components
+    [[ "${1:-}" == --phase=* ]] && _phase="${1#--phase=}"
+
+    local _topology="${_dotfiler_plan_dotfiler_topology:-$_dotfiler_topology}"
+    local _range="${_dotfiler_plan_dotfiler_range:-}"
+    local _remote="${_dotfiler_plan_dotfiler_remote:-}"
+    local _branch="${_dotfiler_plan_dotfiler_branch:-}"
+
+    # Reset outcome from any prior run.
+    _dotfiler_plan_dotfiler_pull_outcome=skip
+
+    # Empty range = plan found nothing to do.
+    if [[ -z "$_range" ]]; then
+        log_debug "update_self: pull: nothing planned — skipping"
+        return 0
+    fi
+
+    # Resolve pull target: Phase 1 pins to exact SHA; Phase 2 uses remote tip.
+    local _target_ref="${_remote}/${_branch}"
+    if [[ "$_phase" == dotfiles ]]; then
+        _target_ref="${_range#*..}"
+    fi
+
+    verbose "update_self: pull begin (topology=${_topology} phase=${_phase} target=${_target_ref[1,12]})"
+
+    if (( _dry_run )); then
+        case $_topology in
+            standalone)
+                if [[ "$_phase" == dotfiles ]]; then
+                    info "update_self: [dry-run] would: git merge --ff-only ${_target_ref[1,12]} (rebase if needed)"
+                else
+                    info "update_self: [dry-run] would: git pull --ff-only --autostash ${_remote} ${_branch}"
+                fi
+                ;;
+            submodule)
+                _update_core_get_parent_root "$script_dir"
+                local _parent="${reply[1]}"
+                local _submod_root
+                _submod_root=$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null)
+                local _rel=${_submod_root#${_parent}/}
+                if [[ "$_phase" == dotfiles ]]; then
+                    info "update_self: [dry-run] would: git submodule update -- ${_rel} (ancestry-checked)"
+                else
+                    info "update_self: [dry-run] would: git submodule update --remote -- ${_rel}"
+                fi
+                ;;
+            subtree)
+                if [[ "$_phase" == dotfiles ]]; then
+                    info "update_self: [dry-run] subtree phase=dotfiles — no-op (parent already current)"
+                else
+                    _update_core_get_parent_root "$script_dir"
+                    local _parent="${reply[1]}"
+                    local _rel=${${script_dir:A}#${_parent:A}/}
+                    info "update_self: [dry-run] would: git subtree pull --prefix=${_rel} ${_remote} ${_branch} --squash"
+                fi
+                ;;
+        esac
+        verbose "update_self: pull done (dry-run)"
+        return 0
+    fi
+
+    case $_topology in
 
         # -------------------------------------------------------------------
         standalone)
         # -------------------------------------------------------------------
-            if (( _dotfiler_update_avail == 0 )); then
-                info "update_self: update available — pulling scripts (standalone)"
-                if (( _dry_run )); then
-                    info "update_self: [dry-run] would git pull"
-                else
-                    local _remote _branch
-                    _remote=$(_update_core_get_default_remote "$script_dir")
-                    _branch=$(_update_core_get_default_branch "$script_dir" "$_remote")
-                     _update_core_prompt_dirty "$script_dir" "dotfiler (standalone)" || return 1
-                    verbose "update_self: git pull --autostash ${_remote} ${_branch}"
-                    git -C "$script_dir" pull --ff-only --autostash "$_remote" "$_branch" || {
-                        error "update_self: git pull failed."
-                        _update_core_write_timestamp "$_dotfiler_self_stamp" 1 "git pull failed"
-                        return 1
-                    }
-                    log_debug "update_self: pull succeeded — writing stamp"
-                    _update_core_write_timestamp "$_dotfiler_self_stamp" 0 ""
-                fi
-            else
-                verbose "update_self: scripts already up to date"
-                (( _dry_run )) || _update_core_write_timestamp "$_dotfiler_self_stamp" 0 ""
-            fi
+            _update_core_component_pull_standalone \
+                "$script_dir" "$_target_ref" "$_remote" "$_branch" "$_phase" || {
+                error "update_self: standalone pull failed."
+                _update_core_write_timestamp "$_dotfiler_self_stamp" 1 "standalone pull failed"
+                return 1
+            }
+            _dotfiler_plan_dotfiler_pull_outcome=$REPLY
             ;;
 
         # -------------------------------------------------------------------
         submodule)
         # -------------------------------------------------------------------
-            if (( _dotfiler_update_avail != 0 )); then
-                verbose "update_self: scripts already up to date"
-                (( _dry_run )) || _update_core_write_timestamp "$_dotfiler_self_stamp" 0 ""
-            else
-                _update_core_get_parent_root "$script_dir"
-                if [[ "${reply[2]}" != superproject ]]; then
-                    error "update_self: cannot find parent repo for submodule."
-                    return 1
-                fi
-                local _parent="${reply[1]}"
-                local _submod_root
-                _submod_root=$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null)
-                local _rel=${_submod_root#${_parent}/}
-                log_debug "update_self: submodule parent=${_parent} rel=${_rel}"
-                local _mode
-                _update_core_get_in_tree_commit_mode ':dotfiler:update'; local _mode=$REPLY
-                log_debug "update_self: in-tree-commit mode=${_mode}"
-                if (( _dry_run )); then
-                    info "update_self: [dry-run] would: git -C ${_parent} submodule update --remote -- ${_rel}"
-                else
-                    local _stashed=0
-                    _update_core_maybe_stash "$_parent" "dotfiles repo (dotfiler submodule)" || return 1
-                    _stashed=$REPLY
-                    verbose "update_self: git submodule update --remote -- ${_rel}"
-                    git -C "$_parent" submodule update --remote -- "$_rel" || {
-                        (( _stashed )) && _update_core_pop_stash "$_parent" "dotfiles repo (dotfiler submodule)"
-                        error "update_self: submodule update failed."
-                        _update_core_write_timestamp "$_dotfiler_self_stamp" 1 "submodule update failed"
-                        return 1
-                    }
-                    (( _stashed )) && _update_core_pop_stash "$_parent" "dotfiles repo (dotfiler submodule)"
-                    _update_core_commit_parent \
-                        "$_parent" "$_rel" \
-                        "dotfiler submodule updated" \
-                        "dotfiler: update scripts submodule" \
-                        "$_mode"
-                    log_debug "update_self: submodule pull succeeded — writing stamp"
-                    _update_core_write_timestamp "$_dotfiler_self_stamp" 0 ""
-                fi
+            _update_core_get_parent_root "$script_dir"
+            if [[ "${reply[2]}" != superproject ]]; then
+                error "update_self: cannot find parent repo for submodule."
+                return 1
             fi
+            local _parent="${reply[1]}"
+            local _submod_root
+            _submod_root=$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null)
+            local _rel=${_submod_root#${_parent}/}
+            log_debug "update_self: submodule parent=${_parent} rel=${_rel}"
+            _update_core_component_pull_submodule \
+                "$_parent" "$_rel" "$_target_ref" "$_phase" || {
+                error "update_self: submodule pull failed."
+                _update_core_write_timestamp "$_dotfiler_self_stamp" 1 "submodule pull failed"
+                return 1
+            }
+            _dotfiler_plan_dotfiler_pull_outcome=$REPLY
             ;;
 
         # -------------------------------------------------------------------
@@ -305,77 +401,88 @@ function _update_dotfiler_pull() {
             local _parent="${reply[1]}"
             local _rel=${${script_dir:A}#${_parent:A}/}
             log_debug "update_self: subtree parent=${_parent} rel=${_rel}"
-            local _remote _branch _remote_url
-            _update_core_resolve_subtree_spec "$script_dir" "$_dotfiler_subtree_spec" \
-                "$_dotfiler_subtree_url" || {
-                error "update_self: could not resolve subtree spec '${_dotfiler_subtree_spec}'"
+            _update_core_component_pull_subtree \
+                "$_parent" "$_rel" "$_remote" "$_branch" "$_phase" || {
+                error "update_self: subtree pull failed."
+                _update_core_write_timestamp "$_dotfiler_self_stamp" 1 "subtree pull failed"
                 return 1
             }
-            _remote="$reply[1]" _branch="$reply[2]" _remote_url="$reply[3]"
-            if (( _dotfiler_update_avail != 0 )); then
-                # Up to date — idempotent marker write covers hand-merge case.
-                verbose "update_self: scripts already up to date"
-                if (( ! _dry_run )); then
-                    local _current_sha
-                    _current_sha=$(_update_core_resolve_remote_sha "$_remote_url" "$_branch" 2>/dev/null)
-                    if [[ -n "$_current_sha" ]]; then
-                        _update_core_write_sha_marker "$script_dir" "$_current_sha"
-                    fi
-                    _update_core_write_timestamp "$_dotfiler_self_stamp" 0 ""
-                fi
-            else
-                local _mode
-                _update_core_get_in_tree_commit_mode ':dotfiler:update'; local _mode=$REPLY
-                log_debug "update_self: subtree remote=${_remote} branch=${_branch} in-tree-commit=${_mode}"
-                if (( _dry_run )); then
-                    info "update_self: [dry-run] would: git subtree pull --prefix=${_rel} ${_remote} ${_branch} --squash"
-                else
-                    local _stashed=0
-                    _update_core_maybe_stash "$_parent" "dotfiles repo (dotfiler subtree)" || return 1
-                    _stashed=$REPLY
-                    verbose "update_self: git subtree pull --prefix=${_rel} ${_remote} ${_branch} --squash"
-                    local _subtree_out _subtree_rc
-                    _subtree_out=$(git -C "$_parent" subtree pull \
-                        --prefix="$_rel" "$_remote" "$_branch" --squash 2>&1)
-                    _subtree_rc=$?
-                    log_debug "update_self: subtree pull output: ${_subtree_out}"
-                    if (( _subtree_rc == 0 )); then
-                        local _pulled_sha
-                        _pulled_sha=$(_update_core_resolve_remote_sha "$_remote_url" "$_branch" 2>/dev/null)
-                        if [[ -n "$_pulled_sha" ]]; then
-                            _update_core_write_sha_marker "$script_dir" "$_pulled_sha"
-                        fi
-                        _update_core_sha_marker_path "$script_dir"
-                        local _marker_path=$REPLY
-                        if [[ "$_mode" != "none" && -f "$_marker_path" ]]; then
-                            git -C "$_parent" add "$_marker_path" 2>/dev/null
-                        fi
-                        _update_core_commit_parent \
-                            "$_parent" "$_rel" \
-                            "dotfiler subtree updated" \
-                            "dotfiler: update scripts subtree" \
-                            "$_mode"
-                        log_debug "update_self: subtree pull succeeded — writing stamp"
-                        _update_core_write_timestamp "$_dotfiler_self_stamp" 0 ""
-                        (( _stashed )) && _update_core_pop_stash "$_parent" "dotfiles repo (dotfiler subtree)"
-                    else
-                        (( _stashed )) && _update_core_pop_stash "$_parent" "dotfiles repo (dotfiler subtree)"
-                        error "update_self: subtree pull failed."
-                        _update_core_write_timestamp "$_dotfiler_self_stamp" $_subtree_rc "subtree pull failed"
-                        return 1
-                    fi
-                fi
-            fi
+            _dotfiler_plan_dotfiler_pull_outcome=$REPLY
             ;;
 
         # -------------------------------------------------------------------
         subdir|none|*)
         # -------------------------------------------------------------------
-            verbose "update_self: pull: topology=${_dotfiler_topology} — nothing to do"
+            verbose "update_self: pull: topology=${_topology} — nothing to do"
             ;;
     esac
-    (( _dotfiler_update_avail == 0 )) && (( ! _dry_run )) && info "dotfiler: updated"
     verbose "update_self: pull done"
+}
+
+# ---------------------------------------------------------------------------
+# _update_dotfiler_post [--phase=dotfiles|components]
+#
+# Post-pull step: write SHA markers and/or commit parent repo pointers,
+# then write the success stamp.
+#
+# Phase 1 (dotfiles): dotfiles history is already authoritative — do NOT
+#   write markers or commit parent pointers (mirrors zdot behaviour).
+#   Stamp is also skipped; Phase 2 post will write it after completing.
+# Phase 2 (components): write markers, commit parent, write success stamp.
+#
+# Reads context from _dotfiler_plan_dotfiler_* vars set by plan.
+# ---------------------------------------------------------------------------
+
+function _update_dotfiler_post() {
+    local _phase=components
+    [[ "${1:-}" == --phase=* ]] && _phase="${1#--phase=}"
+
+    local _range="${_dotfiler_plan_dotfiler_range:-}"
+    local _topology="${_dotfiler_plan_dotfiler_topology:-$_dotfiler_topology}"
+    local _outcome="${_dotfiler_plan_dotfiler_pull_outcome:-skip}"
+
+    verbose "update_self: post begin (topology=${_topology} phase=${_phase} outcome=${_outcome})"
+
+    # Empty range = plan found nothing to do — no pointer to commit.
+    if [[ -z "$_range" ]]; then
+        log_debug "update_self: post: no changes planned — skipping"
+        return 0
+    fi
+
+    local _new="${_range#*..}"
+
+    local _mode
+    _update_core_get_in_tree_commit_mode ':dotfiler:update'; _mode=$REPLY
+
+    case $_topology in
+        standalone|submodule|subtree)
+            _update_core_get_parent_root "$script_dir"
+            local _parent="${reply[1]}"
+            local _rel
+            if [[ "$_topology" == submodule ]]; then
+                local _submod_root
+                _submod_root=$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null)
+                _rel=${_submod_root#${_parent}/}
+            else
+                _rel=${${script_dir:A}#${_parent:A}/}
+            fi
+            log_debug "update_self: post: parent=${_parent} rel=${_rel} new=${_new[1,12]}"
+            if (( ! _dry_run )); then
+                _update_core_component_post_marker \
+                    "$script_dir" "$_parent" "$_rel" "$_new" \
+                    "$_topology" "$_mode" "$_phase" "$_outcome" || {
+                    error "update_self: post marker/commit failed."
+                    return 1
+                }
+                _update_core_write_timestamp "$_dotfiler_self_stamp" 0 ""
+            fi
+            info "dotfiler: updated"
+            ;;
+        subdir|none|*)
+            verbose "update_self: post: topology=${_topology} — nothing to do"
+            ;;
+    esac
+    verbose "update_self: post done"
 }
 
 # ---------------------------------------------------------------------------
@@ -402,6 +509,16 @@ function _update_dotfiler_unpack() {
     #     setup_core_main "${_setup_args[@]}"
     # )
     return 0
+}
+
+# ---------------------------------------------------------------------------
+# _update_dotfiler_cleanup — called by _update_cleanup for dotfiler's slot
+# ---------------------------------------------------------------------------
+# Unsets any remaining dotfiler-specific state that falls outside the
+# _dotfiler_plan_* / _dotfiler_hint_range_* globs cleared by _update_plan_reset.
+_update_dotfiler_cleanup() {
+    unset _dotfiler_topology _dotfiler_subtree_spec _dotfiler_subtree_url \
+          _dotfiler_self_stamp
 }
 
 # ===========================================================================
@@ -484,6 +601,23 @@ function _update_phase_plan(){
             '_update_main_pull' \
             '_update_main_unpack' \
             '_update_main_post'
+
+        # Register dotfiler immediately after main so the dispatch order is:
+        # main → dotfiler → hook-file hooks.
+        # check_fn is empty — availability checking lives in check_update.zsh.
+        # Guard: _update_dotfiler_init sets _dotfiler_topology; if dotfiler
+        # phase is excluded from this run the variable is unset and we skip.
+        if [[ -n "${_dotfiler_topology:-}" ]]; then
+            _update_register_hook dotfiler \
+                '' \
+                _update_dotfiler_plan \
+                _update_dotfiler_pull \
+                _update_dotfiler_unpack \
+                _update_dotfiler_post \
+                _update_dotfiler_cleanup \
+                "$script_dir" \
+                "$_dotfiler_topology"
+        fi
 
         verbose "update: phase plan: main repo" \
             "${#_dotfiler_plan_main_to_unpack[@]} to unpack" \
@@ -810,6 +944,8 @@ function _update_cleanup() {
         _update_dotfiler_plan \
         _update_dotfiler_pull \
         _update_dotfiler_unpack \
+        _update_dotfiler_post \
+        _update_dotfiler_cleanup \
         _update_phase_plan \
         _update_main_pull \
         _update_main_unpack \
@@ -838,7 +974,6 @@ function _update_cleanup() {
         _dotfiler_subtree_spec \
         _dotfiler_subtree_url \
         _dotfiler_self_stamp \
-        _dotfiler_update_avail \
         2>/dev/null
     _update_core_cleanup
     setup_core_unload
@@ -869,11 +1004,18 @@ function _update_main() {
     [[ "$_update_range_mode" == true ]] && \
         verbose "update: range mode active (repo=${dotfiles_dir})"
 
-    if _update_should_run_phase dotfiles || _update_should_run_phase hooks; then
+    # Init dotfiler — this self-registers dotfiler into the hook dispatch system
+    # (main → dotfiler → hooks) so Phase 1 and Phase 2 loops handle it uniformly.
+    if _update_should_run_phase dotfiler; then
+        _update_dotfiler_init
+    fi
+
+    if _update_should_run_phase dotfiles || _update_should_run_phase hooks \
+        || _update_should_run_phase dotfiler; then
         # ── Phase 1: parent-directed ──────────────────────────────────────
-        # Dotfiles drives component updates. Component ranges are resolved from
-        # dotfiles marker files / submodule pointers. Pull pins each component
-        # to exactly the SHA dotfiles records. No new dotfiles commits produced.
+        # Dotfiles drives component updates. Ranges are resolved from dotfiles
+        # marker files / submodule pointers and all components (including
+        # dotfiler) are pinned to exactly the SHA dotfiles records.
         verbose "update: phase 1 (parent-directed) begin"
         info "Checking for updates..."
         _update_phase_plan || exit $?
@@ -882,17 +1024,14 @@ function _update_main() {
         _update_phase_post --phase=dotfiles
 
         # ── Phase 2: self-directed ────────────────────────────────────────
-        # Component remotes may be ahead of what dotfiles records. Each component
-        # fetches its own remote independently and advances to tip if new commits
-        # exist. Produces per-component dotfiles commits to record updated SHAs.
-        # Skipped when --range / --commit-hash was given: the user asked to replay
-        # a specific dotfiles state; self-directed tip advancement would overshoot.
+        # Component remotes may be ahead of what dotfiles records. Each
+        # component (including dotfiler) fetches its own remote and advances
+        # to tip. Produces per-component dotfiles commits recording new SHAs.
+        # Skipped when --range / --commit-hash was given.
         if [[ "$_update_range_mode" != true ]]; then
             verbose "update: phase 2 (self-directed) begin"
             info "Checking for component updates beyond dotfiles..."
-            # Clear hint ranges and plan vars so Phase 2 plans from scratch.
             _update_plan_reset
-            # --phase=components: hooks already registered in Phase 1, fns already defined
             _update_phase_plan --phase=components || exit $?
             _update_phase_pull || exit $?
             _update_phase_unpack
@@ -900,19 +1039,6 @@ function _update_main() {
         else
             verbose "update: phase 2 skipped (range mode)"
         fi
-    else
-        verbose "update: skipping dotfiles/hooks phases"
-    fi
-
-    if _update_should_run_phase dotfiler; then
-        verbose "update: running dotfiler phase"
-        info "Checking dotfiler..."
-        _update_dotfiler_init
-        _update_dotfiler_plan
-        _update_dotfiler_pull || exit $?
-        _update_dotfiler_unpack
-    else
-        verbose "update: skipping dotfiler phase"
     fi
 
     verbose "update: done"

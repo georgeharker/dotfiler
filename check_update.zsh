@@ -100,6 +100,30 @@ if ! command git -C "$dotfiles_dir" rev-parse --is-inside-work-tree &>/dev/null;
     return
 fi
 
+# is_update_available
+#
+# Returns 0 if any pending update exists across all three update concerns,
+# 1 if everything is current.
+#
+# The three checks deliberately mirror update.zsh's three phases:
+#
+#   Check 1 — main repo (Phase 1, parent-directed)
+#     Did the dotfiles repo's upstream move?  If so, Phase 1 will pull it and
+#     resolve any component pointer bumps (submodule refs, SHA markers) that
+#     dotfiles carries.  A single check on dotfiles_dir covers all of these.
+#
+#   Check 2 — component hooks (Phase 2, self-directed)
+#     Is any component's upstream ahead of what dotfiles currently records?
+#     Each hook's check_fn independently compares the component's HEAD against
+#     its own remote.  This is intentionally asymmetric with Check 1: the two
+#     together cover both directions of component update (parent-driven and
+#     component-driven), without either duplicating the other.
+#
+#   Check 3 — dotfiler scripts
+#     Is the dotfiler scripts repo itself ahead upstream?  Handled separately
+#     because dotfiler is not a component hook — it has its own update phase.
+#
+# Short-circuits on first positive result to avoid unnecessary fetches.
 function is_update_available() {
     verbose "check_update: checking main repo ${dotfiles_dir}"
     if _update_core_is_available "$dotfiles_dir"; then
@@ -109,6 +133,15 @@ function is_update_available() {
     verbose "check_update: checking component hooks"
     if _check_update_invoke_hooks; then
         verbose "check_update: update available via hook"
+        return 0
+    fi
+    verbose "check_update: checking dotfiler scripts (${script_dir})"
+    local _subtree_spec _subtree_url
+    _update_core_get_dotfiler_subtree_config
+    _subtree_spec=$reply[1]
+    _subtree_url=$reply[2]
+    if _update_core_is_dotfiler_available "$script_dir" "$_subtree_spec" "$_subtree_url"; then
+        verbose "check_update: update available in dotfiler scripts"
         return 0
     fi
     verbose "check_update: no updates found"
@@ -199,98 +232,6 @@ function update_dotfiles() {
         verbose "check_update: background failed (exit ${exit_status})"
         _update_core_write_timestamp "$dotfiles_timestamp" $exit_status "$error_out"
         return $exit_status
-    fi
-}
-
-function handle_self_update() {
-    emulate -L zsh
-
-    log_debug "check_update: handle_self_update: acquiring lock ${dotfiler_cache_dir}/self_update.lock"
-    if ! _update_core_acquire_lock "$dotfiler_cache_dir/self_update.lock"; then
-        log_debug "check_update: handle_self_update: lock held — skipping"
-        return 0
-    fi
-
-    # Release the lock when the function exits normally.
-    # NOTE: do NOT use `return` in this EXIT trap — when the function is called
-    # at script top-level, the trap body executes in that scope and `return`
-    # becomes `exit`, which would terminate the script before handle_update runs.
-    trap "
-        _update_core_release_lock '$dotfiler_cache_dir/self_update.lock'
-        unset -f handle_self_update 2>/dev/null
-    " EXIT
-    trap "
-        ret=\$?
-        _update_core_release_lock '$dotfiler_cache_dir/self_update.lock'
-        unset -f handle_self_update 2>/dev/null
-        return \$ret
-    " INT QUIT
-
-    local _self_stamp="${dotfiler_cache_dir}/dotfiler_scripts_update"
-    local _self_freq
-    _update_core_get_update_frequency ':dotfiler:update'; local _self_freq=$REPLY
-
-    # Warn if the previous self-update run recorded a failure.
-    local _prev_exit _prev_error
-    { local EXIT_STATUS ERROR; source "$_self_stamp" 2>/dev/null
-      _prev_exit=${EXIT_STATUS:-}; _prev_error=${ERROR:-}; }
-    if [[ -n "$_prev_exit" ]] && (( _prev_exit != 0 )); then
-        warn "dotfiler: previous self-update failed${_prev_error:+: ${_prev_error}}"
-    fi
-
-    log_debug "check_update: handle_self_update: stamp=${_self_stamp} freq=${_self_freq} force=${force_update}"
-    if ! _update_core_should_update "$_self_stamp" "$_self_freq" "$force_update"; then
-        log_debug "check_update: handle_self_update: not yet due — skipping"
-        return 0
-    fi
-
-    local _subtree_spec _subtree_url
-    _update_core_get_dotfiler_subtree_config
-    _subtree_spec=$reply[1]
-    _subtree_url=$reply[2]
-    log_debug "check_update: handle_self_update: detecting deployment topology (subtree_spec='${_subtree_spec}')"
-    _update_core_detect_deployment "$script_dir" "$_subtree_spec"
-    local _topology=$REPLY
-
-    log_debug "check_update: handle_self_update: topology=${_topology}"
-    local _avail
-    case $_topology in
-        standalone|submodule)
-            log_debug "check_update: handle_self_update: checking availability (${_topology})"
-            _update_core_is_available "$script_dir"
-            _avail=$? ;;
-        subtree)
-            log_debug "check_update: handle_self_update: subtree spec='${_subtree_spec}' url='${_subtree_url}'"
-            _update_core_is_available_subtree "$script_dir" "$_subtree_spec" "$_subtree_url"
-            _avail=$? ;;
-        subdir|none|*)
-            log_debug "check_update: handle_self_update: topology=${_topology} — nothing to do"
-            return 0 ;;
-    esac
-
-    log_debug "check_update: handle_self_update: _avail=${_avail} (0=update available, 1=up to date)"
-
-    # _avail==1 means up to date or indeterminate — write clean stamp and return.
-    if (( _avail == 1 )); then
-        log_debug "check_update: handle_self_update: up to date — writing timestamp"
-        _update_core_write_timestamp "$_self_stamp" 0 ""
-        return 0
-    fi
-
-    # _avail==0 means an update is available — run update.zsh dotfiler phase.
-    local -a _self_update_args=( --update-phases dotfiler )
-    [[ -n "$DOTFILER_VERBOSE" ]] && _self_update_args+=( "--verbose" )
-    [[ -n "$DOTFILER_DEBUG" ]]   && _self_update_args+=( "--debug" )
-    log_debug "check_update: handle_self_update: update available — running update.zsh ${_self_update_args[*]}"
-    if "${script_dir}/update.zsh" "${_self_update_args[@]}"; then
-        log_debug "check_update: handle_self_update: self-update succeeded"
-        _update_core_write_timestamp "$_self_stamp" 0 ""
-        return 0
-    else
-        local _rc=$?
-        error "check_update: self-update failed (exit ${_rc}) — re-run with --debug for details"
-        _update_core_write_timestamp "$_self_stamp" $_rc "Self-update failed (exit ${_rc})"
-        return $_rc
     fi
 }
 
@@ -425,9 +366,8 @@ case "$update_mode" in
         verbose "check_update: scheduling background update check via precmd hook"
 
         _dotfiles_bg_update() {
-            verbose "check_update: _dotfiles_bg_update: launching subshells"
-            # Run both updates in subshells so they don't block the shell
-            (handle_self_update) &|
+            verbose "check_update: _dotfiles_bg_update: launching subshell"
+            # Run update in a subshell so it doesn't block the shell
             (handle_update) &|
 
             # Register status check hook for next prompt
@@ -482,8 +422,7 @@ case "$update_mode" in
         add-zsh-hook precmd _dotfiles_bg_update
         ;;
     *)
-        verbose "check_update: foreground mode (${update_mode}) — running handle_self_update then handle_update"
-        handle_self_update
+        verbose "check_update: foreground mode (${update_mode}) — running handle_update"
         handle_update
         # Core teardown: only safe here, after both handle_* have returned and
         # released their locks / written timestamps.

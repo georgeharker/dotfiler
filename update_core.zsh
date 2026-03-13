@@ -347,7 +347,7 @@ _update_core_detect_deployment() {
 }
 
 # ---------------------------------------------------------------------------
-# SHA marker helpers  –  persistent last-updated SHA for subtree deployments
+# SHA marker helpers  –  persistent last-known SHA for subtree deployments
 # ---------------------------------------------------------------------------
 # When a project is deployed as a git-subtree, the parent repo's HEAD has no
 # relationship to the subtree source repo's commit history.  We maintain a
@@ -540,6 +540,9 @@ _update_core_maybe_stash() {
     local _dir=$1 _label=${2:-update}
     REPLY=0
 
+    # In dry-run mode, never prompt or stash — report clean to caller.
+    (( ${_dry_run:-0} )) && return 0
+
     _update_core_check_dirty "$_dir" && return 0
 
     verbose "update_core: ${_label}: repo ${_dir} is dirty"
@@ -573,6 +576,338 @@ _update_core_pop_stash() {
         warn "${_label}: stash pop had conflicts — resolve manually"
         warn "run: git -C ${_dir} stash pop"
     }
+}
+
+# ---------------------------------------------------------------------------
+# _update_core_maybe_rebase <repo_dir> <label> <target_ref>
+#
+# Prompts the user to rebase <repo_dir> onto <target_ref>.
+# On consent runs `git rebase <target_ref>`.
+# REPLY=1 if rebased, 0 if skipped.
+# Returns 0 on success or skip, 1 on rebase failure or conflict.
+# ---------------------------------------------------------------------------
+_update_core_maybe_rebase() {
+    local _dir=$1 _label=$2 _target=$3
+    REPLY=0
+    warn "${_label}: local commits diverge from ${_target[1,12]} — cannot fast-forward."
+    if _update_core_has_typed_input; then
+        warn "${_label}: stdin has buffered input — skipping rebase prompt."
+        return 1
+    fi
+    read -rq "?${_label}: rebase local commits onto ${_target[1,12]}? [y/N] " || {
+        warn "${_label}: rebase skipped."
+        return 1
+    }
+    print ""
+    git -C "$_dir" rebase "$_target" || {
+        warn "${_label}: rebase failed — resolve conflicts and retry."
+        return 1
+    }
+    REPLY=1
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# _update_core_component_pull_standalone <repo_dir> <target_ref> <remote> <branch> <phase>
+#
+# Pull a standalone component repository.
+#   Phase dotfiles : merge --ff-only to <target_ref>; on failure prompt rebase.
+#                    If rebased, writes ext marker with the new HEAD SHA.
+#   Phase components: git pull --ff-only --autostash <remote> <branch>.
+#
+# REPLY = ff | rebase | pull | skip
+# Returns 0 on success, 1 on failure.
+# ---------------------------------------------------------------------------
+_update_core_component_pull_standalone() {
+    local _repo_dir=$1 _target_ref=$2 _remote=$3 _branch=$4 _phase=$5
+    REPLY=skip
+
+    _update_core_prompt_dirty "$_repo_dir" "standalone component" || return 1
+
+    if [[ "$_phase" == dotfiles ]]; then
+        if (( ${_dry_run:-0} )); then
+            verbose "component pull: [dry-run] would: standalone: git merge --ff-only ${_target_ref[1,12]}"
+            REPLY=ff
+            return 0
+        fi
+        verbose "component pull: standalone: git merge --ff-only ${_target_ref[1,12]}"
+        if git -C "$_repo_dir" merge -q --ff-only "$_target_ref" 2>/dev/null; then
+            REPLY=ff
+            return 0
+        fi
+        # Fast-forward failed — offer rebase.
+        _update_core_maybe_rebase "$_repo_dir" "standalone component" "$_target_ref" || return 1
+        if (( REPLY )); then
+            # Rebased: new HEAD differs from target_ref — rewrite ext marker.
+            local _rebased_sha
+            _rebased_sha=$(git -C "$_repo_dir" rev-parse HEAD 2>/dev/null) || {
+                warn "component pull: standalone: could not resolve HEAD after rebase."
+                return 1
+            }
+            _update_core_write_ext_marker "$_repo_dir" "$_rebased_sha" || return 1
+            REPLY=rebase
+        else
+            return 1
+        fi
+    else
+        if (( ${_dry_run:-0} )); then
+            verbose "component pull: [dry-run] would: standalone: git pull --ff-only --autostash ${_remote} ${_branch}"
+            REPLY=pull
+            return 0
+        fi
+        verbose "component pull: standalone: git pull --ff-only --autostash ${_remote} ${_branch}"
+        git -C "$_repo_dir" pull -q --ff-only --autostash "$_remote" "$_branch" || {
+            warn "component pull: standalone: git pull failed."
+            return 1
+        }
+        REPLY=pull
+    fi
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# _update_core_component_pull_submodule <parent> <rel> <target_ref> <phase>
+#
+# Pull a submodule component.
+#   Phase dotfiles : check ancestry; if ff-able run submodule update (pins to
+#                    dotfiles-recorded pointer).  If diverged, prompt rebase in
+#                    the submodule dir then stage the updated gitlink in parent.
+#   Phase components: submodule update --remote (advance to upstream tip).
+#
+# REPLY = ff | rebase | pull | skip
+# Returns 0 on success, 1 on failure.
+# ---------------------------------------------------------------------------
+_update_core_component_pull_submodule() {
+    local _parent=$1 _rel=$2 _target_ref=$3 _phase=$4
+    REPLY=skip
+
+    local _sub_dir="${_parent}/${_rel}"
+
+    if [[ "$_phase" == dotfiles ]]; then
+        # Determine current submodule HEAD.
+        local _current_sha
+        _current_sha=$(git -C "$_sub_dir" rev-parse HEAD 2>/dev/null) || {
+            warn "component pull: submodule: cannot resolve submodule HEAD in ${_sub_dir}."
+            return 1
+        }
+
+        # Check whether the current HEAD is an ancestor of target (ff-able).
+        if git -C "$_sub_dir" merge-base --is-ancestor "$_current_sha" "$_target_ref" 2>/dev/null; then
+            if (( ${_dry_run:-0} )); then
+                verbose "component pull: [dry-run] would: submodule: git submodule update -- ${_rel} (ff to ${_target_ref[1,12]})"
+                REPLY=ff
+                return 0
+            fi
+            verbose "component pull: submodule: git submodule update -- ${_rel} (ff to ${_target_ref[1,12]})"
+            local _stashed=0
+            _update_core_maybe_stash "$_parent" "dotfiles repo (submodule)" || return 1
+            _stashed=$REPLY
+            git -C "$_parent" submodule update -- "$_rel" || {
+                (( _stashed )) && _update_core_pop_stash "$_parent" "dotfiles repo (submodule)"
+                warn "component pull: submodule update failed."
+                return 1
+            }
+            (( _stashed )) && _update_core_pop_stash "$_parent" "dotfiles repo (submodule)"
+            REPLY=ff
+        else
+            # Diverged — offer rebase inside the submodule.
+            _update_core_maybe_rebase "$_sub_dir" "submodule component" "$_target_ref" || return 1
+            if (( REPLY )); then
+                if (( ! ${_dry_run:-0} )); then
+                    # Stage the updated gitlink in the parent.
+                    git -C "$_parent" add "$_rel" || {
+                        warn "component pull: submodule: could not stage updated gitlink."
+                        return 1
+                    }
+                fi
+                REPLY=rebase
+            else
+                return 1
+            fi
+        fi
+    else
+        if (( ${_dry_run:-0} )); then
+            verbose "component pull: [dry-run] would: submodule: git submodule update --remote -- ${_rel}"
+            REPLY=pull
+            return 0
+        fi
+        verbose "component pull: submodule: git submodule update --remote -- ${_rel}"
+        local _stashed=0
+        _update_core_maybe_stash "$_parent" "dotfiles repo (submodule)" || return 1
+        _stashed=$REPLY
+        git -C "$_parent" submodule update --remote -- "$_rel" || {
+            (( _stashed )) && _update_core_pop_stash "$_parent" "dotfiles repo (submodule)"
+            warn "component pull: submodule update --remote failed."
+            return 1
+        }
+        (( _stashed )) && _update_core_pop_stash "$_parent" "dotfiles repo (submodule)"
+        REPLY=pull
+    fi
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# _update_core_component_pull_subtree <parent> <rel> <remote> <branch> <phase>
+#
+# Pull a subtree component.
+#   Phase dotfiles : no-op — the parent pull already brought in tree content
+#                    and the SHA marker together.
+#   Phase components: git subtree pull --squash (advance to upstream tip).
+#
+# REPLY = ff | pull | skip
+# Returns 0 on success, 1 on failure.
+# ---------------------------------------------------------------------------
+_update_core_component_pull_subtree() {
+    local _parent=$1 _rel=$2 _remote=$3 _branch=$4 _phase=$5
+    REPLY=skip
+
+    if [[ "$_phase" == dotfiles ]]; then
+        # Parent pull already merged content + marker — nothing to do here.
+        verbose "component pull: subtree: phase=dotfiles — parent already current, no-op"
+        REPLY=ff
+        return 0
+    fi
+
+    if (( ${_dry_run:-0} )); then
+        verbose "component pull: [dry-run] would: subtree: git subtree pull --prefix=${_rel} ${_remote} ${_branch} --squash"
+        REPLY=pull
+        return 0
+    fi
+    verbose "component pull: subtree: git subtree pull --prefix=${_rel} ${_remote} ${_branch} --squash"
+    local _stashed=0
+    _update_core_maybe_stash "$_parent" "dotfiles repo (subtree)" || return 1
+    _stashed=$REPLY
+    local _out _rc
+    _out=$(git -C "$_parent" subtree pull \
+        --prefix="$_rel" "$_remote" "$_branch" --squash 2>&1)
+    _rc=$?
+    log_debug "component pull: subtree output: ${_out}"
+    (( _stashed )) && _update_core_pop_stash "$_parent" "dotfiles repo (subtree)"
+    if (( _rc != 0 )); then
+        warn "component pull: subtree pull failed."
+        return 1
+    fi
+    REPLY=pull
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# _update_core_component_post_marker
+#   <repo_dir> <parent> <rel> <new_sha> <topology> <itc_mode> <phase> <outcome>
+#
+# Writes marker files and/or commits the parent pointer after a pull.
+# Stamp writes are NOT handled here — callers retain hook-specific stamp paths.
+#
+#   standalone:
+#     Phase dotfiles + outcome==rebase : ext marker already written by pull
+#                                        (pull wrote rebased HEAD, not new_sha).
+#                                        Stage marker + commit parent.
+#     Phase dotfiles + outcome==ff     : no-op (marker already correct).
+#     Phase components                 : write ext marker (new_sha), stage, commit.
+#   submodule:
+#     Phase dotfiles + outcome==rebase : gitlink already staged by pull.
+#                                        Commit parent.
+#     Phase dotfiles + outcome==ff     : no-op (gitlink already correct).
+#     Phase components                 : commit parent.
+#   subtree:
+#     Phase dotfiles                   : no-op.
+#     Phase components                 : write SHA marker (new_sha), stage, commit.
+#
+# Returns 0/1.
+# ---------------------------------------------------------------------------
+_update_core_component_post_marker() {
+    local _repo_dir=$1 _parent=$2 _rel=$3 _new_sha=$4
+    local _topology=$5 _itc_mode=$6 _phase=$7 _outcome=$8
+
+    if (( ${_dry_run:-0} )); then
+        case "$_topology" in
+            standalone)
+                if [[ "$_phase" == dotfiles && "$_outcome" == rebase ]]; then
+                    verbose "component post: [dry-run] would: stage+commit ext marker (rebased standalone)"
+                elif [[ "$_phase" != dotfiles ]]; then
+                    verbose "component post: [dry-run] would: write ext marker ${_new_sha[1,12]} + commit parent"
+                fi
+                ;;
+            submodule)
+                if [[ "$_phase" == dotfiles && "$_outcome" == rebase ]]; then
+                    verbose "component post: [dry-run] would: commit parent (rebased submodule gitlink)"
+                elif [[ "$_phase" != dotfiles ]]; then
+                    verbose "component post: [dry-run] would: commit parent (submodule ${_new_sha[1,12]})"
+                fi
+                ;;
+            subtree)
+                [[ "$_phase" == dotfiles ]] && return 0
+                verbose "component post: [dry-run] would: write SHA marker ${_new_sha[1,12]} + commit parent"
+                ;;
+        esac
+        return 0
+    fi
+
+    case "$_topology" in
+        standalone)
+            if [[ "$_phase" == dotfiles ]]; then
+                [[ "$_outcome" == rebase ]] || return 0
+                # Ext marker was written by pull with the rebased HEAD SHA.
+                # Stage it and commit the parent to record the new pointer.
+                _update_core_ext_marker_path "$_repo_dir"
+                local _marker_path=$REPLY
+                if [[ "$_itc_mode" != none && -f "$_marker_path" && -n "$_parent" ]]; then
+                    git -C "$_parent" add "$_marker_path" 2>/dev/null
+                    _update_core_commit_parent "$_parent" \
+                        "${${_marker_path:A}#${_parent:A}/}" \
+                        "ext sha marker updated (rebase)" \
+                        "$(basename "$_repo_dir"): record rebased standalone SHA" \
+                        "$_itc_mode"
+                fi
+            else
+                [[ -n "$_new_sha" ]] || return 0
+                _update_core_write_ext_marker "$_repo_dir" "$_new_sha" || return 1
+                _update_core_ext_marker_path "$_repo_dir"
+                local _marker_path=$REPLY
+                if [[ "$_itc_mode" != none && -f "$_marker_path" && -n "$_parent" ]]; then
+                    git -C "$_parent" add "$_marker_path" 2>/dev/null
+                    _update_core_commit_parent "$_parent" \
+                        "${${_marker_path:A}#${_parent:A}/}" \
+                        "ext sha marker updated" \
+                        "$(basename "$_repo_dir"): record standalone SHA ${_new_sha[1,12]}" \
+                        "$_itc_mode"
+                fi
+            fi
+            ;;
+        submodule)
+            if [[ "$_phase" == dotfiles ]]; then
+                [[ "$_outcome" == rebase ]] || return 0
+                # Gitlink was staged by pull; commit parent to record it.
+                _update_core_commit_parent "$_parent" "$_rel" \
+                    "submodule pointer updated (rebase)" \
+                    "$(basename "$_repo_dir"): record rebased submodule pointer" \
+                    "$_itc_mode"
+            else
+                _update_core_commit_parent "$_parent" "$_rel" \
+                    "submodule pointer updated" \
+                    "$(basename "$_repo_dir"): update submodule to ${_new_sha[1,12]}" \
+                    "$_itc_mode"
+            fi
+            ;;
+        subtree)
+            [[ "$_phase" == dotfiles ]] && return 0
+            [[ -n "$_new_sha" ]] || return 0
+            _update_core_write_sha_marker "$_repo_dir" "$_new_sha" || return 1
+            _update_core_sha_marker_path "$_repo_dir"
+            local _marker_path=$REPLY
+            if [[ "$_itc_mode" != none && -f "$_marker_path" ]]; then
+                git -C "$_parent" add "$_marker_path" 2>/dev/null
+            fi
+            _update_core_commit_parent "$_parent" "$_rel" \
+                "subtree updated" \
+                "$(basename "$_repo_dir"): update subtree ${_rel} to ${_new_sha[1,12]}" \
+                "$_itc_mode"
+            ;;
+        *)
+            log_debug "component post marker: topology=${_topology} — nothing to do"
+            ;;
+    esac
+    return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -882,6 +1217,50 @@ _update_core_is_available_subtree() {
 
     [[ "$_local_head" == "$_remote_head" ]] && return 1
     return 0
+}
+
+# _update_core_is_dotfiler_available <script_dir> <subtree_spec> <subtree_url>
+#
+# Single canonical availability check for the dotfiler scripts themselves,
+# covering all deployment topologies.  Both check_update.zsh (pre-prompt check)
+# and update.zsh (_update_dotfiler_plan) call this so they can never diverge.
+#
+# Topology semantics:
+#   standalone  — scripts are their own top-level git repo; fetch + compare
+#   submodule   — scripts are a submodule; fetch submodule remote + compare
+#                 (surfaces upstream-ahead changes before parent bumps pointer)
+#   subtree     — scripts merged via git-subtree; compare SHA marker vs remote
+#   subdir      — plain subdirectory inside parent repo; parent repo check
+#                 already covers it, nothing extra needed here
+#   none|*      — not a git repo; nothing to check
+#
+# Returns: 0 = update available, 1 = up to date / not applicable
+_update_core_is_dotfiler_available() {
+    local _script_dir=${1:?script_dir required}
+    local _subtree_spec=${2:-}
+    local _subtree_url=${3:-}
+
+    _update_core_detect_deployment "$_script_dir" "$_subtree_spec"
+    local _topology=$REPLY
+
+    log_debug "update_core: is_dotfiler_available: topology=${_topology}"
+    local _avail
+    case $_topology in
+        standalone|submodule)
+            _update_core_is_available "$_script_dir" && _avail=0 || _avail=$?
+            ;;
+        subtree)
+            _update_core_is_available_subtree \
+                "$_script_dir" "$_subtree_spec" "$_subtree_url" \
+                && _avail=0 || _avail=$?
+            ;;
+        subdir|none|*)
+            log_debug "update_core: is_dotfiler_available: topology=${_topology} — parent repo manages scripts"
+            return 1
+            ;;
+    esac
+    log_debug "update_core: is_dotfiler_available: avail=${_avail}"
+    return $_avail
 }
 
 # ---------------------------------------------------------------------------
