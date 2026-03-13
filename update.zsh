@@ -467,7 +467,12 @@ function _update_dotfiler_post() {
                 _rel=${${script_dir:A}#${_parent:A}/}
             fi
             log_debug "update_self: post: parent=${_parent} rel=${_rel} new=${_new[1,12]}"
-            if (( ! _dry_run )); then
+            if (( _dry_run )); then
+                _update_core_component_post_marker \
+                    "$script_dir" "$_parent" "$_rel" "$_new" \
+                    "$_topology" "$_mode" "$_phase" "$_outcome"
+                info "dotfiler: [dry-run] post skipped"
+            else
                 _update_core_component_post_marker \
                     "$script_dir" "$_parent" "$_rel" "$_new" \
                     "$_topology" "$_mode" "$_phase" "$_outcome" || {
@@ -475,8 +480,8 @@ function _update_dotfiler_post() {
                     return 1
                 }
                 _update_core_write_timestamp "$_dotfiler_self_stamp" 0 ""
+                info "dotfiler: updated"
             fi
-            info "dotfiler: updated"
             ;;
         subdir|none|*)
             verbose "update_self: post: topology=${_topology} — nothing to do"
