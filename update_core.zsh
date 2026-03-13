@@ -563,6 +563,14 @@ _update_core_maybe_stash() {
         warn "${_label}: git stash failed — skipping"
         return 1
     }
+    # Verify the stash actually cleaned the tree — submodule pointers and
+    # some working tree states can survive a stash.
+    if ! _update_core_check_dirty "$_dir"; then
+        warn "${_label}: repo still dirty after stash (submodule pointer or untracked files?)"
+        warn "${_label}: commit or clean changes manually before updating"
+        git -C "$_dir" stash pop -q 2>/dev/null
+        return 1
+    fi
     REPLY=1
     return 0
 }
