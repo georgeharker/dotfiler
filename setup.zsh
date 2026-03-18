@@ -86,6 +86,12 @@ _setup_bootstrap_hook() {
 
     local dest="${hooks_dir}/${name}.zsh"
 
+    # Compute a relative symlink target from dest's directory to hook_path.
+    # Relative links are portable — they survive the dotfiles tree being moved.
+    local link_target
+    _path_relative_to "$hook_path" "$hooks_dir"
+    link_target="$REPLY"
+
     # Create hooks dir if missing
     if [[ ! -d "$hooks_dir" ]]; then
         log_debug "bootstrap-hook: creating hooks dir: $hooks_dir"
@@ -95,11 +101,20 @@ _setup_bootstrap_hook() {
         }
     fi
 
-    # Check existing symlink / file
+    # Check existing symlink / file — compare resolved targets
     if [[ -e "$dest" || -L "$dest" ]]; then
         local existing_target
         existing_target=$(readlink "$dest" 2>/dev/null || echo "(not a symlink)")
-        if [[ "$existing_target" == "$hook_path" ]]; then
+        # Normalise: resolve existing target (may be relative or absolute)
+        # relative to hooks_dir, then compare real paths.
+        local existing_real
+        if [[ "$existing_target" == /* ]]; then
+            existing_real="${existing_target:A}"
+        else
+            existing_real="${hooks_dir}/${existing_target}"
+            existing_real="${existing_real:A}"
+        fi
+        if [[ "$existing_real" == "$hook_path" ]]; then
             info "bootstrap-hook: $name already linked to $hook_path"
             return 0
         fi
@@ -111,11 +126,11 @@ _setup_bootstrap_hook() {
         rm -f "$dest"
     fi
 
-    ln -s "$hook_path" "$dest" || {
-        error "bootstrap-hook: failed to create symlink $dest → $hook_path"
+    ln -s "$link_target" "$dest" || {
+        error "bootstrap-hook: failed to create symlink $dest → $link_target"
         return 1
     }
-    info "bootstrap-hook: installed $name → $hook_path"
+    info "bootstrap-hook: installed $name → $link_target"
 
     # If writing into the dotfiles repo, offer to commit so it replicates
     # to other machines on pull.

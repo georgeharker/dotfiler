@@ -144,18 +144,19 @@ Note: `.git` symlinks are handled correctly — the integration resolves symlink
 when walking up to find the parent, so zdot stored under a linktree directory
 (where `.git` may be a symlink) is detected as a submodule if appropriate.
 
-### Auto-Installation of the Hook Symlink
+### Hook Symlink Installation
 
-`update.zsh` installs the hooks symlink automatically the first time it runs:
+The hook symlink at `$XDG_CONFIG_HOME/dotfiler/hooks/zdot.zsh` is created by
+the dotfiler linktree unpack — it is an ordinary unpacked file from the dotfiles
+repo (specifically `$DOTFILES/.config/dotfiler/hooks/zdot.zsh`, which is itself
+a symlink to the zdot hook).
 
+On a fresh machine, before the first unpack, bootstrap the hook symlink
+manually:
+
+```zsh
+dotfiler setup --bootstrap --bootstrap-hook ~/.dotfiles/.config/zdot/core/dotfiler-hook.zsh -U --all
 ```
-$XDG_CONFIG_HOME/dotfiler/hooks/zdot.zsh  →  <ZDOT_REPO>/core/dotfiler-hook.zsh
-```
-
-This only happens if dotfiler is detected in the parent repo (step 2 above). If
-dotfiler is not found, the symlink is not created and zdot operates in
-standalone update mode only (using `_zdot_update_handle_update` directly,
-without the full hook registry).
 
 ---
 
@@ -211,9 +212,10 @@ If you use zdot and want dotfiler to manage it:
    source "$ZDOT_DIR/core/update.zsh"
    ```
 
-4. On first shell startup, `update.zsh` will auto-install the
-   `$XDG_CONFIG_HOME/dotfiler/hooks/zdot.zsh` symlink if it finds dotfiler in
-   the parent repo.
+4. Run the initial unpack, which also plants the hook symlink:
+   ```zsh
+   dotfiler setup --bootstrap --bootstrap-hook ~/.dotfiles/.config/zdot/core/dotfiler-hook.zsh -U --all
+   ```
 
 5. Configure the in-tree commit mode (for submodule topology):
    ```zsh

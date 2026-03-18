@@ -22,6 +22,7 @@ function cleanup_helpers(){
     unset -f find_dotfiles_directory 2>/dev/null
     unset -f find_dotfiles_install_directory 2>/dev/null
     unset -f find_dotfiles_exclude_file 2>/dev/null
+    unset -f _path_relative_to 2>/dev/null
     unset -f is_script_sourced 2>/dev/null
     unset -f cleanup_helpers 2>/dev/null
 
@@ -116,6 +117,44 @@ find_dotfiles_exclude_file() {
     local dotfiles_dir=$(find_dotfiles_directory)
     echo "${dotfiles_dir}/dotfiles_exclude"
     return 0
+}
+
+# Usage: _path_relative_to target base
+# Returns in REPLY: target expressed as a path relative to the directory of base
+# (or relative to base itself if base is a directory)
+_path_relative_to() {
+    local target=${1:A}  # resolve to absolute
+    local base=${2:A}
+
+    # If base is a file, use its directory
+    [[ -f $base ]] && base=${base:h}
+
+    # Split into components
+    local -a tparts bparts
+    tparts=(${(s:/:)target})
+    bparts=(${(s:/:)base})
+
+    # Strip common prefix
+    local i=1
+    while (( i <= $#tparts && i <= $#bparts )) && [[ ${tparts[i]} == ${bparts[i]} ]]; do
+        (( i++ ))
+    done
+
+    # Build result: go up for remaining base components, then down into target
+    local -a rel
+    local j
+    for (( j = i; j <= $#bparts; j++ )); do
+        rel+=('..')
+    done
+    for (( j = i; j <= $#tparts; j++ )); do
+        rel+=(${tparts[j]})
+    done
+
+    if (( $#rel == 0 )); then
+        REPLY='.'
+    else
+        REPLY=${(j:/:)rel}
+    fi
 }
 
 # Function to detect if script was sourced or executed
