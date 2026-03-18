@@ -837,8 +837,8 @@ _update_core_component_post_marker() {
                 fi
                 ;;
             submodule)
-                if [[ "$_phase" == dotfiles && "$_outcome" == rebase ]]; then
-                    verbose "component post: [dry-run] would: commit parent (rebased submodule gitlink)"
+                if [[ "$_phase" == dotfiles && "$_outcome" != skip ]]; then
+                    verbose "component post: [dry-run] would: commit parent (submodule gitlink, outcome=${_outcome})"
                 elif [[ "$_phase" != dotfiles ]]; then
                     verbose "component post: [dry-run] would: commit parent (submodule ${_new_sha[1,12]})"
                 fi
@@ -884,11 +884,12 @@ _update_core_component_post_marker() {
             ;;
         submodule)
             if [[ "$_phase" == dotfiles ]]; then
-                [[ "$_outcome" == rebase ]] || return 0
-                # Gitlink was staged by pull; commit parent to record it.
+                # ff: gitlink was staged by pull (above); commit parent to record it.
+                # rebase: gitlink was staged by the rebase path.
+                # Either way we need to commit if the gitlink is staged.
                 _update_core_commit_parent "$_parent" "$_rel" \
-                    "submodule pointer updated (rebase)" \
-                    "$(basename "$_repo_dir"): record rebased submodule pointer" \
+                    "submodule pointer updated (${_outcome})" \
+                    "$(basename "$_repo_dir"): record submodule pointer" \
                     "$_itc_mode"
             else
                 _update_core_commit_parent "$_parent" "$_rel" \
