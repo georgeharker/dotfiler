@@ -8,18 +8,23 @@
 #   setup_core.zsh  — single-repo operations (gitignore, find, link, unpack)
 #   update_core.zsh — shared primitives (topology, hook registry)
 #
-# Without --all or --component, behaviour is identical to the old setup.zsh:
-#   dotfiler setup -u                  # unpack main dotfiles only
-#   dotfiler setup -i ~/.bashrc        # ingest a file
+# Basic usage:
+#   dotfiler setup -u                  # unpack main dotfiles + all hook components
+#   dotfiler setup -i ~/.bashrc        # ingest a file (no hook components involved)
 #
-# With --all, unpacks main dotfiles then every registered hook component:
-#   dotfiler setup -u --all            # unpack everything
-#   dotfiler setup -U --all            # force-unpack everything (bootstrap)
-#
-# With --component, unpacks only the named component(s):
+# Restrict to specific components with --component:
 #   dotfiler setup -u --component zdot         # just zdot
 #   dotfiler setup -u --component main         # just main dotfiles
-#   dotfiler setup -u --component main --component zdot  # both
+#
+# Bootstrap mode (fresh machine / first-time setup):
+#   dotfiler setup --bootstrap-hook <path>     # install hook symlink into repo + commit
+#   dotfiler setup --bootstrap                 # unpack everything (reads hooks from repo)
+#   dotfiler setup --bootstrap-hook <path> --bootstrap  # combined one-liner
+#
+#   --bootstrap-hook implies --bootstrap (writes into dotfiles repo, not XDG dir).
+#   --bootstrap implies -u (unpack) and runs all components.
+#   --bootstrap reads hooks from the dotfiles repo's .config/dotfiler/hooks/ rather
+#   than the XDG linktree path (which doesn't exist yet on a fresh machine).
 #
 # Hook components participate by registering a setup_fn via the 10th
 # parameter of _update_register_hook.  The setup_fn receives:
@@ -140,24 +145,90 @@ _setup_bootstrap_hook() {
     local _rel_dest=${dest#${_repo_root}/}
     local _commit_msg="dotfiler: add ${name} bootstrap hook"
 
+    # -----------------------------------------------------------------------
+    # Detect topology and write initial SHA marker if needed.
+    #
+    # For subtree and standalone topologies the update machinery uses a marker
+    # file adjacent to the component directory to track which SHA was last
+    # successfully pulled.  On first bootstrap this file doesn't exist yet,
+    # which means the first `dotfiler update` cannot resolve the component
+    # range.  We write the initial marker here so the repo is in a consistent
+    # state from the very first commit.
+    #
+    # Submodule: no marker needed — the gitlink in .gitmodules is the record.
+    # Subdir:    no marker needed — parent repo manages everything.
+    #
+    # We source the newly-installed hook symlink to let it self-register via
+    # _update_register_hook — exactly as update.zsh does.  This gives us the
+    # authoritative component_dir and topology from the hook itself rather than
+    # any heuristic.  _update_core_init_registry was called at setup_main entry.
+    # -----------------------------------------------------------------------
+    local -a _extra_add_paths=()
+    local _before=${#_dotfiler_registered_hooks}
+    source "$dest" 2>/dev/null
+    if (( ${#_dotfiler_registered_hooks} > _before )); then
+        local _comp_dir="${_dotfiler_hook_component_dir[$name]:-}"
+        local _topology="${_dotfiler_hook_topology[$name]:-}"
+        log_debug "bootstrap-hook: $name topology=$_topology comp_dir=$_comp_dir"
+
+        local _comp_sha=""
+        [[ -n "$_comp_dir" ]] && \
+            _comp_sha=$(git -C "$_comp_dir" rev-parse HEAD 2>/dev/null) || _comp_sha=""
+
+        case "$_topology" in
+            subtree)
+                if [[ -n "$_comp_sha" && -n "$_comp_dir" ]]; then
+                    _update_core_write_sha_marker "$_comp_dir" "$_comp_sha" && {
+                        _update_core_sha_marker_path "$_comp_dir"
+                        local _marker_rel=${REPLY#${_repo_root}/}
+                        _extra_add_paths+=("$_marker_rel")
+                        info "bootstrap-hook: wrote subtree SHA marker for $name (${_comp_sha[1,12]})"
+                    } || warn "bootstrap-hook: could not write subtree SHA marker for $name"
+                fi
+                ;;
+            standalone)
+                if [[ -n "$_comp_sha" && -n "$_comp_dir" ]]; then
+                    _update_core_write_ext_marker "$_comp_dir" "$_comp_sha" && {
+                        _update_core_ext_marker_path "$_comp_dir"
+                        local _marker_rel=${REPLY#${_repo_root}/}
+                        _extra_add_paths+=("$_marker_rel")
+                        info "bootstrap-hook: wrote ext SHA marker for $name (${_comp_sha[1,12]})"
+                    } || warn "bootstrap-hook: could not write ext SHA marker for $name"
+                fi
+                ;;
+        esac
+    else
+        log_debug "bootstrap-hook: $name hook did not register after sourcing — skipping marker"
+    fi
+
     local _do_commit=0
     if (( force )); then
         _do_commit=1
     else
         print -n "bootstrap-hook: commit '$_commit_msg' to $(basename $_repo_root)? [y/N] "
         local _reply
-        read -r _reply
-        [[ "$_reply" == [yY] || "$_reply" == [yY][eE][sS] ]] && _do_commit=1
+        read -rk1 _reply; print ""
+        [[ "$_reply" == [yY] ]] && _do_commit=1
     fi
 
     if (( _do_commit )); then
         local _stashed=0
-        _update_core_maybe_stash "$_repo_root" "bootstrap-hook commit" || return 0
+        if ! _update_core_maybe_stash "$_repo_root" "bootstrap-hook commit"; then
+            warn "bootstrap-hook: skipped commit (could not stash) — run 'git add $_rel_dest && git commit' manually"
+            return 1
+        fi
         _stashed=$REPLY
-        git -C "$_repo_root" add "$_rel_dest" && \
+        local _rc=0
+        git -C "$_repo_root" add "$_rel_dest" "${_extra_add_paths[@]}" || _rc=$?
+        if (( _rc == 0 )); then
             git -C "$_repo_root" commit -m "$_commit_msg" && \
-            info "bootstrap-hook: committed '$_commit_msg'"
+                info "bootstrap-hook: committed '$_commit_msg'" || _rc=$?
+        fi
+        if (( _rc != 0 )); then
+            warn "bootstrap-hook: commit failed — run 'git add $_rel_dest && git commit' manually"
+        fi
         (( _stashed )) && _update_core_pop_stash "$_repo_root" "bootstrap-hook commit"
+        (( _rc == 0 )) || return $_rc
     else
         info "bootstrap-hook: skipped commit — run 'git add $_rel_dest && git commit' manually"
     fi
@@ -233,6 +304,8 @@ function setup_main() {
     local -a remaining_args
     local -a passthrough_flags
     local has_unpack=0 has_force_unpack=0 has_yes=0 has_bootstrap=0
+    local has_explicit_component=0  # --component given explicitly
+    local has_explicit_unpack=0     # -u or -U given explicitly (not implied)
 
     _update_core_init_registry
 
@@ -245,16 +318,13 @@ function setup_main() {
     remaining_args=()
     while (( $# > 0 )); do
         case "$1" in
-            --all|-A)
-                opt_all=(--all)
-                shift
-                ;;
             --component|-C)
                 if (( $# < 2 )); then
                     error "--component requires a component name"
                     return 1
                 fi
                 opt_components+=("$2")
+                has_explicit_component=1
                 shift 2
                 ;;
             --bootstrap)
@@ -287,11 +357,13 @@ function setup_main() {
                 ;;
             -U|--force-unpack)
                 has_force_unpack=1
+                has_explicit_unpack=1
                 remaining_args+=("$1")
                 shift
                 ;;
             -u|--unpack)
                 has_unpack=1
+                has_explicit_unpack=1
                 remaining_args+=("$1")
                 shift
                 ;;
@@ -302,6 +374,20 @@ function setup_main() {
         esac
     done
     set -- "${remaining_args[@]}"
+
+    # -----------------------------------------------------------------------
+    # --bootstrap implies --all and -u: in bootstrap mode the intent is always
+    # to unpack everything.  The user can still pass --component to restrict to
+    # specific components, or -U to force-unpack instead of normal unpack.
+    # -----------------------------------------------------------------------
+    if (( has_bootstrap )); then
+        (( ${#opt_all} == 0 && ${#opt_components} == 0 )) && opt_all=(--all)
+        (( has_unpack || has_force_unpack )) || {
+            has_unpack=1
+            remaining_args+=(-u)
+            set -- "${remaining_args[@]}"
+        }
+    fi
 
     # -----------------------------------------------------------------------
     # Resolve hooks directory: dotfiles-local in bootstrap mode, XDG otherwise
@@ -350,8 +436,9 @@ function setup_main() {
         for bh in "${opt_bootstrap_hooks[@]}"; do
             _setup_bootstrap_hook "$bh" "$has_yes" "$_hooks_dir" "$has_bootstrap" "${_dotfiles_dir:-}" || rc=$?
         done
-        # If no unpack/all/component requested, done here
-        if (( ! has_unpack && ! has_force_unpack && ${#opt_all} == 0 && ${#opt_components} == 0 )); then
+        # If no unpack explicitly requested, done here.
+        # (--bootstrap implies -u, but --bootstrap-hook alone should not unpack.)
+        if (( ! has_explicit_unpack && ! has_explicit_component )); then
             return $rc
         fi
         (( rc != 0 )) && return $rc
@@ -367,13 +454,16 @@ function setup_main() {
     fi
 
     # -----------------------------------------------------------------------
-    # Validate: --all / --component only make sense with -u or -U
+    # Default: -u/-U unpacks everything (main + all hook components).
+    # --component restricts to specific components; it requires -u/-U.
     # -----------------------------------------------------------------------
-    if (( ${#opt_all} > 0 || ${#opt_components} > 0 )); then
-        if (( ! has_unpack && ! has_force_unpack )); then
-            error "--all and --component require -u/--unpack or -U/--force-unpack"
-            return 1
+    if (( has_unpack || has_force_unpack )); then
+        if (( ${#opt_all} == 0 && ${#opt_components} == 0 )); then
+            opt_all=(--all)
         fi
+    elif (( has_explicit_component )); then
+        error "--component requires -u/--unpack or -U/--force-unpack"
+        return 1
     fi
 
     # -----------------------------------------------------------------------

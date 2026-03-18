@@ -1589,32 +1589,46 @@ _update_core_cleanup() {
         _update_core_current_epoch \
         _update_core_get_default_remote \
         _update_core_get_default_branch \
+        _update_core_component_tip_range \
         _update_core_has_typed_input \
         _update_core_acquire_lock \
         _update_core_release_lock \
         _update_core_write_timestamp \
-        _update_core_github_api_get \
-        _update_core_extract_github_repo \
         _update_core_safe_rm \
-        _update_core_is_available \
         _update_core_is_available_fetch \
-        _update_core_is_available_subtree \
-        _update_core_resolve_subtree_spec \
-        _update_core_get_parent_root \
         _update_core_list_submodule_paths \
-        _update_core_resolve_remote_sha \
-        _update_core_should_update \
+        _update_core_get_parent_root \
         _update_core_detect_deployment \
-        _update_core_check_foreign_staged \
-        _update_core_commit_parent \
         _update_core_sha_marker_path \
         _update_core_read_sha_marker \
         _update_core_write_sha_marker \
+        _update_core_github_api_get \
+        _update_core_extract_github_repo \
+        _update_core_resolve_remote_sha \
+        _update_core_check_dirty \
+        _update_core_prompt_dirty \
+        _update_core_maybe_stash \
+        _update_core_pop_stash \
+        _update_core_maybe_rebase \
+        _update_core_component_pull_standalone \
+        _update_core_component_pull_submodule \
+        _update_core_component_pull_subtree \
+        _update_core_component_post_marker \
+        _update_core_check_foreign_staged \
+        _update_core_commit_parent \
+        _update_core_should_update \
+        _update_core_is_available \
+        _update_core_get_dotfiler_subtree_config \
+        _update_core_get_in_tree_commit_mode \
+        _update_core_get_update_frequency \
+        _update_core_resolve_subtree_spec \
+        _update_core_is_available_subtree \
+        _update_core_is_dotfiler_available \
+        _update_core_build_file_lists \
         _update_core_ext_marker_path \
         _update_core_read_ext_marker \
         _update_core_write_ext_marker \
         _update_core_resolve_component_range \
-        _update_core_build_file_lists \
         _update_core_init_registry \
         _update_register_hook \
         2>/dev/null

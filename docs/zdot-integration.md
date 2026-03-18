@@ -16,8 +16,8 @@ When used together, zdot and dotfiler form a layered system:
   and shell config, all stored inside your dotfiles repo
 
 zdot is itself managed by dotfiler — it lives in your dotfiles repo as a
-submodule, subtree, or checked-out directory, and dotfiler keeps it updated
-alongside everything else.
+submodule, subtree, or plain directory, and dotfiler keeps it updated alongside
+everything else.
 
 ---
 
@@ -29,14 +29,15 @@ There are two code paths, depending on context:
 
 **`dotfiler-hook.zsh`** (sourced by dotfiler during update/check runs)
 
-This hook is discovered automatically from the hooks directory
-(`$XDG_CONFIG_HOME/dotfiler/hooks/zdot.zsh`), which is a symlink pointing into
-the linktree destination of the zdot hook file:
+This hook is discovered from the hooks directory
+(`$XDG_CONFIG_HOME/dotfiler/hooks/zdot.zsh`), which is an ordinary linktree
+symlink unpacked from your dotfiles repo:
 
 ```
 ~/.config/dotfiler/hooks/zdot.zsh
-    → ~/.config/zdot/core/dotfiler-hook.zsh      (linktree symlink)
-        → ~/.dotfiles/.config/zdot/core/dotfiler-hook.zsh  (real file)
+    → ~/.dotfiles/.config/dotfiler/hooks/zdot.zsh   (in-dotfiles symlink)
+        → ../../zdot/core/dotfiler-hook.zsh          (relative)
+            = ~/.dotfiles/.config/zdot/core/dotfiler-hook.zsh
 ```
 
 The double-symlink means the hook is always sourced from its **linktree
@@ -51,8 +52,7 @@ each update phase (check, plan, pull, unpack, post).
 
 This file is loaded by zdot's standard init when update mode is enabled. It
 registers a startup callback that runs `_zdot_update_handle_update` at each
-interactive shell login (rate-limited by a timestamp file). It also installs the
-`zdot.zsh` symlink in the hooks directory automatically on first load.
+interactive shell login (rate-limited by a timestamp file).
 
 ### Lifecycle for a zdot Update
 
@@ -105,12 +105,6 @@ sources is therefore the last version that was fully and cleanly installed — n
 the new version that just arrived via `git pull`. New hook code only becomes
 active after the unpack phase completes and updates the symlinks.
 
-This means it is safe to:
-- Pull zdot's repo to a new commit that contains changes to `dotfiler-hook.zsh`
-- Use the old hook code to drive the unpack of that commit
-
-The new code takes effect on the next update cycle.
-
 ### Finding update_core.zsh
 
 Both `dotfiler-hook.zsh` and `update.zsh` need to locate `update_core.zsh`
@@ -131,7 +125,7 @@ zdot supports being included in your dotfiles repo as a:
 
 | Topology | How it's detected | How updates are pulled |
 |----------|------------------|----------------------|
-| **Submodule** | `.git` is a file (or symlink to a file) pointing to the parent's `.git/modules/...` | `git submodule update --remote` |
+| **Submodule** | `.git` is a file pointing to the parent's `.git/modules/...` | `git submodule update --remote` |
 | **Subtree** | SHA marker file `.<dir>-subtree-sha` adjacent to the component dir | `git subtree pull --squash` |
 | **Standalone** | No parent repo detected; zdot has its own `.git` | `git pull --autostash` |
 | **Subdir** | Parent repo found but no submodule/subtree indicator | No-op (parent manages everything) |
@@ -144,19 +138,15 @@ Note: `.git` symlinks are handled correctly — the integration resolves symlink
 when walking up to find the parent, so zdot stored under a linktree directory
 (where `.git` may be a symlink) is detected as a submodule if appropriate.
 
-### Hook Symlink Installation
+### Hook Symlink
 
-The hook symlink at `$XDG_CONFIG_HOME/dotfiler/hooks/zdot.zsh` is created by
-the dotfiler linktree unpack — it is an ordinary unpacked file from the dotfiles
-repo (specifically `$DOTFILES/.config/dotfiler/hooks/zdot.zsh`, which is itself
-a symlink to the zdot hook).
+The hook symlink at `$XDG_CONFIG_HOME/dotfiler/hooks/zdot.zsh` is an ordinary
+linktree symlink — it is unpacked from `$DOTFILES/.config/dotfiler/hooks/zdot.zsh`
+(which is itself a relative symlink into the zdot tree). It is managed entirely
+by the dotfiler unpack process; **nothing installs it at shell startup**.
 
-On a fresh machine, before the first unpack, bootstrap the hook symlink
-manually:
-
-```zsh
-dotfiler setup --bootstrap --bootstrap-hook ~/.dotfiles/.config/zdot/core/dotfiler-hook.zsh -U --all
-```
+On a fresh machine the hook symlink must be bootstrapped once before the first
+unpack (see [Bootstrap: New Machine](#bootstrap-new-machine) below).
 
 ---
 
@@ -179,54 +169,121 @@ dotfiler requires no zdot-specific code to function. If you use a different shel
 configuration manager (or none at all), dotfiler works identically — you simply
 won't have the zdot update hook registered.
 
-All of dotfiler's core features are standalone:
+---
 
-- Link-tree unpacking of config files
-- Config file ingestion
-- Auto-update for your dotfiles repo
-- Modular install scripts for new machine setup
-- Shell completions
+## Setting Up the Integration (First Time)
+
+Choose a deployment topology for zdot inside your dotfiles repo. Submodule is
+recommended — it gives you an explicit, pinned version tracked in git history.
+
+### Step 1: Add zdot to your dotfiles repo
+
+**Submodule (recommended):**
+```zsh
+cd ~/.dotfiles
+git submodule add https://github.com/georgeharker/zdot .config/zdot
+git submodule update --init --recursive
+```
+
+**Subtree:**
+```zsh
+cd ~/.dotfiles
+git subtree add --prefix=.config/zdot \
+    https://github.com/georgeharker/zdot main --squash
+```
+
+**Subdir (simplest — no pinning):**
+```zsh
+cd ~/.dotfiles
+git clone https://github.com/georgeharker/zdot .config/zdot
+```
+
+### Step 2: Install the dotfiler hook symlink into the repo
+
+This creates `$DOTFILES/.config/dotfiler/hooks/zdot.zsh` as a relative symlink
+into the zdot tree, and commits it:
+
+```zsh
+dotfiler setup --bootstrap-hook ~/.dotfiles/.config/zdot/core/dotfiler-hook.zsh
+```
+
+This writes the symlink into `$XDG_CONFIG_HOME/dotfiler/hooks/` (the live hooks
+directory). You will be prompted to confirm the git commit that records the
+symlink in your dotfiles repo; use `--yes` to skip the prompt.
+
+### Step 3: Unpack everything
+
+```zsh
+dotfiler setup -u
+```
+
+`-u` unpacks the main dotfiles tree and all registered hook components'
+setup functions. After this step:
+
+- `~/.config/dotfiler/hooks/zdot.zsh → ~/.dotfiles/.config/dotfiler/hooks/zdot.zsh`
+- All zdot files are symlinked into `~/.config/zdot/`
+
+Steps 2 and 3 can be combined:
+```zsh
+dotfiler setup \
+    --bootstrap-hook ~/.dotfiles/.config/zdot/core/dotfiler-hook.zsh \
+    -u
+```
+
+### Step 4: Configure zdot's update mode
+
+```zsh
+# In your zdot config (e.g. .config/zdot/config.zsh)
+zstyle ':zdot:update' mode prompt     # prompt before updating
+# or
+zstyle ':zdot:update' mode background # update silently in background
+```
+
+### Step 5: Configure submodule pin commits (submodule topology only)
+
+```zsh
+zstyle ':dotfiler:update' in-tree-commit auto  # default — auto-commit pin bumps
+```
 
 ---
 
-## Setting Up the Integration
+## Bootstrap: New Machine
 
-If you use zdot and want dotfiler to manage it:
+On a fresh machine with your dotfiles repo already cloned:
 
-1. Add zdot to your dotfiles repo (submodule is recommended):
-   ```zsh
-   git submodule add https://github.com/georgeharker/zdot .config/zdot
-   ```
+```zsh
+# 1. Clone dotfiles
+git clone <your-dotfiles-repo> ~/.dotfiles
 
-2. Enable zdot's update mode in your zdot configuration:
-   ```zsh
-   # In your zdot config (e.g. .config/zdot/config.zsh)
-   zstyle ':zdot:update' mode prompt     # prompt before updating
-   # or
-   zstyle ':zdot:update' mode background # update silently
-   ```
+# 2. Initialise submodules (submodule topology only)
+git -C ~/.dotfiles submodule update --init --recursive
 
-3. Source zdot's `update.zsh` from your shell init (zdot does this automatically
-   if you use the standard loading mechanism):
-   ```zsh
-   source "$ZDOT_DIR/core/update.zsh"
-   ```
+# 3. Bootstrap unpack — reads hooks from repo, unpacks everything
+dotfiler setup --bootstrap
+```
 
-4. Run the initial unpack, which also plants the hook symlink:
-   ```zsh
-   dotfiler setup --bootstrap --bootstrap-hook ~/.dotfiles/.config/zdot/core/dotfiler-hook.zsh -U --all
-   ```
+`--bootstrap` tells dotfiler to read hook files directly from the dotfiles repo
+(since the linktree hasn't been set up yet), and implies `-u` —
+unpacking both the main dotfiles tree and every registered hook component,
+including zdot. After this run the linktree is complete, including
+`~/.config/dotfiler/hooks/zdot.zsh`.
 
-5. Configure the in-tree commit mode (for submodule topology):
-   ```zsh
-   zstyle ':dotfiler:update' in-tree-commit auto  # default — auto-commit pin bumps
-   ```
+After the first `--bootstrap` run, subsequent unpacks use the normal command:
+```zsh
+dotfiler setup -u   # unpack main dotfiles + all hook components
+```
 
-### Manual Verification
+---
+
+## Manual Verification
 
 ```zsh
 # Check that the hook symlink is in place
 ls -la "${XDG_CONFIG_HOME:-$HOME/.config}/dotfiler/hooks/"
+
+# Verify the full symlink chain
+readlink ~/.config/dotfiler/hooks/zdot.zsh
+readlink ~/.dotfiles/.config/dotfiler/hooks/zdot.zsh
 
 # Force a full update check with debug output
 dotfiler check-updates --force --debug

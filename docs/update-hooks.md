@@ -126,9 +126,9 @@ function _my_cleanup_fn() {
 ### Optional `setup_fn` (Tenth Argument)
 
 You may pass a tenth argument to `_update_register_hook` — a setup function name.
-This function is called by `dotfiler setup --all` or
-`dotfiler setup --component <name>` to perform a full unpack outside of the
-incremental update flow (e.g. on a fresh clone or forced reinstall).
+This function is called by `dotfiler setup -u` (which runs all hook components
+by default) or `dotfiler setup -u --component <name>` to perform a full unpack
+outside of the incremental update flow (e.g. on a fresh clone or forced reinstall).
 
 ```zsh
 _update_register_hook \

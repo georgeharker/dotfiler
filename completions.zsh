@@ -108,9 +108,10 @@ _dotfiler_setup_args() {
         '(-D --dry-run)'{-D,--dry-run}'[Show what would be done without making changes]' \
         '(-y --yes)'{-y,--yes}'[Answer yes to all prompts]' \
         '(-n --no)'{-n,--no}'[Answer no to all prompts]' \
-        '(-A --all)'{-A,--all}'[Setup all components (dotfiles + hooks)]' \
-        '*'{-C,--component}'[Setup specific component (repeatable)]:component:_dotfiler_components' \
-        '--list-components[List available components]'
+         '*'{-C,--component}'[Setup specific component (repeatable)]:component:_dotfiler_components' \
+         '--list-components[List available components]' \
+         '--bootstrap[Bootstrap mode: read hooks from repo, implies -u]' \
+         '--bootstrap-hook[Install hook symlink into dotfiles repo]:hook file:_files'
 }
 
 # Dynamic component name completion for --component / -C
