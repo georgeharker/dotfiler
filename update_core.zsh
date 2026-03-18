@@ -707,15 +707,20 @@ _update_core_component_pull_submodule() {
                 return 0
             fi
             verbose "component pull: submodule: git submodule update -- ${_rel} (ff to ${_target_ref[1,12]})"
+            # Stash any dirty state inside the submodule itself (e.g. local edits
+            # to component files). The parent's gitlink mismatch after git pull is
+            # expected at this point — it is not real dirt, it is what submodule
+            # update is about to resolve — so we stash the submodule dir, not the
+            # parent.
             local _stashed=0
-            _update_core_maybe_stash "$_parent" "dotfiles repo (submodule)" || return 1
+            _update_core_maybe_stash "$_sub_dir" "submodule component" || return 1
             _stashed=$REPLY
             git -C "$_parent" submodule update -- "$_rel" || {
-                (( _stashed )) && _update_core_pop_stash "$_parent" "dotfiles repo (submodule)"
+                (( _stashed )) && _update_core_pop_stash "$_sub_dir" "submodule component"
                 warn "component pull: submodule update failed."
                 return 1
             }
-            (( _stashed )) && _update_core_pop_stash "$_parent" "dotfiles repo (submodule)"
+            (( _stashed )) && _update_core_pop_stash "$_sub_dir" "submodule component"
             REPLY=ff
         else
             # Diverged — offer rebase inside the submodule.
@@ -740,15 +745,25 @@ _update_core_component_pull_submodule() {
             return 0
         fi
         verbose "component pull: submodule: git submodule update --remote -- ${_rel}"
-        local _stashed=0
-        _update_core_maybe_stash "$_parent" "dotfiles repo (submodule)" || return 1
-        _stashed=$REPLY
+        # Stash dirty state inside the submodule first (local edits to component
+        # files would block submodule update --remote), then stash any pre-existing
+        # real dirty state in the parent (e.g. unrelated staged changes).
+        local _stashed_sub=0 _stashed_parent=0
+        _update_core_maybe_stash "$_sub_dir" "submodule component" || return 1
+        _stashed_sub=$REPLY
+        _update_core_maybe_stash "$_parent" "dotfiles repo (submodule)" || {
+            (( _stashed_sub )) && _update_core_pop_stash "$_sub_dir" "submodule component"
+            return 1
+        }
+        _stashed_parent=$REPLY
         git -C "$_parent" submodule update --remote -- "$_rel" || {
-            (( _stashed )) && _update_core_pop_stash "$_parent" "dotfiles repo (submodule)"
+            (( _stashed_parent )) && _update_core_pop_stash "$_parent" "dotfiles repo (submodule)"
+            (( _stashed_sub )) && _update_core_pop_stash "$_sub_dir" "submodule component"
             warn "component pull: submodule update --remote failed."
             return 1
         }
-        (( _stashed )) && _update_core_pop_stash "$_parent" "dotfiles repo (submodule)"
+        (( _stashed_parent )) && _update_core_pop_stash "$_parent" "dotfiles repo (submodule)"
+        (( _stashed_sub )) && _update_core_pop_stash "$_sub_dir" "submodule component"
         REPLY=pull
     fi
     return 0
