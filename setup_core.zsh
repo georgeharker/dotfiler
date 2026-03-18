@@ -353,17 +353,23 @@ _gitignore_match_single() {
 #   with later rules overriding earlier ones (gitignore semantics).
 #   Enforce rules are immune to user negation.
 #
+#   PATH must be an absolute path.  Symlinks are NOT resolved — a symlink
+#   inside the dotfiles tree is matched against its position in the tree
+#   (i.e. the path of the symlink itself), not against its target.  All
+#   callers guarantee this by using paths from:
+#     - find(1) invoked with an absolute dotfiles_dir root, or
+#     - explicit construction as "${dotfiles_dir}/${relative}"
+#
 #   Returns 0 = exclude, 1 = keep.
 function should_exclude_file() {
-    local file_path="$1"
+    local file_path="$1"   # must be absolute; symlinks are NOT resolved (see contract above)
     local is_dir="${2:-0}"
-    local abs_file_path="${file_path:A}"
     local dotfiles_dir_abs="${dotfiles_dir:A}"
 
     # Compute path relative to dotfiles root.
     local relative_path=""
-    if [[ "$abs_file_path" == "$dotfiles_dir_abs/"* ]]; then
-        relative_path="${abs_file_path#$dotfiles_dir_abs/}"
+    if [[ "$file_path" == "$dotfiles_dir_abs/"* ]]; then
+        relative_path="${file_path#$dotfiles_dir_abs/}"
     else
         # Path outside dotfiles dir — cannot match
         return 1
@@ -541,9 +547,9 @@ function dolink(){
 }
 
 function link_if_needed(){
-  src=$1:a
-  fullpath_dotfiles_dir=$dotfiles_dir:A
-  dest="${_setup_link_dest}/"${1#$fullpath_dotfiles_dir/}
+  local src=$1   # must be absolute; symlinks are NOT resolved — home link points to in-dotfiles path
+  local fullpath_dotfiles_dir=$dotfiles_dir:A
+  local dest="${_setup_link_dest}/"${src#$fullpath_dotfiles_dir/}
   log_debug "link_if_needed src=$src dest=$dest"
   info_nonl "checking $src to $dest .."
   if [[ -L "$dest" ]]; then
@@ -774,9 +780,8 @@ function _setup_init() {
 
     # Layer 2: always_exclude — glob patterns applied to every repo.
     # Sought in dotfiles root first, fallback to dotfiler's own dir.
-    local _dotfiles_root _always_exclude
-    _dotfiles_root=$(find_dotfiles_directory 2>/dev/null || true)
-    _always_exclude="${_dotfiles_root}/always_exclude"
+    local _always_exclude
+    _always_exclude="${dotfiles_dir}/always_exclude"
     [[ -f "$_always_exclude" ]] || \
         _always_exclude="${${(%):-%x}:A:h}/always_exclude"
     [[ -f "$_always_exclude" ]] && read_exclusion_patterns "$_always_exclude"
@@ -788,9 +793,8 @@ function _setup_init() {
             [[ -f "$_ef" ]] && read_exclusion_patterns "$_ef"
         done
     else
-    local dotfiles_exclude_file
-    dotfiles_exclude_file=$(find_dotfiles_exclude_file)
-    read_exclusion_patterns "$dotfiles_exclude_file"
+    local dotfiles_exclude_file="${dotfiles_dir}/dotfiles_exclude"
+    [[ -f "$dotfiles_exclude_file" ]] && read_exclusion_patterns "$dotfiles_exclude_file"
     fi
 
     build_find_prune_args
