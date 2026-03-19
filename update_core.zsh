@@ -495,10 +495,12 @@ _update_core_resolve_remote_sha() {
 
 # _update_core_check_dirty <repo_dir>
 # Returns 0 if clean, 1 if dirty.
+# Uses git status --porcelain rather than git diff --quiet so that submodule
+# working tree mismatches (stale submodule HEAD vs gitlink) are detected —
+# git diff --quiet ignores submodule state by default.
 _update_core_check_dirty() {
     local _dir=$1
-    git -C "$_dir" diff --quiet 2>/dev/null \
-        && git -C "$_dir" diff --cached --quiet 2>/dev/null
+    [[ -z "$(git -C "$_dir" status --porcelain 2>/dev/null)" ]]
 }
 
 # _update_core_prompt_dirty <repo_dir> <label>

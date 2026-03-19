@@ -733,13 +733,11 @@ function _update_phase_plan(){
             #                Phase 1; Phase 2 will self-direct to tip)
             if [[ -z "$_comp_dir" || -z "$_topology" ]]; then
                 warn "update: hook '${_name}' did not register component_dir/topology — cannot resolve range hint"
-            elif [[ "$_old_sha" != "$_new_sha" ]] \
-                && git -C "$dotfiles_dir" merge-base --is-ancestor \
-                       "$_old_sha" "$_new_sha" 2>/dev/null; then
-                # Only resolve when _new_sha is strictly ahead of _old_sha —
-                # i.e. there are genuine incoming commits. If dotfiles is ahead
-                # of remote (or diverged), the range is empty/inverted and
-                # component hints would point backwards to older SHAs.
+            elif [[ "$_old_sha" != "$_new_sha" ]]; then
+                # Attempt to resolve the component range from dotfiles history.
+                # No merge-base guard here — resolve_component_range handles the
+                # case where old==new component SHA (returns 1) and the backwards
+                # case (diverged/ahead) degrades to an empty hint safely.
                 _update_core_resolve_component_range \
                     "$dotfiles_dir" "$_old_sha" "$_new_sha" \
                     "$_comp_dir" "$_topology"
@@ -899,6 +897,9 @@ function _update_phase_pull(){
         [[ -z "$_fn" ]] && continue
         if [[ "$_name" != main ]]; then
             local _plan_range="_dotfiler_plan_${_name}_range"
+            # Skip if nothing planned — no range means the component SHA did not
+            # change (or could not be resolved), so there is nothing to pull in
+            # either phase.
             if (( ! _force )) && [[ -z "${(P)_plan_range:-}" ]]; then
                 verbose "update: phase pull: skipping ${_name} (nothing planned)"
                 continue
