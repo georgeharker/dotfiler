@@ -501,14 +501,34 @@ _update_core_resolve_remote_sha() {
 # Dirty repo check + stash helpers
 # ---------------------------------------------------------------------------
 
-# _update_core_check_dirty <repo_dir>
+# _update_core_check_dirty <repo_dir> [--exclude <path>]
 # Returns 0 if clean, 1 if dirty.
 # Uses git status --porcelain rather than git diff --quiet so that submodule
 # working tree mismatches (stale submodule HEAD vs gitlink) are detected —
 # git diff --quiet ignores submodule state by default.
+# With --exclude <path>, lines matching that path are ignored (e.g. an
+# expected submodule gitlink mismatch that will be staged later).
 _update_core_check_dirty() {
-    local _dir=$1
-    [[ -z "$(git -C "$_dir" status --porcelain 2>/dev/null)" ]]
+    local _dir=$1; shift
+    local _exclude=""
+    if [[ "${1:-}" == --exclude ]]; then
+        _exclude=$2
+    fi
+    if [[ -z "$_exclude" ]]; then
+        [[ -z "$(git -C "$_dir" status --porcelain 2>/dev/null)" ]]
+    else
+        # Filter out lines whose path matches the exclude prefix.
+        local _line
+        while IFS= read -r _line; do
+            # porcelain format: XY <path> or XY <path> -> <path>
+            # The path starts at column 4 (after the two status chars + space).
+            local _path="${_line[4,-1]}"
+            [[ "$_path" == "$_exclude" || "$_path" == "$_exclude "* || "$_path" == "$_exclude/"* ]] && continue
+            # If any non-excluded dirty line remains, repo is dirty.
+            return 1
+        done < <(git -C "$_dir" status --porcelain 2>/dev/null)
+        return 0
+    fi
 }
 
 # _update_core_prompt_dirty <repo_dir> <label>
@@ -559,18 +579,24 @@ _update_core_prompt_dirty() {
 
 # _update_core_maybe_stash / _update_core_pop_stash — see below.
 
-# _update_core_maybe_stash <repo_dir> <label>
+# _update_core_maybe_stash <repo_dir> <label> [--exclude <path>]
 # If dirty, prompts the user (using per-repo consent cache). On consent, stashes.
 # Sets REPLY=1 if a stash was created, REPLY=0 if not.
 # Returns 0 to proceed, 1 to abort.
+# With --exclude <path>, that path is ignored when checking dirt (e.g. an
+# expected submodule gitlink mismatch that post_marker will stage later).
 _update_core_maybe_stash() {
-    local _dir=$1 _label=${2:-update}
+    local _dir=$1 _label=${2:-update}; shift 2
+    local -a _exclude_args=()
+    if [[ "${1:-}" == --exclude ]]; then
+        _exclude_args=(--exclude "$2")
+    fi
     REPLY=0
 
     # In dry-run mode, never prompt or stash — report clean to caller.
     (( ${_dry_run:-0} )) && return 0
 
-    _update_core_check_dirty "$_dir" && return 0
+    _update_core_check_dirty "$_dir" "${_exclude_args[@]}" && return 0
 
     verbose "update_core: ${_label}: repo ${_dir} is dirty"
 
@@ -609,8 +635,10 @@ _update_core_maybe_stash() {
         return 1
     }
     # Verify the stash actually cleaned the tree — submodule pointers and
-    # some working tree states can survive a stash.
-    if ! _update_core_check_dirty "$_dir"; then
+    # some working tree states can survive a stash.  The exclude path is
+    # passed through so expected survivors (e.g. submodule gitlink mismatch)
+    # are tolerated.
+    if ! _update_core_check_dirty "$_dir" "${_exclude_args[@]}"; then
         warn "${_label}: repo still dirty after stash (submodule pointer or untracked files?)"
         warn "${_label}: commit or clean changes manually before updating"
         git -C "$_dir" stash pop -q 2>/dev/null
@@ -790,13 +818,6 @@ _update_core_component_pull_submodule() {
             }
             (( _stashed_diverge )) && _update_core_pop_stash "$_sub_dir" "submodule component"
             if (( REPLY )); then
-                if (( ! ${_dry_run:-0} )); then
-                    # Stage the updated gitlink in the parent.
-                    git -C "$_parent" add "$_rel" || {
-                        warn "component pull: submodule: could not stage updated gitlink."
-                        return 1
-                    }
-                fi
                 REPLY=rebase
             else
                 return 1
@@ -853,13 +874,6 @@ _update_core_component_pull_submodule() {
             }
             (( _stashed_diverge_p2 )) && _update_core_pop_stash "$_sub_dir" "submodule component"
             if (( REPLY )); then
-                if (( ! ${_dry_run:-0} )); then
-                    # Stage the updated gitlink in the parent.
-                    git -C "$_parent" add "$_rel" || {
-                        warn "component pull: submodule: could not stage updated gitlink."
-                        return 1
-                    }
-                fi
                 REPLY=rebase
             else
                 return 1
@@ -973,10 +987,52 @@ _update_core_component_post_marker() {
     # stage + commit_parent below runs against a clean index.  Without this,
     # check_foreign_staged would (correctly) block auto-commit if the user
     # has unrelated staged changes.
+    #
+    # The pull phase intentionally leaves expected dirt behind — a submodule
+    # gitlink mismatch or a staged ext-marker — that post_marker will stage
+    # and commit below.  The stash must not capture or choke on that payload:
+    #
+    #   submodule:  git stash cannot round-trip gitlink mismatches (the
+    #               submodule working-tree HEAD survives the stash), so we
+    #               pass --exclude to tolerate the expected mismatch.
+    #   standalone: the ext-marker may already be staged; unstage it before
+    #               stashing, then re-stage afterwards.
+    #   subtree:    no payload at stash time; plain stash is fine.
     local _post_stashed=0
+    local _payload_path=""
     if [[ -n "$_parent" && "$_itc_mode" != none ]]; then
-        _update_core_maybe_stash "$_parent" "dotfiles repo (post marker)" || return 1
-        _post_stashed=$REPLY
+        case "$_topology" in
+            submodule)
+                _update_core_maybe_stash "$_parent" "dotfiles repo (post marker)" \
+                    --exclude "$_rel" || return 1
+                _post_stashed=$REPLY
+                ;;
+            standalone)
+                # Unstage the marker file before stashing so it is not
+                # captured; re-stage afterwards.
+                _update_core_ext_marker_path "$_repo_dir"
+                _payload_path="${${REPLY:A}#${_parent:A}/}"
+                if [[ -n "$_payload_path" ]]; then
+                    git -C "$_parent" diff --cached --quiet -- "$_payload_path" 2>/dev/null || \
+                        git -C "$_parent" reset -q HEAD -- "$_payload_path" 2>/dev/null
+                fi
+
+                _update_core_maybe_stash "$_parent" "dotfiles repo (post marker)" || {
+                    [[ -n "$_payload_path" ]] && \
+                        git -C "$_parent" add "$_payload_path" 2>/dev/null
+                    return 1
+                }
+                _post_stashed=$REPLY
+
+                if [[ -n "$_payload_path" ]]; then
+                    git -C "$_parent" add "$_payload_path" 2>/dev/null
+                fi
+                ;;
+            *)
+                _update_core_maybe_stash "$_parent" "dotfiles repo (post marker)" || return 1
+                _post_stashed=$REPLY
+                ;;
+        esac
     fi
 
     local _post_rc=0
@@ -1020,15 +1076,24 @@ _update_core_component_post_marker() {
             fi
             ;;
         submodule)
-            if [[ "$_phase" == dotfiles ]]; then
-                # ff: gitlink was staged by pull (above); commit parent to record it.
-                # rebase: gitlink was staged by the rebase path.
-                # Either way we need to commit if the gitlink is staged.
+            # Stage the gitlink and commit — mirrors how standalone stages
+            # its ext-marker above.  The gitlink is staged here (not in pull)
+            # so the stash above runs against a clean index.
+            if [[ "$_phase" == dotfiles && "$_outcome" == ff ]]; then
+                # ff: submodule update already moved HEAD to match the
+                # gitlink recorded by the parent pull — nothing to commit.
+                _post_rc=0
+            elif [[ "$_phase" == dotfiles ]]; then
+                # rebase: submodule HEAD diverged from the gitlink; stage
+                # the new pointer and commit.
+                git -C "$_parent" add "$_rel" 2>/dev/null
                 _update_core_commit_parent "$_parent" "$_rel" \
                     "submodule pointer updated (${_outcome})" \
                     "$(basename "$_repo_dir"): record submodule pointer" \
                     "$_itc_mode"
             else
+                # Phase 2: submodule advanced beyond what dotfiles records.
+                git -C "$_parent" add "$_rel" 2>/dev/null
                 _update_core_commit_parent "$_parent" "$_rel" \
                     "submodule pointer updated" \
                     "$(basename "$_repo_dir"): update submodule to ${_new_sha[1,12]}" \
