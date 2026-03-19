@@ -1,10 +1,10 @@
 #!/bin/zsh
-# Programming language environments
+# Editor support plugins and extensions
 
 # Module identification
 module_name="editor-extras"
 module_description="Editor support"
-module_main_function="run_programming_languages_module"
+module_main_function="run_editor_extras_module"
 
 # Main function for this module
 run_editor_extras_module() {

@@ -4,30 +4,31 @@ This directory contains the modular installation system for dotfiles. Each scrip
 
 ## Structure
 
-- `helpers.sh` - Common helper functions used by all modules
-- `00-dotfiler-install.sh` - Install dotfiler command to ~/bin
-- `01-package-manager.sh` - Package manager setup (Homebrew/APT) and fonts
-- `02-shell-utils.sh` - Shell environment tools (eza, fzf, zoxide, antidote)
-- `03-development-tools.sh` - Core development tools (git, delta, cmake)
-- `04-editors-terminals.sh` - Editors, terminals, and shell enhancements (tmux, neovim)
-- `05-programming-languages.sh` - Language-specific environments (Python, Rust, Node.js)
-- `06-applications.sh` - Specific applications (1Password, tailscale)
-- `07-post-install.sh` - Post-installation configuration
+- `helpers.zsh` - Common helper functions used by all modules
+- `00-dotfiler-install.zsh` - Install dotfiler command to ~/bin
+- `01-package-manager.zsh` - Package manager setup (Homebrew/APT) and fonts
+- `02-shell-utils.zsh` - Shell environment tools (eza, fzf, zoxide, antidote)
+- `03-development-tools.zsh` - Core development tools (git, delta, cmake)
+- `04-editors-terminals.zsh` - Editors, terminals, and shell enhancements (tmux, neovim)
+- `05-editor-extras.zsh` - Editor support plugins and extensions
+- `06-programming-languages.zsh` - Language-specific environments (Python, Rust, Node.js)
+- `07-applications.zsh` - Specific applications (1Password, tailscale)
+- `08-post-install.zsh` - Post-installation configuration
 
 ## Usage
 
 ### Full Installation
-Run the main script from the root directory:
-```bash
-./install.sh
+Run the main install from the dotfiles root:
+```zsh
+dotfiler install
 ```
 
 ### Individual Module Installation
 You can run individual modules by name:
-```bash
-./install_module.sh package-manager
-./install_module.sh development-tools
-./install_module.sh editors-terminals
+```zsh
+dotfiler install-module package-manager
+dotfiler install-module development-tools
+dotfiler install-module editors-terminals
 # etc.
 ```
 
@@ -35,12 +36,12 @@ You can run individual modules by name:
 
 All install commands support a `-f` or `--force` flag to reinstall components:
 
-```bash
+```zsh
 # Force reinstall all modules
-../install.sh --force
+dotfiler install --force
 
 # Force reinstall specific module
-../install_module.sh development-tools --force
+dotfiler install-module development-tools --force
 ```
 
 When `--force` is not specified, installation scripts will skip items that are already installed, making subsequent runs fast and safe.
@@ -67,13 +68,13 @@ The installation system uses smart conditional logic to avoid unnecessary work:
 
 ### Example Flow
 
-```bash
+```zsh
 # Normal run - skips if ripgrep exists
-./install_module.sh shell-utils
+dotfiler install-module shell-utils
 # Output: "ripgrep already installed"
 
 # Force run - reinstalls even if exists
-./install_module.sh shell-utils --force
+dotfiler install-module shell-utils --force
 # Output: "Installing cargo package: ripgrep" (runs cargo install -f)
 ```
 
@@ -86,7 +87,7 @@ The system automatically detects whether it's running on macOS or Linux and adju
 
 ## Helper Functions
 
-The `helpers.sh` file provides a comprehensive set of functions for building reliable, cross-platform installation modules with intelligent conditional installation.
+The `helpers.zsh` file provides a comprehensive set of functions for building reliable, cross-platform installation modules with intelligent conditional installation.
 
 ### Core System Functions
 
@@ -154,7 +155,7 @@ The `helpers.sh` file provides a comprehensive set of functions for building rel
 
 All `check_*()` functions follow the same pattern:
 
-```bash
+```zsh
 check_something() {
     if force_install; then
         return 1  # Should install (force mode)
@@ -174,7 +175,7 @@ This ensures:
 3. **Provide feedback**: Use `action()`, `info()`, and `error()` logging functions
 4. **Cross-platform support**: Use helper functions instead of direct package manager calls
 
-```bash
+```zsh
 # Example installation function
 install_ripgrep() {
     action "Installing ripgrep..."
@@ -216,8 +217,10 @@ Each module is self-contained and can be modified independently. The modular str
 The modules are numbered to ensure consistent installation order across architectures:
 
 1. Package managers must be installed first
-2. Development tools provide the foundation
-3. Editors and terminals build on development tools
-4. Programming languages add specific environments
-5. Applications add end-user tools
-6. Post-install handles configuration that depends on everything else
+2. Shell utilities provide the foundation
+3. Development tools build on package managers
+4. Editors and terminals build on development tools
+5. Editor extras add support plugins and extensions
+6. Programming languages add specific environments
+7. Applications add end-user tools
+8. Post-install handles configuration that depends on everything else
