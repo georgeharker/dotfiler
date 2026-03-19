@@ -686,8 +686,9 @@ function _update_phase_plan(){
             verbose "update: phase 1 plan: pre-fetching ${_name} remote ${_remote}/${_branch}"
             local _fetch_err
             _fetch_err=$(git -C "$_comp_dir" fetch -q "$_remote" "$_branch" 2>&1 >/dev/null) || {
-                verbose "update: phase 1 plan: pre-fetch for ${_name} failed (offline?)"
+                error "update: phase 1 plan: pre-fetch for ${_name} failed — cannot proceed"
                 log_debug "update: phase 1 plan: pre-fetch error: ${_fetch_err}"
+                return 1
             }
         done
     fi
@@ -990,6 +991,7 @@ function _update_cleanup() {
         _dotfiler_hook_setup_fn \
         _dotfiler_hook_component_dir \
         _dotfiler_hook_topology \
+        _dotfiler_stash_consent \
         2>/dev/null
     unset \
         _dotfiler_registered_hooks \

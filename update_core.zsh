@@ -103,8 +103,10 @@ _update_core_component_tip_range() {
             _new=$(_update_core_resolve_remote_sha "$_subtree_url" "$_branch") \
                 || return 1
             local _fetch_err
-            _fetch_err=$(git -C "$_comp_dir" fetch -q "$_subtree_url" "$_branch" 2>&1 >/dev/null) || \
-                log_debug "update_core: component_tip_range: subtree fetch failed: ${_fetch_err}"
+            _fetch_err=$(git -C "$_comp_dir" fetch -q "$_subtree_url" "$_branch" 2>&1 >/dev/null) || {
+                error "update_core: component_tip_range: subtree fetch failed: ${_fetch_err}"
+                return 1
+            }
             ;;
         submodule|standalone|*)
             # Current position is the component repo HEAD.
@@ -112,8 +114,10 @@ _update_core_component_tip_range() {
             _branch=$(_update_core_get_default_branch "$_comp_dir" "$_remote")
             _old=$(git -C "$_comp_dir" rev-parse HEAD 2>/dev/null) || return 1
             local _fetch_err
-            _fetch_err=$(git -C "$_comp_dir" fetch -q "$_remote" "$_branch" 2>&1 >/dev/null) || \
-                log_debug "update_core: component_tip_range: fetch failed: ${_fetch_err}"
+            _fetch_err=$(git -C "$_comp_dir" fetch -q "$_remote" "$_branch" 2>&1 >/dev/null) || {
+                error "update_core: component_tip_range: fetch failed: ${_fetch_err}"
+                return 1
+            }
             _new=$(git -C "$_comp_dir" rev-parse \
                 "${_remote}/${_branch}" 2>/dev/null) || return 1
             ;;
@@ -509,8 +513,9 @@ _update_core_check_dirty() {
 
 # _update_core_prompt_dirty <repo_dir> <label>
 # If repo is dirty, warns the user that the merge won't work.
-# Prompts whether to stash. Returns 0 if clean or user consented
-# to stash, 1 to abort. Does NOT stash — caller decides how.
+# Prompts whether to stash (using per-repo consent cache).
+# Returns 0 if clean or user consented to stash, 1 to abort.
+# Does NOT stash — caller decides how.
 _update_core_prompt_dirty() {
     local _dir=$1 _label=${2:-update}
 
@@ -518,9 +523,23 @@ _update_core_prompt_dirty() {
 
     verbose "update_core: ${_label}: repo ${_dir} is dirty"
 
+    # Check / populate per-repo consent cache.
+    local _canon="${_dir:A}"
+    if [[ -n "${_dotfiler_stash_consent[$_canon]:-}" ]]; then
+        if [[ "${_dotfiler_stash_consent[$_canon]}" == y ]]; then
+            verbose "${_label}: reusing earlier stash consent for ${_canon}"
+            return 0
+        else
+            verbose "${_label}: reusing earlier stash refusal for ${_canon}"
+            warn "${_label}: skipping (dirty repo — declined earlier)"
+            return 1
+        fi
+    fi
+
     if _update_core_has_typed_input; then
         warn "${_label}: repo is dirty — merge will fail"
         warn "stash or commit changes manually before updating"
+        _dotfiler_stash_consent[$_canon]=n
         return 1
     fi
 
@@ -528,9 +547,11 @@ _update_core_prompt_dirty() {
     local _ans
     read -r -k1 _ans; print ""
     if [[ "$_ans" != [yY] ]]; then
+        _dotfiler_stash_consent[$_canon]=n
         warn "${_label}: skipping (dirty repo)"
         return 1
     fi
+    _dotfiler_stash_consent[$_canon]=y
     warn "${_label}: stashing — note: if merge fails your changes will remain stashed"
     warn "${_label}: recover with: git -C ${_dir} stash pop"
     return 0
@@ -539,7 +560,7 @@ _update_core_prompt_dirty() {
 # _update_core_maybe_stash / _update_core_pop_stash — see below.
 
 # _update_core_maybe_stash <repo_dir> <label>
-# If dirty, prompts the user. On consent, stashes.
+# If dirty, prompts the user (using per-repo consent cache). On consent, stashes.
 # Sets REPLY=1 if a stash was created, REPLY=0 if not.
 # Returns 0 to proceed, 1 to abort.
 _update_core_maybe_stash() {
@@ -553,16 +574,34 @@ _update_core_maybe_stash() {
 
     verbose "update_core: ${_label}: repo ${_dir} is dirty"
 
-    if _update_core_has_typed_input; then
-        warn "${_label}: repo is dirty — cannot prompt, skipping update"
-        warn "stash or commit changes manually before updating"
-        return 1
-    fi
+    # Check / populate per-repo consent cache.
+    local _canon="${_dir:A}"
+    local _cached="${_dotfiler_stash_consent[$_canon]:-}"
+    if [[ -z "$_cached" ]]; then
+        # No cached answer — prompt the user.
+        if _update_core_has_typed_input; then
+            warn "${_label}: repo is dirty — cannot prompt, skipping update"
+            warn "stash or commit changes manually before updating"
+            _dotfiler_stash_consent[$_canon]=n
+            return 1
+        fi
 
-    print -n "${_label}: repo has uncommitted changes. Stash and continue? [y/N] "
-    local _ans
-    read -r -k1 _ans; print ""
-    [[ "$_ans" != [yY] ]] && { warn "${_label}: skipping (dirty repo)"; return 1; }
+        print -n "${_label}: repo has uncommitted changes. Stash and continue? [y/N] "
+        local _ans
+        read -r -k1 _ans; print ""
+        if [[ "$_ans" != [yY] ]]; then
+            _dotfiler_stash_consent[$_canon]=n
+            warn "${_label}: skipping (dirty repo)"
+            return 1
+        fi
+        _dotfiler_stash_consent[$_canon]=y
+    elif [[ "$_cached" == n ]]; then
+        verbose "${_label}: reusing earlier stash refusal for ${_canon}"
+        warn "${_label}: skipping (dirty repo — declined earlier)"
+        return 1
+    else
+        verbose "${_label}: reusing earlier stash consent for ${_canon}"
+    fi
 
     log_debug "update_core: ${_label}: stashing in ${_dir}"
     git -C "$_dir" stash push -q -m "dotfiler: stash before ${_label}" || {
@@ -589,6 +628,7 @@ _update_core_pop_stash() {
     git -C "$_dir" stash pop -q || {
         warn "${_label}: stash pop had conflicts — resolve manually"
         warn "run: git -C ${_dir} stash pop"
+        return 1
     }
 }
 
@@ -625,7 +665,8 @@ _update_core_maybe_rebase() {
 # _update_core_component_pull_standalone <repo_dir> <target_ref> <remote> <branch> <phase>
 #
 # Pull a standalone component repository.
-#   Phase dotfiles : merge --ff-only to <target_ref>; on failure prompt rebase.
+#   Phase dotfiles : stash if dirty, merge --ff-only to <target_ref>;
+#                    on failure prompt rebase.  Pop stash afterwards.
 #                    If rebased, writes ext marker with the new HEAD SHA.
 #   Phase components: git pull --ff-only --autostash <remote> <branch>.
 #
@@ -636,21 +677,28 @@ _update_core_component_pull_standalone() {
     local _repo_dir=$1 _target_ref=$2 _remote=$3 _branch=$4 _phase=$5
     REPLY=skip
 
-    _update_core_prompt_dirty "$_repo_dir" "standalone component" || return 1
-
     if [[ "$_phase" == dotfiles ]]; then
         if (( ${_dry_run:-0} )); then
             verbose "component pull: [dry-run] would: standalone: git merge --ff-only ${_target_ref[1,12]}"
             REPLY=ff
             return 0
         fi
+        # Stash any dirty state before merge (matches submodule Phase 1 pattern).
+        local _stashed=0
+        _update_core_maybe_stash "$_repo_dir" "standalone component" || return 1
+        _stashed=$REPLY
         verbose "component pull: standalone: git merge --ff-only ${_target_ref[1,12]}"
         if git -C "$_repo_dir" merge -q --ff-only "$_target_ref" 2>/dev/null; then
+            (( _stashed )) && _update_core_pop_stash "$_repo_dir" "standalone component"
             REPLY=ff
             return 0
         fi
-        # Fast-forward failed — offer rebase.
-        _update_core_maybe_rebase "$_repo_dir" "standalone component" "$_target_ref" || return 1
+        # Fast-forward failed — offer rebase (stash already active).
+        _update_core_maybe_rebase "$_repo_dir" "standalone component" "$_target_ref" || {
+            (( _stashed )) && _update_core_pop_stash "$_repo_dir" "standalone component"
+            return 1
+        }
+        (( _stashed )) && _update_core_pop_stash "$_repo_dir" "standalone component"
         if (( REPLY )); then
             # Rebased: new HEAD differs from target_ref — rewrite ext marker.
             local _rebased_sha
@@ -686,7 +734,9 @@ _update_core_component_pull_standalone() {
 #   Phase dotfiles : check ancestry; if ff-able run submodule update (pins to
 #                    dotfiles-recorded pointer).  If diverged, prompt rebase in
 #                    the submodule dir then stage the updated gitlink in parent.
-#   Phase components: submodule update --remote (advance to upstream tip).
+#   Phase components: check ancestry against remote tip; if ff-able run
+#                     submodule update --remote (advance to upstream tip).
+#                     If diverged, prompt rebase then stage updated gitlink.
 #
 # REPLY = ff | rebase | pull | skip
 # Returns 0 on success, 1 on failure.
@@ -729,8 +779,16 @@ _update_core_component_pull_submodule() {
             (( _stashed )) && _update_core_pop_stash "$_sub_dir" "submodule component"
             REPLY=ff
         else
-            # Diverged — offer rebase inside the submodule.
-            _update_core_maybe_rebase "$_sub_dir" "submodule component" "$_target_ref" || return 1
+            # Diverged — stash submodule dirty state, offer rebase, pop.
+            # Parent stash is handled by post_marker when it commits the gitlink.
+            local _stashed_diverge=0
+            _update_core_maybe_stash "$_sub_dir" "submodule component" || return 1
+            _stashed_diverge=$REPLY
+            _update_core_maybe_rebase "$_sub_dir" "submodule component" "$_target_ref" || {
+                (( _stashed_diverge )) && _update_core_pop_stash "$_sub_dir" "submodule component"
+                return 1
+            }
+            (( _stashed_diverge )) && _update_core_pop_stash "$_sub_dir" "submodule component"
             if (( REPLY )); then
                 if (( ! ${_dry_run:-0} )); then
                     # Stage the updated gitlink in the parent.
@@ -750,27 +808,63 @@ _update_core_component_pull_submodule() {
             REPLY=pull
             return 0
         fi
-        verbose "component pull: submodule: git submodule update --remote -- ${_rel}"
-        # Stash dirty state inside the submodule first (local edits to component
-        # files would block submodule update --remote), then stash any pre-existing
-        # real dirty state in the parent (e.g. unrelated staged changes).
-        local _stashed_sub=0 _stashed_parent=0
-        _update_core_maybe_stash "$_sub_dir" "submodule component" || return 1
-        _stashed_sub=$REPLY
-        _update_core_maybe_stash "$_parent" "dotfiles repo (submodule)" || {
-            (( _stashed_sub )) && _update_core_pop_stash "$_sub_dir" "submodule component"
+
+        # Determine current submodule HEAD and remote tip for divergence check.
+        local _current_sha_p2 _remote_sha_p2
+        _current_sha_p2=$(git -C "$_sub_dir" rev-parse HEAD 2>/dev/null) || {
+            warn "component pull: submodule: cannot resolve submodule HEAD in ${_sub_dir}."
             return 1
         }
-        _stashed_parent=$REPLY
-        git -C "$_parent" submodule update --remote -- "$_rel" || {
+        _remote_sha_p2=$(git -C "$_sub_dir" rev-parse "$_target_ref" 2>/dev/null) || {
+            warn "component pull: submodule: cannot resolve remote ref ${_target_ref}."
+            return 1
+        }
+
+        if git -C "$_sub_dir" merge-base --is-ancestor "$_current_sha_p2" "$_remote_sha_p2" 2>/dev/null; then
+            verbose "component pull: submodule: git submodule update --remote -- ${_rel} (ff to ${_remote_sha_p2[1,12]})"
+            # Stash dirty state inside the submodule first (local edits to component
+            # files would block submodule update --remote), then stash any pre-existing
+            # real dirty state in the parent (e.g. unrelated staged changes).
+            local _stashed_sub=0 _stashed_parent=0
+            _update_core_maybe_stash "$_sub_dir" "submodule component" || return 1
+            _stashed_sub=$REPLY
+            _update_core_maybe_stash "$_parent" "dotfiles repo (submodule)" || {
+                (( _stashed_sub )) && _update_core_pop_stash "$_sub_dir" "submodule component"
+                return 1
+            }
+            _stashed_parent=$REPLY
+            git -C "$_parent" submodule update --remote -- "$_rel" || {
+                (( _stashed_parent )) && _update_core_pop_stash "$_parent" "dotfiles repo (submodule)"
+                (( _stashed_sub )) && _update_core_pop_stash "$_sub_dir" "submodule component"
+                warn "component pull: submodule update --remote failed."
+                return 1
+            }
             (( _stashed_parent )) && _update_core_pop_stash "$_parent" "dotfiles repo (submodule)"
             (( _stashed_sub )) && _update_core_pop_stash "$_sub_dir" "submodule component"
-            warn "component pull: submodule update --remote failed."
-            return 1
-        }
-        (( _stashed_parent )) && _update_core_pop_stash "$_parent" "dotfiles repo (submodule)"
-        (( _stashed_sub )) && _update_core_pop_stash "$_sub_dir" "submodule component"
-        REPLY=pull
+            REPLY=pull
+        else
+            # Diverged — stash, offer rebase onto remote tip, pop afterwards.
+            local _stashed_diverge_p2=0
+            _update_core_maybe_stash "$_sub_dir" "submodule component" || return 1
+            _stashed_diverge_p2=$REPLY
+            _update_core_maybe_rebase "$_sub_dir" "submodule component" "$_remote_sha_p2" || {
+                (( _stashed_diverge_p2 )) && _update_core_pop_stash "$_sub_dir" "submodule component"
+                return 1
+            }
+            (( _stashed_diverge_p2 )) && _update_core_pop_stash "$_sub_dir" "submodule component"
+            if (( REPLY )); then
+                if (( ! ${_dry_run:-0} )); then
+                    # Stage the updated gitlink in the parent.
+                    git -C "$_parent" add "$_rel" || {
+                        warn "component pull: submodule: could not stage updated gitlink."
+                        return 1
+                    }
+                fi
+                REPLY=rebase
+            else
+                return 1
+            fi
+        fi
     fi
     return 0
 }
@@ -827,6 +921,9 @@ _update_core_component_pull_subtree() {
 # Writes marker files and/or commits the parent pointer after a pull.
 # Stamp writes are NOT handled here — callers retain hook-specific stamp paths.
 #
+# Stashes any pre-existing dirty state in the parent before staging/committing,
+# and pops afterwards, so that check_foreign_staged does not block the commit.
+#
 #   standalone:
 #     Phase dotfiles + outcome==rebase : ext marker already written by pull
 #                                        (pull wrote rebased HEAD, not new_sha).
@@ -872,34 +969,53 @@ _update_core_component_post_marker() {
         return 0
     fi
 
+    # Stash any pre-existing dirty state in the parent so that the marker
+    # stage + commit_parent below runs against a clean index.  Without this,
+    # check_foreign_staged would (correctly) block auto-commit if the user
+    # has unrelated staged changes.
+    local _post_stashed=0
+    if [[ -n "$_parent" && "$_itc_mode" != none ]]; then
+        _update_core_maybe_stash "$_parent" "dotfiles repo (post marker)" || return 1
+        _post_stashed=$REPLY
+    fi
+
+    local _post_rc=0
     case "$_topology" in
         standalone)
             if [[ "$_phase" == dotfiles ]]; then
-                [[ "$_outcome" == rebase ]] || return 0
-                # Ext marker was written by pull with the rebased HEAD SHA.
-                # Stage it and commit the parent to record the new pointer.
-                _update_core_ext_marker_path "$_repo_dir"
-                local _marker_path=$REPLY
-                if [[ "$_itc_mode" != none && -f "$_marker_path" && -n "$_parent" ]]; then
-                    git -C "$_parent" add "$_marker_path" 2>/dev/null
-                    _update_core_commit_parent "$_parent" \
-                        "${${_marker_path:A}#${_parent:A}/}" \
-                        "ext sha marker updated (rebase)" \
-                        "$(basename "$_repo_dir"): record rebased standalone SHA" \
-                        "$_itc_mode"
+                if [[ "$_outcome" != rebase ]]; then
+                    _post_rc=0  # no-op
+                else
+                    # Ext marker was written by pull with the rebased HEAD SHA.
+                    # Stage it and commit the parent to record the new pointer.
+                    _update_core_ext_marker_path "$_repo_dir"
+                    local _marker_path=$REPLY
+                    if [[ "$_itc_mode" != none && -f "$_marker_path" && -n "$_parent" ]]; then
+                        git -C "$_parent" add "$_marker_path" 2>/dev/null
+                        _update_core_commit_parent "$_parent" \
+                            "${${_marker_path:A}#${_parent:A}/}" \
+                            "ext sha marker updated (rebase)" \
+                            "$(basename "$_repo_dir"): record rebased standalone SHA" \
+                            "$_itc_mode"
+                    fi
                 fi
             else
-                [[ -n "$_new_sha" ]] || return 0
-                _update_core_write_ext_marker "$_repo_dir" "$_new_sha" || return 1
-                _update_core_ext_marker_path "$_repo_dir"
-                local _marker_path=$REPLY
-                if [[ "$_itc_mode" != none && -f "$_marker_path" && -n "$_parent" ]]; then
-                    git -C "$_parent" add "$_marker_path" 2>/dev/null
-                    _update_core_commit_parent "$_parent" \
-                        "${${_marker_path:A}#${_parent:A}/}" \
-                        "ext sha marker updated" \
-                        "$(basename "$_repo_dir"): record standalone SHA ${_new_sha[1,12]}" \
-                        "$_itc_mode"
+                if [[ -z "$_new_sha" ]]; then
+                    _post_rc=0  # no-op
+                else
+                    _update_core_write_ext_marker "$_repo_dir" "$_new_sha" || { _post_rc=1; }
+                    if (( ! _post_rc )); then
+                        _update_core_ext_marker_path "$_repo_dir"
+                        local _marker_path=$REPLY
+                        if [[ "$_itc_mode" != none && -f "$_marker_path" && -n "$_parent" ]]; then
+                            git -C "$_parent" add "$_marker_path" 2>/dev/null
+                            _update_core_commit_parent "$_parent" \
+                                "${${_marker_path:A}#${_parent:A}/}" \
+                                "ext sha marker updated" \
+                                "$(basename "$_repo_dir"): record standalone SHA ${_new_sha[1,12]}" \
+                                "$_itc_mode"
+                        fi
+                    fi
                 fi
             fi
             ;;
@@ -920,24 +1036,32 @@ _update_core_component_post_marker() {
             fi
             ;;
         subtree)
-            [[ "$_phase" == dotfiles ]] && return 0
-            [[ -n "$_new_sha" ]] || return 0
-            _update_core_write_sha_marker "$_repo_dir" "$_new_sha" || return 1
-            _update_core_sha_marker_path "$_repo_dir"
-            local _marker_path=$REPLY
-            if [[ "$_itc_mode" != none && -f "$_marker_path" ]]; then
-                git -C "$_parent" add "$_marker_path" 2>/dev/null
+            if [[ "$_phase" == dotfiles ]]; then
+                _post_rc=0  # no-op
+            elif [[ -z "$_new_sha" ]]; then
+                _post_rc=0  # no-op
+            else
+                _update_core_write_sha_marker "$_repo_dir" "$_new_sha" || { _post_rc=1; }
+                if (( ! _post_rc )); then
+                    _update_core_sha_marker_path "$_repo_dir"
+                    local _marker_path=$REPLY
+                    if [[ "$_itc_mode" != none && -f "$_marker_path" ]]; then
+                        git -C "$_parent" add "$_marker_path" 2>/dev/null
+                    fi
+                    _update_core_commit_parent "$_parent" "$_rel" \
+                        "subtree updated" \
+                        "$(basename "$_repo_dir"): update subtree ${_rel} to ${_new_sha[1,12]}" \
+                        "$_itc_mode"
+                fi
             fi
-            _update_core_commit_parent "$_parent" "$_rel" \
-                "subtree updated" \
-                "$(basename "$_repo_dir"): update subtree ${_rel} to ${_new_sha[1,12]}" \
-                "$_itc_mode"
             ;;
         *)
             log_debug "component post marker: topology=${_topology} — nothing to do"
             ;;
     esac
-    return 0
+
+    (( _post_stashed )) && _update_core_pop_stash "$_parent" "dotfiles repo (post marker)"
+    return $_post_rc
 }
 
 # ---------------------------------------------------------------------------
@@ -986,7 +1110,11 @@ _update_core_commit_parent() {
             fi
             ;;
         prompt)
-            _update_core_has_typed_input && return 0
+            if _update_core_has_typed_input; then
+                warn "${_label}: stdin has buffered input — skipping parent commit"
+                warn "commit manually: git -C ${_parent} add ${_rel} && git -C ${_parent} commit"
+                return 1
+            fi
             if ! _update_core_check_foreign_staged "$_parent" "$_rel"; then
                 warn "${_label}: foreign staged changes in parent repo — skipping commit"
                 return 0
@@ -1582,6 +1710,11 @@ function _update_core_init_registry() {
     typeset -gA  _dotfiler_hook_component_dir
     typeset -gA  _dotfiler_hook_topology
     typeset -gA  _dotfiler_hook_setup_fn
+    # Per-repo stash consent cache.  Keyed by canonicalised repo path.
+    # Values: "y" = user consented to stash, "n" = user declined.
+    # Populated on first prompt per repo; reused for subsequent prompts
+    # within the same update run so the user is only asked once per repo.
+    typeset -gA  _dotfiler_stash_consent
 }
 
 # _update_register_hook \
@@ -1666,7 +1799,7 @@ _update_core_cleanup() {
           _dotfiler_hook_pull_fn _dotfiler_hook_unpack_fn \
           _dotfiler_hook_post_fn _dotfiler_hook_cleanup_fn \
           _dotfiler_hook_component_dir _dotfiler_hook_topology \
-          _dotfiler_hook_setup_fn 2>/dev/null
+          _dotfiler_hook_setup_fn _dotfiler_stash_consent 2>/dev/null
 
     unset -f _update_core_cleanup 2>/dev/null
 }
