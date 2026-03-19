@@ -1321,6 +1321,12 @@ _update_core_build_file_lists() {
         --diff-filter=ADMRC --no-decorate \
         --pretty=tformat:"%H%x09%s%n%B%x00" \
         "${_diff_range}" 2>/dev/null)
+    if (( $? != 0 )); then
+        warn "update_core: git log failed for range ${_diff_range} in ${_repo_dir}"
+        warn "update_core: one or both SHAs may not be present locally — run with --debug for details"
+        log_debug "update_core: git log --reverse --first-parent ${_diff_range} in ${_repo_dir} failed"
+        return 1
+    fi
 
     # Split on NUL to get one record per commit.
     # Each record is: "<hash>\t<subject>\n<body lines...>"

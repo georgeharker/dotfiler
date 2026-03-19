@@ -268,7 +268,8 @@ function _update_dotfiler_plan() {
 
     # ── Build file lists and set range sentinel ───────────────────────────
     local _range="${_old}..${_new}"
-    _update_core_build_file_lists "$script_dir" "$_range"
+    _update_core_build_file_lists "$script_dir" "$_range" || \
+        warn "update: file list unavailable for dotfiler — unpack may be incomplete"
     _dotfiler_plan_dotfiler_to_unpack=("${_update_core_files_to_unpack[@]}")
     _dotfiler_plan_dotfiler_to_remove=("${_update_core_files_to_remove[@]}")
     log_debug "update_self: plan: ${#_dotfiler_plan_dotfiler_to_unpack} to unpack," \
@@ -593,7 +594,8 @@ function _update_phase_plan(){
 
         # ── Main repo file lists ──────────────────────────────────────────
         typeset -gaU _update_core_files_to_unpack _update_core_files_to_remove
-        _update_core_build_file_lists "$dotfiles_dir" "$_update_diff_range"
+        _update_core_build_file_lists "$dotfiles_dir" "$_update_diff_range" || \
+            warn "update: file list unavailable for dotfiles — unpack may be incomplete"
         _dotfiler_plan_main_to_unpack=("${_update_core_files_to_unpack[@]}")
         _dotfiler_plan_main_to_remove=("${_update_core_files_to_remove[@]}")
 
@@ -674,8 +676,30 @@ function _update_phase_plan(){
         done
     fi
 
-    # ── Call each hook's plan_fn in-process ──────────────────────────────
+    # ── Pre-fetch component remotes (Phase 1 only) ───────────────────────
+    # Mirrors the main dotfiles fetch above. Ensures both old and new SHAs
+    # are present in each component's local object store before plan_fn calls
+    # _update_core_build_file_lists. Subtree: Phase 1 no-op (parent pull
+    # already brought content). Subdir: no separate remote.
     local _name _fn
+    if [[ "$_phase" == dotfiles ]]; then
+        for _name in "${_dotfiler_registered_hooks[@]}"; do
+            [[ "$_name" == main ]] && continue
+            local _comp_dir="${_dotfiler_hook_component_dir[$_name]:-}"
+            local _topology="${_dotfiler_hook_topology[$_name]:-}"
+            [[ -n "$_comp_dir" ]] || continue
+            [[ "$_topology" == submodule || "$_topology" == standalone ]] || continue
+            local _remote _branch
+            _remote=$(_update_core_get_default_remote "$_comp_dir")
+            _branch=$(_update_core_get_default_branch "$_comp_dir" "$_remote")
+            [[ -n "$_remote" && -n "$_branch" ]] || continue
+            verbose "update: phase 1 plan: pre-fetching ${_name} remote ${_remote}/${_branch}"
+            git -C "$_comp_dir" fetch -q "$_remote" "$_branch" 2>/dev/null || \
+                verbose "update: phase 1 plan: pre-fetch for ${_name} failed (offline?)"
+        done
+    fi
+
+    # ── Call each hook's plan_fn in-process ──────────────────────────────
     for _name in "${_dotfiler_registered_hooks[@]}"; do
         [[ "$_name" == main ]] && continue
         _fn="${_dotfiler_hook_plan_fn[$_name]:-}"
