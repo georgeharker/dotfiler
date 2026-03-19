@@ -102,14 +102,18 @@ _update_core_component_tip_range() {
             [[ -n "$_subtree_url" && -n "$_branch" ]] || return 1
             _new=$(_update_core_resolve_remote_sha "$_subtree_url" "$_branch") \
                 || return 1
-            git -C "$_comp_dir" fetch -q "$_subtree_url" "$_branch" 2>/dev/null
+            local _fetch_err
+            _fetch_err=$(git -C "$_comp_dir" fetch -q "$_subtree_url" "$_branch" 2>&1 >/dev/null) || \
+                log_debug "update_core: component_tip_range: subtree fetch failed: ${_fetch_err}"
             ;;
         submodule|standalone|*)
             # Current position is the component repo HEAD.
             _remote=$(_update_core_get_default_remote "$_comp_dir")
             _branch=$(_update_core_get_default_branch "$_comp_dir" "$_remote")
             _old=$(git -C "$_comp_dir" rev-parse HEAD 2>/dev/null) || return 1
-            git -C "$_comp_dir" fetch -q "$_remote" "$_branch" 2>/dev/null
+            local _fetch_err
+            _fetch_err=$(git -C "$_comp_dir" fetch -q "$_remote" "$_branch" 2>&1 >/dev/null) || \
+                log_debug "update_core: component_tip_range: fetch failed: ${_fetch_err}"
             _new=$(git -C "$_comp_dir" rev-parse \
                 "${_remote}/${_branch}" 2>/dev/null) || return 1
             ;;

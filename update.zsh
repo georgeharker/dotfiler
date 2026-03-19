@@ -152,8 +152,20 @@ function _update_dotfiler_init() {
     log_debug "update_self: stamp=${_dotfiler_self_stamp}"
 
     verbose "update_self: init done (topology=${_dotfiler_topology})"
-    # Registration into the hook dispatch system happens inside _update_phase_plan,
-    # after main registers, so the dispatch order is: main → dotfiler → hooks.
+
+    # Register dotfiler immediately after main (main registered at call site
+    # before _update_dotfiler_init is called), preserving main → dotfiler →
+    # hook-file hooks dispatch order.
+    # check_fn is empty — availability checking lives in check_update.zsh.
+    _update_register_hook dotfiler \
+        '' \
+        _update_dotfiler_plan \
+        _update_dotfiler_pull \
+        _update_dotfiler_unpack \
+        _update_dotfiler_post \
+        _update_dotfiler_cleanup \
+        "$script_dir" \
+        "$_dotfiler_topology"
 }
 
 
@@ -217,7 +229,9 @@ function _update_dotfiler_plan() {
             _branch=$(_update_core_get_default_branch "$script_dir" "$_remote")
         fi
         log_debug "update_self: plan: phase=dotfiles fetching ${_remote}/${_branch} to materialise ${_new}"
-        git -C "$script_dir" fetch -q "$_remote" "$_branch" 2>/dev/null || true
+        local _fetch_err
+        _fetch_err=$(git -C "$script_dir" fetch -q "$_remote" "$_branch" 2>&1 >/dev/null) || \
+            log_debug "update_self: plan: fetch ${_remote}/${_branch} failed: ${_fetch_err}"
         verbose "update_self: plan: phase=dotfiles — using hint range ${_hint}"
 
     else
@@ -599,32 +613,8 @@ function _update_phase_plan(){
         _dotfiler_plan_main_to_unpack=("${_update_core_files_to_unpack[@]}")
         _dotfiler_plan_main_to_remove=("${_update_core_files_to_remove[@]}")
 
-        # Register main hook once — idempotent by design (only runs in Phase 1).
         _dotfiler_plan_main_repo_dir="$dotfiles_dir"
         _dotfiler_plan_main_link_dest="$HOME"
-        _update_register_hook main \
-            '' \
-            '' \
-            '_update_main_pull' \
-            '_update_main_unpack' \
-            '_update_main_post'
-
-        # Register dotfiler immediately after main so the dispatch order is:
-        # main → dotfiler → hook-file hooks.
-        # check_fn is empty — availability checking lives in check_update.zsh.
-        # Guard: _update_dotfiler_init sets _dotfiler_topology; if dotfiler
-        # phase is excluded from this run the variable is unset and we skip.
-        if [[ -n "${_dotfiler_topology:-}" ]]; then
-            _update_register_hook dotfiler \
-                '' \
-                _update_dotfiler_plan \
-                _update_dotfiler_pull \
-                _update_dotfiler_unpack \
-                _update_dotfiler_post \
-                _update_dotfiler_cleanup \
-                "$script_dir" \
-                "$_dotfiler_topology"
-        fi
 
         verbose "update: phase plan: main repo" \
             "${#_dotfiler_plan_main_to_unpack[@]} to unpack" \
@@ -694,8 +684,11 @@ function _update_phase_plan(){
             _branch=$(_update_core_get_default_branch "$_comp_dir" "$_remote")
             [[ -n "$_remote" && -n "$_branch" ]] || continue
             verbose "update: phase 1 plan: pre-fetching ${_name} remote ${_remote}/${_branch}"
-            git -C "$_comp_dir" fetch -q "$_remote" "$_branch" 2>/dev/null || \
+            local _fetch_err
+            _fetch_err=$(git -C "$_comp_dir" fetch -q "$_remote" "$_branch" 2>&1 >/dev/null) || {
                 verbose "update: phase 1 plan: pre-fetch for ${_name} failed (offline?)"
+                log_debug "update: phase 1 plan: pre-fetch error: ${_fetch_err}"
+            }
         done
     fi
 
@@ -1034,8 +1027,22 @@ function _update_main() {
     [[ "$_update_range_mode" == true ]] && \
         verbose "update: range mode active (repo=${dotfiles_dir})"
 
-    # Init dotfiler — this self-registers dotfiler into the hook dispatch system
-    # (main → dotfiler → hooks) so Phase 1 and Phase 2 loops handle it uniformly.
+    # Register hooks early so the dispatch order is fixed:
+    # main → dotfiler → hook-file hooks.
+    # Registration is independent of file lists — lists are built in
+    # _update_phase_plan and stored in _dotfiler_plan_main_* variables.
+    if _update_should_run_phase dotfiles || _update_should_run_phase hooks \
+        || _update_should_run_phase dotfiler; then
+        _update_register_hook main \
+            '' \
+            '' \
+            '_update_main_pull' \
+            '_update_main_unpack' \
+            '_update_main_post'
+    fi
+
+    # Init dotfiler — detects topology, then registers dotfiler into the
+    # dispatch system immediately after main.
     if _update_should_run_phase dotfiler; then
         _update_dotfiler_init
     fi
