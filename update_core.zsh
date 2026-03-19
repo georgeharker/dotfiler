@@ -959,6 +959,9 @@ _update_core_component_post_marker() {
     local _repo_dir=$1 _parent=$2 _rel=$3 _new_sha=$4
     local _topology=$5 _itc_mode=$6 _phase=$7 _outcome=$8
 
+    # Nothing to record if pull was skipped (component already up to date).
+    [[ "$_outcome" == skip ]] && return 0
+
     if (( ${_dry_run:-0} )); then
         case "$_topology" in
             standalone)
@@ -969,9 +972,9 @@ _update_core_component_post_marker() {
                 fi
                 ;;
             submodule)
-                if [[ "$_phase" == dotfiles && "$_outcome" != skip ]]; then
+                if [[ "$_phase" == dotfiles ]]; then
                     verbose "component post: [dry-run] would: commit parent (submodule gitlink, outcome=${_outcome})"
-                elif [[ "$_phase" != dotfiles ]]; then
+                else
                     verbose "component post: [dry-run] would: commit parent (submodule ${_new_sha[1,12]})"
                 fi
                 ;;
