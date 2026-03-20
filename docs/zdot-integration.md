@@ -68,7 +68,9 @@ and pull advances zdot to the new submodule pointer — but only if zdot is not
 already at that commit.
 
 **Round 2 — self-directed.** zdot checks its own remote for commits that
-postdate the current dotfiles submodule pin. The framework emits
+postdate the current dotfiles submodule pin. By default only commits reachable
+from a semver tag (`v<N>.<N>.<N>[…]`) are considered — see
+[Release Channel](#release-channel) below. The framework emits
 `Checking for component updates beyond dotfiles...`, then zdot's plan emits
 `Checking zdot...` and either `zdot: up to date` or proceeds to pull.
 
@@ -239,11 +241,67 @@ zstyle ':zdot:update' mode prompt     # prompt before updating
 zstyle ':zdot:update' mode background # update silently in background
 ```
 
+### Step 4a: Release channel (optional)
+
+By default, self-directed (Round 2) updates for both zdot and dotfiler only
+advance to commits reachable from a semver release tag (`v<N>.<N>.<N>[…]`).
+This means you control the release gate: no update appears to users until you
+push a tag.
+
+```zsh
+# Default — only update to published releases:
+zstyle ':zdot:update'     release-channel tags
+zstyle ':dotfiler:update' release-channel tags
+
+# Track every commit (for maintainers / automated testing):
+zstyle ':zdot:update'     release-channel any
+zstyle ':dotfiler:update' release-channel any
+```
+
+Round 1 (dotfiles-driven) is unaffected — when your dotfiles repo records a
+specific SHA via its submodule pointer or SHA marker, that SHA is installed
+exactly regardless of tags.
+
 ### Step 5: Configure submodule pin commits (submodule topology only)
 
 ```zsh
 zstyle ':dotfiler:update' in-tree-commit auto  # default — auto-commit pin bumps
 ```
+
+---
+
+## Release Channel
+
+Self-directed (Round 2) updates for zdot and dotfiler default to a tag-only
+release channel. Only commits reachable from a semver tag matching
+`v<N>.<N>.<N>[…]` are offered as updates. This gives the maintainer explicit
+control over what users receive: pushing commits to `main` without a tag has no
+effect on users with the default configuration.
+
+| Setting | Behaviour |
+|---------|-----------|
+| `tags` (default) | Only advance to the latest semver-tagged commit reachable from the remote branch tip. No tag ahead of current position = no update. |
+| `any` | Advance to the branch tip on every check (pre-v0.x behaviour). |
+
+```zsh
+# Default (explicit):
+zstyle ':zdot:update'     release-channel tags
+zstyle ':dotfiler:update' release-channel tags
+
+# Track every commit pushed to main:
+zstyle ':zdot:update'     release-channel any
+zstyle ':dotfiler:update' release-channel any
+```
+
+**Phase boundary:** this setting has no effect in Round 1 (dotfiles-driven).
+When the dotfiles repo records a new submodule pointer or SHA marker for zdot,
+that exact SHA is installed regardless of whether it carries a tag.
+
+**Tag resolution:** the check uses the GitHub API (`/repos/<owner>/<repo>/tags`)
+to resolve the latest semver tag without a full `git fetch`. On failure or
+non-GitHub remotes it falls back to `git ls-remote --tags` combined with local
+`merge-base` ancestry checks (which require that a prior `git fetch` has been
+done, as it is in the plan phase).
 
 ---
 

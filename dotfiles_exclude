@@ -17,6 +17,9 @@ dotfiler
 .svn/
 .hg/
 
+# CI / GitHub metadata
+.github/
+
 # Build and dependency directories
 node_modules/
 __pycache__/

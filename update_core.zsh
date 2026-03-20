@@ -77,7 +77,172 @@ _update_core_get_default_branch() {
     print -n "${_branch:-main}"
 }
 
-# _update_core_component_tip_range <comp_dir> <topology> [<subtree_url> <branch>]
+# ---------------------------------------------------------------------------
+# Release-channel helpers
+# ---------------------------------------------------------------------------
+
+# _update_core_get_release_channel <zstyle_scope>
+# Reads the release-channel preference from a zstyle scope.
+# Valid values: tags | any
+# Default: tags  (updates are constrained to semver-tagged commits)
+# Sets REPLY.
+_update_core_get_release_channel() {
+    local _ch
+    zstyle -s "${1}" release-channel _ch 2>/dev/null || _ch=tags
+    case "${_ch:-tags}" in
+        any|all|tip) REPLY=any ;;
+        *)           REPLY=tags ;;
+    esac
+}
+
+# _update_core_semver_tag_p <tag>
+# Returns 0 if <tag> matches the semver pattern v<N>.<N>.<N>[...], 1 otherwise.
+# Accepts any suffix after the three numeric components (e.g. -rc1, +build).
+_update_core_semver_tag_p() {
+    [[ "$1" == v[0-9]*.[0-9]*.[0-9]* ]]
+}
+
+# _update_core_resolve_latest_semver_tag_sha \
+#     <remote_url> <branch> <comp_dir> [<remote_name>]
+#
+# Phase 2 prepass: find the SHA of the latest semver tag (v<N>.<N>.<N>[...])
+# that is reachable from the remote branch tip.
+#
+# Strategy:
+#   GitHub remotes:
+#     1. GET /repos/<owner>/<repo>/releases  (documented newest-first ordering)
+#        Walk entries in order; skip drafts and pre-releases; take the first
+#        whose tag_name matches semver and whose commit is an ancestor of (or
+#        equal to) the remote branch tip.  Tag SHAs are resolved locally via
+#        git rev-parse (the caller's fetch ensures objects are available).
+#     2. Falls through to git ls-remote if the API fails or returns no
+#        qualifying releases (handles tags without corresponding releases).
+#   Non-GitHub remotes:
+#     1. git ls-remote --tags <remote_url>
+#        Filter by semver name, collect name→SHA pairs (preferring dereferenced
+#        ^{} entries for annotated tags), sort by version descending, then
+#        early-bail on the first reachable tag.
+#
+# Sets REPLY to the tag's commit SHA on success (returns 0).
+# Sets REPLY="" and returns 1 when no qualifying tag is found.
+_update_core_resolve_latest_semver_tag_sha() {
+    local _remote_url=$1 _branch=$2 _comp_dir=$3 _remote_name=${4:-}
+    REPLY=""
+
+    # Resolve the local ref for the remote branch tip (available after fetch).
+    local _tip_sha
+    if [[ -n "$_remote_name" ]]; then
+        _tip_sha=$(git -C "$_comp_dir" rev-parse \
+            "${_remote_name}/${_branch}" 2>/dev/null)
+    fi
+    # Fallback: FETCH_HEAD populated by the most recent fetch.
+    [[ -z "$_tip_sha" ]] && \
+        _tip_sha=$(git -C "$_comp_dir" rev-parse FETCH_HEAD 2>/dev/null)
+    [[ -z "$_tip_sha" ]] && return 1
+
+    # --- GitHub Releases API path (documented newest-first ordering) ---
+    if _update_core_extract_github_repo "$_remote_url"; then
+        local _gh_repo="$REPLY"
+        local _api_url="https://api.github.com/repos/${_gh_repo}/releases?per_page=100"
+        local _releases_json
+        _releases_json=$(_update_core_github_api_get "$_api_url") || _releases_json=""
+
+        if [[ -n "$_releases_json" ]]; then
+            # Parse tag_name, draft, and prerelease from each release entry.
+            # Releases are returned newest-first (sorted by created_at desc).
+            # We iterate in order, resolving each non-draft non-prerelease
+            # semver tag to a local SHA.  First reachable match wins.
+            local -a _ordered_tags=()
+            local _cur_tag="" _cur_draft=false _cur_prerelease=false
+            local _line
+
+            while IFS= read -r _line; do
+                if [[ "$_line" =~ '"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)"' ]]; then
+                    # New entry boundary — flush previous.
+                    if [[ -n "$_cur_tag" && "$_cur_draft" != true \
+                          && "$_cur_prerelease" != true ]] \
+                       && _update_core_semver_tag_p "$_cur_tag"; then
+                        _ordered_tags+=("$_cur_tag")
+                    fi
+                    _cur_tag="${match[1]}" _cur_draft=false _cur_prerelease=false
+                elif [[ "$_line" =~ '"draft"[[:space:]]*:[[:space:]]*(true|false)' ]]; then
+                    _cur_draft="${match[1]}"
+                elif [[ "$_line" =~ '"prerelease"[[:space:]]*:[[:space:]]*(true|false)' ]]; then
+                    _cur_prerelease="${match[1]}"
+                fi
+            done <<< "$_releases_json"
+            # Flush last entry.
+            if [[ -n "$_cur_tag" && "$_cur_draft" != true \
+                  && "$_cur_prerelease" != true ]] \
+               && _update_core_semver_tag_p "$_cur_tag"; then
+                _ordered_tags+=("$_cur_tag")
+            fi
+
+            if [[ ${#_ordered_tags[@]} -gt 0 ]]; then
+                # Tags are already newest-first from the API.  Resolve each
+                # to a local SHA and check reachability; early-bail on first hit.
+                local _tag _sha
+                for _tag in "${_ordered_tags[@]}"; do
+                    _sha=$(git -C "$_comp_dir" rev-parse "refs/tags/${_tag}^{}" 2>/dev/null \
+                        || git -C "$_comp_dir" rev-parse "refs/tags/${_tag}" 2>/dev/null) \
+                        || continue
+                    if git -C "$_comp_dir" merge-base --is-ancestor \
+                            "$_sha" "$_tip_sha" 2>/dev/null \
+                       || [[ "$_sha" == "$_tip_sha" ]]; then
+                        REPLY="$_sha"
+                        return 0
+                    fi
+                done
+                # Releases found but none reachable from branch tip.
+                return 1
+            fi
+            # API returned data but no qualifying releases — fall through to
+            # ls-remote in case there are tags without corresponding releases.
+        fi
+        # API failed or no releases — fall through to git ls-remote.
+    fi
+
+    # --- Non-GitHub / API fallback: git ls-remote + local ancestry ---
+    # ls-remote --tags prints both lightweight and annotated (^{}) refs.
+    # For annotated tags, the ^{} line dereferences to the commit SHA.
+    local _ls_out
+    _ls_out=$(git ls-remote --tags "$_remote_url" 2>/dev/null) || return 1
+    [[ -z "$_ls_out" ]] && return 1
+
+    # Collect name→SHA pairs for semver tags (dereference annotated tags).
+    # When both refs/tags/v1.2.3 and refs/tags/v1.2.3^{} exist, the ^{}
+    # (dereferenced) entry overwrites the lightweight entry in the map,
+    # giving us the commit SHA rather than the tag object SHA.
+    local -A _tag_map=()
+    local _ref_sha _ref_name
+    while IFS=$'\t' read -r _ref_sha _ref_name; do
+        _ref_name="${_ref_name#refs/tags/}"
+        local _bare_name="${_ref_name%'^{}'}"
+        _update_core_semver_tag_p "$_bare_name" || continue
+        _tag_map[$_bare_name]="$_ref_sha"
+    done <<< "$_ls_out"
+
+    [[ ${#_tag_map[@]} -eq 0 ]] && return 1
+
+    # Sort tag names by version (newest first) and early-bail on the first
+    # tag whose commit is reachable from the branch tip.
+    local _sorted_name _sha
+    for _sorted_name in ${(f)"$(printf '%s\n' "${(@k)_tag_map}" | sort -V -r)"}; do
+        _sha="${_tag_map[$_sorted_name]}"
+        git -C "$_comp_dir" cat-file -e "${_sha}" 2>/dev/null || continue
+        if git -C "$_comp_dir" merge-base --is-ancestor \
+                "$_sha" "$_tip_sha" 2>/dev/null \
+           || [[ "$_sha" == "$_tip_sha" ]]; then
+            REPLY="$_sha"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+# _update_core_component_tip_range <comp_dir> <topology> [<subtree_url> <branch>] \
+#                                   [--scope <zstyle_scope>]
 # Compute the Phase 2 (self-directed) range for a component: where it is now
 # to the current remote tip.  Fetches to materialise remote objects locally.
 #
@@ -85,12 +250,28 @@ _update_core_get_default_branch() {
 #   standalone|submodule : HEAD of the component git repo
 #   subtree              : SHA marker file (HEAD belongs to the parent repo)
 #
+# When --scope is given and the resolved release-channel is 'tags', a prepass
+# resolves _new to the latest semver tag reachable from the branch tip rather
+# than the tip commit itself.  If no qualifying tag is found, returns empty
+# (nothing to update).  Phase 1 callers omit --scope so tag constraint never
+# applies there.
+#
 # Sets REPLY="old_sha..new_sha" (empty string on failure / nothing to do).
 # Returns 0 on success, 1 on failure.
 _update_core_component_tip_range() {
     local _comp_dir=$1 _topology=$2 _subtree_url=${3:-} _branch=${4:-}
-    local _old _new _remote
+    local _old _new _remote _scope=""
     REPLY=""
+
+    # Consume optional --scope <value> pair from the argument list.
+    local _i=1
+    while (( _i <= $# )); do
+        if [[ "${@[_i]}" == --scope ]]; then
+            (( _i++ ))
+            _scope="${@[_i]:-}"
+        fi
+        (( _i++ ))
+    done
 
     case "$_topology" in
         subtree)
@@ -100,13 +281,25 @@ _update_core_component_tip_range() {
             _update_core_read_sha_marker "$_comp_dir" || return 1
             _old="$REPLY"
             [[ -n "$_subtree_url" && -n "$_branch" ]] || return 1
-            _new=$(_update_core_resolve_remote_sha "$_subtree_url" "$_branch") \
-                || return 1
             local _fetch_err
-            _fetch_err=$(git -C "$_comp_dir" fetch -q "$_subtree_url" "$_branch" 2>&1 >/dev/null) || {
+            _fetch_err=$(git -C "$_comp_dir" fetch -q "$_subtree_url" "$_branch" --tags 2>&1 >/dev/null) || {
                 error "update_core: component_tip_range: subtree fetch failed: ${_fetch_err}"
                 return 1
             }
+            if [[ -n "$_scope" ]]; then
+                _update_core_get_release_channel "$_scope"
+                if [[ "$REPLY" == tags ]]; then
+                    _update_core_resolve_latest_semver_tag_sha \
+                        "$_subtree_url" "$_branch" "$_comp_dir" "" || { REPLY=""; return 0; }
+                    _new="$REPLY"
+                else
+                    _new=$(_update_core_resolve_remote_sha "$_subtree_url" "$_branch") \
+                        || return 1
+                fi
+            else
+                _new=$(_update_core_resolve_remote_sha "$_subtree_url" "$_branch") \
+                    || return 1
+            fi
             ;;
         submodule|standalone|*)
             # Current position is the component repo HEAD.
@@ -114,12 +307,28 @@ _update_core_component_tip_range() {
             _branch=$(_update_core_get_default_branch "$_comp_dir" "$_remote")
             _old=$(git -C "$_comp_dir" rev-parse HEAD 2>/dev/null) || return 1
             local _fetch_err
-            _fetch_err=$(git -C "$_comp_dir" fetch -q "$_remote" "$_branch" 2>&1 >/dev/null) || {
+            _fetch_err=$(git -C "$_comp_dir" fetch -q "$_remote" "$_branch" --tags 2>&1 >/dev/null) || {
                 error "update_core: component_tip_range: fetch failed: ${_fetch_err}"
                 return 1
             }
-            _new=$(git -C "$_comp_dir" rev-parse \
-                "${_remote}/${_branch}" 2>/dev/null) || return 1
+            if [[ -n "$_scope" ]]; then
+                local _remote_url
+                _remote_url=$(git -C "$_comp_dir" config \
+                    "remote.${_remote}.url" 2>/dev/null) || _remote_url=""
+                _update_core_get_release_channel "$_scope"
+                if [[ "$REPLY" == tags ]]; then
+                    _update_core_resolve_latest_semver_tag_sha \
+                        "$_remote_url" "$_branch" "$_comp_dir" "$_remote" \
+                        || { REPLY=""; return 0; }
+                    _new="$REPLY"
+                else
+                    _new=$(git -C "$_comp_dir" rev-parse \
+                        "${_remote}/${_branch}" 2>/dev/null) || return 1
+                fi
+            else
+                _new=$(git -C "$_comp_dir" rev-parse \
+                    "${_remote}/${_branch}" 2>/dev/null) || return 1
+            fi
             ;;
     esac
 
@@ -230,18 +439,38 @@ _update_core_safe_rm() {
     return 0
 }
 
-# _update_core_is_available_fetch <repo_dir> [allow_diverged]
+# _update_core_is_available_fetch <repo_dir> [allow_diverged] [scope]
 # Returns 0 if an update is available (local is behind, or diverged and
 # allow_diverged=1), 1 to skip (up to date or local is ahead), 2 on error.
 # When diverged and allow_diverged is unset/0, warns and returns 1.
+# When <scope> is given and its release-channel=tags, _remote_sha is resolved
+# to the latest semver tag reachable from the remote branch tip rather than
+# the tip commit itself.  If no semver tag exists returns 1 (skip).
 _update_core_is_available_fetch() {
-    local _repo_dir=$1 _allow_diverged=${2:-0}
+    local _repo_dir=$1 _allow_diverged=${2:-0} _scope=${3:-}
     local _remote _branch _local_sha _remote_sha _base
     _remote=$(_update_core_get_default_remote "$_repo_dir")
     _branch=$(_update_core_get_default_branch "$_repo_dir" "$_remote")
-    git -C "$_repo_dir" fetch "$_remote" "$_branch" --quiet 2>/dev/null || return 2
+    git -C "$_repo_dir" fetch "$_remote" "$_branch" --quiet --tags 2>/dev/null || return 2
     _local_sha=$(git -C "$_repo_dir" rev-parse HEAD 2>/dev/null) || return 2
-    _remote_sha=$(git -C "$_repo_dir" rev-parse "${_remote}/${_branch}" 2>/dev/null) || return 2
+
+    # Tag-constraint prepass (Phase 2 only): resolve target to latest semver tag.
+    if [[ -n "$_scope" ]]; then
+        _update_core_get_release_channel "$_scope"
+        if [[ "$REPLY" == tags ]]; then
+            local _remote_url
+            _remote_url=$(git -C "$_repo_dir" config \
+                "remote.${_remote}.url" 2>/dev/null) || _remote_url=""
+            _update_core_resolve_latest_semver_tag_sha \
+                "$_remote_url" "$_branch" "$_repo_dir" "$_remote" || return 1
+            _remote_sha="$REPLY"
+        fi
+    fi
+    if [[ -z "${_remote_sha:-}" ]]; then
+        _remote_sha=$(git -C "$_repo_dir" rev-parse \
+            "${_remote}/${_branch}" 2>/dev/null) || return 2
+    fi
+
     [[ "$_local_sha" == "$_remote_sha" ]] && return 1   # up to date
     _base=$(git -C "$_repo_dir" merge-base "$_local_sha" "$_remote_sha" 2>/dev/null) \
         || return 2   # merge-base failed — can't determine relationship
@@ -1243,11 +1472,7 @@ _update_core_should_update() {
 # Update availability — API-first (ohmyzsh pattern)
 # ---------------------------------------------------------------------------
 
-# _update_core_is_available <repo_dir> [<remote_url_override>]
-# Returns:
-#   0 — update is available
-#   1 — up to date or indeterminate (skip — conservative)
-# _update_core_is_available <repo_dir> [remote_url_override] [allow_diverged]
+# _update_core_is_available <repo_dir> [remote_url_override] [allow_diverged] [scope]
 # Returns:
 #   0 — update is available (local is behind, or diverged with allow_diverged=1)
 #   1 — up to date, local is ahead, or diverged with allow_diverged=0 (skip)
@@ -1257,8 +1482,18 @@ _update_core_should_update() {
 # For non-GitHub remotes: falls back to _update_core_is_available_fetch (git fetch).
 # <remote_url_override>: if non-empty, used instead of reading git config.
 # <allow_diverged>: 1 = warn and proceed on diverged; 0 = warn and skip (default).
+# <scope>: when non-empty, reads release-channel from this zstyle scope.
+#   release-channel=tags (default): comparison target is the latest semver tag
+#     reachable from the remote branch tip rather than the tip commit itself.
+#     GitHub API path: uses /repos/<owner>/<repo>/tags.
+#     Fetch path: delegates to _update_core_is_available_fetch with scope.
+#     If no qualifying semver tag exists, returns 1 (nothing to update).
+#   release-channel=any: current behaviour — compare against branch tip.
+# Note: scope / release-channel constraint applies to Phase 2 (self-directed)
+#   checks only.  Phase 1 (dotfiles-directed) callers omit scope.
 _update_core_is_available() {
-    local _repo_dir=$1 _remote_url_override=${2:-} _allow_diverged=${3:-0}
+    local _repo_dir=$1 _remote_url_override=${2:-} _allow_diverged=${3:-0} \
+          _scope=${4:-}
     local _remote _branch _remote_url
 
     _remote=$(_update_core_get_default_remote "$_repo_dir")
@@ -1268,36 +1503,49 @@ _update_core_is_available() {
         _remote_url=$_remote_url_override
     else
         _remote_url=$(git -C "$_repo_dir" config "remote.${_remote}.url" 2>/dev/null) || {
-            _update_core_is_available_fetch "$_repo_dir" "$_allow_diverged"
+            _update_core_is_available_fetch "$_repo_dir" "$_allow_diverged" "$_scope"
             return $?
         }
     fi
 
+    # --- Determine release-channel target ---
+    local _channel=any
+    if [[ -n "$_scope" ]]; then
+        _update_core_get_release_channel "$_scope"; _channel="$REPLY"
+    fi
+
     # --- GitHub API path (API-first, no git fetch) ---
     if _update_core_extract_github_repo "$_remote_url"; then
-        local _api_url="https://api.github.com/repos/${REPLY}/commits/${_branch}"
+        local _gh_repo="$REPLY"
         local _local_head _remote_head
 
         # Use HEAD directly — rev-parse "$_branch" fails in detached-HEAD state
         # (e.g. freshly updated submodule), whereas HEAD always resolves.
         _local_head=$(git -C "$_repo_dir" rev-parse HEAD 2>/dev/null) || return 1
 
-        # Call GitHub API — on failure, fall back to standard git fetch path.
-        _remote_head=$(_update_core_github_api_get "$_api_url") || {
-            log_debug "update_core: GitHub API unavailable, falling back to git fetch"
-            _update_core_is_available_fetch "$_repo_dir" "$_allow_diverged"
-            return $?
-        }
-
-        if [[ -z "$_remote_head" ]]; then
-            # Empty response (unauthenticated rate limit returns 403, but just
-            # in case we get an empty 200) — fall back to git fetch.
-            log_debug "update_core: GitHub API returned empty response, falling back to git fetch"
-            _update_core_is_available_fetch "$_repo_dir" "$_allow_diverged"
-            return $?
+        if [[ "$_channel" == tags ]]; then
+            # Tag-constraint prepass via the releases/tags API.
+            # We need objects locally for merge-base checks, so fetch first.
+            git -C "$_repo_dir" fetch -q "$_remote" "$_branch" --tags 2>/dev/null
+            _update_core_resolve_latest_semver_tag_sha \
+                "$_remote_url" "$_branch" "$_repo_dir" "$_remote" || return 1
+            _remote_head="$REPLY"
+        else
+            local _api_url="https://api.github.com/repos/${_gh_repo}/commits/${_branch}"
+            # Call GitHub API — on failure, fall back to standard git fetch path.
+            _remote_head=$(_update_core_github_api_get "$_api_url") || {
+                log_debug "update_core: GitHub API unavailable, falling back to git fetch"
+                _update_core_is_available_fetch "$_repo_dir" "$_allow_diverged" "$_scope"
+                return $?
+            }
+            if [[ -z "$_remote_head" ]]; then
+                log_debug "update_core: GitHub API returned empty response, falling back to git fetch"
+                _update_core_is_available_fetch "$_repo_dir" "$_allow_diverged" "$_scope"
+                return $?
+            fi
         fi
 
-        log_debug "update_core: local=${_local_head:0:8} remote(API)=${_remote_head:0:8}"
+        log_debug "update_core: local=${_local_head:0:8} remote(API)=${_remote_head:0:8} channel=${_channel}"
 
         [[ "$_local_head" == "$_remote_head" ]] && return 1   # up to date
 
@@ -1324,7 +1572,7 @@ _update_core_is_available() {
     fi
 
     # --- Non-GitHub remote: fall back to git fetch ---
-    _update_core_is_available_fetch "$_repo_dir" "$_allow_diverged"
+    _update_core_is_available_fetch "$_repo_dir" "$_allow_diverged" "$_scope"
     return $?
 }
 
@@ -1390,8 +1638,11 @@ _update_core_resolve_subtree_spec() {
     return 0
 }
 
-# _update_core_is_available_subtree <subtree_dir> <subtree_spec>
+# _update_core_is_available_subtree <subtree_dir> <subtree_spec> [<url_hint>] [<scope>]
 # <subtree_spec> is "<remote_name> [branch]" (same format as zstyle subtree-remote).
+# <scope> is a zstyle scope string (e.g. ':zdot:update').  When present and
+# release-channel=tags, the remote target is resolved to the latest semver tag
+# reachable from the branch tip rather than the tip commit itself.
 # Returns:
 #   0 — update is available
 #   1 — up to date or indeterminate (skip — conservative)
@@ -1404,10 +1655,16 @@ _update_core_resolve_subtree_spec() {
 # If no marker exists (first run or migration), we assume an update is
 # available to bootstrap the marker.
 _update_core_is_available_subtree() {
-    local _subtree_dir=$1 _subtree_spec=$2 _url_hint=${3:-}
+    local _subtree_dir=$1 _subtree_spec=$2 _url_hint=${3:-} _scope=${4:-}
     _update_core_resolve_subtree_spec "$_subtree_dir" "$_subtree_spec" "$_url_hint" || return 1
     local _remote="$reply[1]" _branch="$reply[2]" _remote_url="$reply[3]"
     local _local_head _remote_head
+
+    # --- Determine release-channel target ---
+    local _channel=any
+    if [[ -n "$_scope" ]]; then
+        _update_core_get_release_channel "$_scope"; _channel="$REPLY"
+    fi
 
     # Read the cached SHA from the marker file adjacent to the subtree
     if _update_core_read_sha_marker "$_subtree_dir"; then
@@ -1418,6 +1675,22 @@ _update_core_is_available_subtree() {
         return 0
     fi
 
+    if [[ "$_channel" == tags ]]; then
+        # Tag-constraint prepass: fetch to materialise objects locally for
+        # merge-base ancestry checks, then resolve to the latest semver tag.
+        git -C "$_subtree_dir" fetch -q "$_remote_url" "$_branch" --tags 2>/dev/null
+        _update_core_resolve_latest_semver_tag_sha \
+            "$_remote_url" "$_branch" "$_subtree_dir" "$_remote" || return 1
+        _remote_head="$REPLY"
+
+        log_debug "update_core: subtree marker=${_local_head:0:8} remote(tag)=${_remote_head:0:8} channel=${_channel}"
+
+        [[ "$_local_head" == "$_remote_head" ]] && return 1
+        return 0
+    fi
+
+    # --- channel=any: compare marker against branch tip ---
+
     # --- GitHub API path (API-first, no git fetch) ---
     if _update_core_extract_github_repo "$_remote_url"; then
         local _api_url="https://api.github.com/repos/${REPLY}/commits/${_branch}"
@@ -1427,7 +1700,7 @@ _update_core_is_available_subtree() {
 
         [[ -z "$_remote_head" ]] && return 1   # empty response → skip
 
-        log_debug "update_core: subtree marker=${_local_head:0:8} remote(API)=${_remote_head:0:8}"
+        log_debug "update_core: subtree marker=${_local_head:0:8} remote(API)=${_remote_head:0:8} channel=${_channel}"
 
         # Simple equality check — no merge-base (parent repo has no
         # knowledge of the subtree source history)
@@ -1439,7 +1712,7 @@ _update_core_is_available_subtree() {
     _remote_head=$(git ls-remote "$_remote_url" "$_branch" 2>/dev/null | awk '{print $1}')
     [[ -z "$_remote_head" ]] && return 1   # ls-remote failed → skip
 
-    log_debug "update_core: subtree marker=${_local_head:0:8} remote(ls-remote)=${_remote_head:0:8}"
+    log_debug "update_core: subtree marker=${_local_head:0:8} remote(ls-remote)=${_remote_head:0:8} channel=${_channel}"
 
     [[ "$_local_head" == "$_remote_head" ]] && return 1
     return 0
@@ -1460,6 +1733,13 @@ _update_core_is_available_subtree() {
 #                 already covers it, nothing extra needed here
 #   none|*      — not a git repo; nothing to check
 #
+# Release-channel constraint (Phase 2 only):
+#   Reads ':dotfiler:update' release-channel (default: tags).
+#   When 'tags', the availability check compares local position against the
+#   latest semver tag reachable from the remote branch tip, not the tip itself.
+#   This means dotfiler updates only when a new v<N>.<N>.<N> tag has been
+#   published.
+#
 # Returns: 0 = update available, 1 = up to date / not applicable
 _update_core_is_dotfiler_available() {
     local _script_dir=${1:?script_dir required}
@@ -1473,11 +1753,15 @@ _update_core_is_dotfiler_available() {
     local _avail
     case $_topology in
         standalone|submodule)
-            _update_core_is_available "$_script_dir" && _avail=0 || _avail=$?
+            # Pass ':dotfiler:update' scope so tag constraint applies.
+            _update_core_is_available "$_script_dir" "" 0 ':dotfiler:update' \
+                && _avail=0 || _avail=$?
             ;;
         subtree)
+            # Pass ':dotfiler:update' scope so tag constraint applies.
             _update_core_is_available_subtree \
                 "$_script_dir" "$_subtree_spec" "$_subtree_url" \
+                ':dotfiler:update' \
                 && _avail=0 || _avail=$?
             ;;
         subdir|none|*)
@@ -1817,6 +2101,9 @@ _update_core_cleanup() {
         _update_core_current_epoch \
         _update_core_get_default_remote \
         _update_core_get_default_branch \
+        _update_core_get_release_channel \
+        _update_core_semver_tag_p \
+        _update_core_resolve_latest_semver_tag_sha \
         _update_core_component_tip_range \
         _update_core_has_typed_input \
         _update_core_acquire_lock \

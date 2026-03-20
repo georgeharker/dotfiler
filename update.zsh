@@ -27,6 +27,15 @@
 # Range/commit-hash targets the main dotfiles repo; component hooks derive their
 # own ranges from the dotfiles history via marker files (see _update_phase_plan).
 # Future work: --component=<name> to target a single hook with an explicit range.
+#
+# Release-channel zstyle:
+#   zstyle ':dotfiler:update' release-channel  tags   # tags (default) | any
+#
+#   tags (default) — self-directed (Phase 2) updates only advance to semver tags
+#                    matching v<N>.<N>.<N>[...].  Applies to both the dotfiler
+#                    scripts repo and to zdot (via ':zdot:update' release-channel).
+#                    Phase 1 (dotfiles-directed) is unaffected.
+#   any            — advance to the branch tip (previous behaviour).
 
 emulate -L zsh
 # PIPE_FAIL and NO_UNSET are useful hardening; ERR_EXIT is intentionally
@@ -249,12 +258,13 @@ function _update_dotfiler_plan() {
                 }
                 _remote="$reply[1]" _branch="$reply[2]"
                 _update_core_component_tip_range "$script_dir" subtree \
-                    "$_dotfiler_subtree_url" "$_branch"
+                    "$_dotfiler_subtree_url" "$_branch" --scope ':dotfiler:update'
                 ;;
             *)
                 _remote=$(_update_core_get_default_remote "$script_dir")
                 _branch=$(_update_core_get_default_branch "$script_dir" "$_remote")
-                _update_core_component_tip_range "$script_dir" "$_dotfiler_topology"
+                _update_core_component_tip_range "$script_dir" "$_dotfiler_topology" \
+                    "" "" --scope ':dotfiler:update'
                 ;;
         esac
         local _tip_range="$REPLY"

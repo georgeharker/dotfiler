@@ -33,3 +33,4 @@ update_self.zsh
 example_install/
 test/
 docs/
+.github/

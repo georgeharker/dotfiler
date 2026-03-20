@@ -23,6 +23,9 @@ __pycache__/
 *.pyc
 *.zwc
 
+# CI / GitHub metadata
+.github/
+
 # The exclude files themselves
 always_exclude
 dotfiles_exclude

@@ -40,6 +40,28 @@ By default, dotfiler checks at most once per hour. Override with:
 zstyle ':dotfiler:update' frequency 86400  # seconds; once per day
 ```
 
+### Release Channel
+
+By default, **self-directed (Round 2) updates only advance to published
+releases** — commits that are reachable from a semver tag matching
+`v<N>.<N>.<N>[…]`. If no such tag exists ahead of your current position, no
+update is offered.
+
+```zsh
+zstyle ':dotfiler:update' release-channel tags   # default — wait for a release tag
+zstyle ':dotfiler:update' release-channel any    # track branch tip (developers/CI)
+```
+
+This applies to both dotfiler's own scripts and to the zdot component (via
+`zstyle ':zdot:update' release-channel`). Round 1 (dotfiles-driven) is always
+unaffected — when your dotfiles repo records a specific SHA, that SHA is what
+gets installed regardless of tags.
+
+The rationale: you control when average users receive an update by publishing a
+new `v<N>.<N>.<N>` tag. Commits pushed to `main` between releases are invisible
+to users with the default channel — only you (with `release-channel any`) and
+automated CI will pick them up immediately.
+
 ---
 
 ## Two Rounds of Four Phases
@@ -54,7 +76,8 @@ the incoming dotfiles commit range and handed to each hook's plan function.
 
 **Round 2 — self-directed:** each component checks its own remote for updates
 that are not yet reflected in dotfiles (e.g. zdot commits that were pushed since
-the last dotfiles submodule pin bump).
+the last dotfiles submodule pin bump). By default the check is constrained to
+published releases — see [Release Channel](#release-channel) below.
 
 ### 1. Plan
 

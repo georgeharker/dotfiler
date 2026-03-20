@@ -169,17 +169,53 @@ These are available to your hook functions when dotfiler sources your hook.
 ### Availability Checks
 
 ```zsh
-# Is an update available in this repo?
+# Is an update available in this repo? (Phase 1 / no release-channel constraint)
 _update_core_is_available "/path/to/repo"
 # Returns 0=yes, 1=no-update, 2=no-network
 
-# For subtree deployments
-_update_core_is_available_subtree "/path/to/repo" "origin/main"
+# Phase 2 (self-directed): apply release-channel constraint from a zstyle scope
+_update_core_is_available "/path/to/repo" "" 0 ':my-component:update'
+# When ':my-component:update' release-channel=tags (default), only returns 0
+# if a new semver tag (v<N>.<N>.<N>[...]) is reachable from the remote branch tip.
+
+# For subtree deployments (with release-channel constraint)
+_update_core_is_available_subtree "/path/to/repo" "remote branch" \
+    "https://github.com/owner/repo.git" ':my-component:update'
 ```
 
 `_update_core_is_available` prefers the GitHub REST API (via curl or wget) to
 avoid an expensive `git fetch` when possible. It falls back to `git fetch` on
 non-GitHub remotes.
+
+### Release-Channel Helpers
+
+```zsh
+# Read release-channel preference from a zstyle scope
+_update_core_get_release_channel ':my-component:update'
+# Sets REPLY = "tags" (default) or "any"
+
+# Resolve the SHA of the latest semver tag reachable from the remote branch tip
+# (after a git fetch has been done to materialise remote objects locally)
+_update_core_resolve_latest_semver_tag_sha \
+    "$remote_url" "$branch" "/path/to/repo" "$remote_name"
+# Sets REPLY = SHA on success, returns 1 if no semver tag found.
+# Uses GitHub Releases API first (documented newest-first ordering,
+# skips drafts/pre-releases); falls back to git ls-remote --tags.
+```
+
+The tag pattern matched is `v[0-9]*.[0-9]*.[0-9]*` — standard semver prefixed
+with `v`. Suffixes (e.g. `-rc1`, `+build`) are accepted. Plain numeric tags
+(e.g. `1.2.3`) are not matched.
+
+Pass the `--scope` flag to `_update_core_component_tip_range` to apply the
+release-channel constraint automatically during plan phase:
+
+```zsh
+_update_core_component_tip_range "/path/to/repo" "$topology" \
+    "" "" --scope ':my-component:update'
+# When release-channel=tags, REPLY is set to "old_sha..tag_sha" rather than
+# "old_sha..branch_tip_sha". Returns empty string if no qualifying tag exists.
+```
 
 ### Deployment Detection
 
