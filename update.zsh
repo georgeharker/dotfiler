@@ -791,9 +791,19 @@ function _update_main_pull(){
     [[ "${1:-}" == --phase=* ]] && shift
     [[ ${#dry_run[@]} -gt 0 ]] && { verbose "update: main pull: skipping (dry-run)"; return 0; }
     [[ ${#commit_hash[@]} -gt 0 || ${#range[@]} -gt 0 ]] && { verbose "update: main pull: skipping (range mode)"; return 0; }
-    if (( ! _force && ${#_dotfiler_plan_main_to_unpack[@]} == 0 && ${#_dotfiler_plan_main_to_remove[@]} == 0 )); then
-        verbose "update: main pull: skipping (nothing to update)"
-        return 0
+    # Always pull when there are commits in the range, even if no top-level
+    # dotfiles changed.  The diff range may contain subtree/submodule pointer
+    # updates, exclude-file changes, or other non-dotfile content that needs
+    # HEAD to advance.  The unpack phase independently guards on its own lists.
+    if (( ! _force )); then
+        local _local_sha _remote_sha
+        _local_sha=$(git -C "$dotfiles_dir" rev-parse HEAD 2>/dev/null)
+        _remote_sha=$(git -C "$dotfiles_dir" rev-parse \
+            "${_update_default_remote}/${_update_default_branch}" 2>/dev/null)
+        if [[ -n "$_local_sha" && "$_local_sha" == "$_remote_sha" ]]; then
+            verbose "update: main pull: skipping (nothing to update)"
+            return 0
+        fi
     fi
     _update_core_prompt_dirty "$dotfiles_dir" "main pull" || return 1
     info "dotfiles: pulling..."
