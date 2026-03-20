@@ -1,5 +1,5 @@
 # How Updates Work
-<!-- v0.8.0 -->
+<!-- v0.9.1 -->
 
 ## From a User Perspective
 
