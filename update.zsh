@@ -809,25 +809,12 @@ function _update_main_pull(){
     [[ ${#dry_run[@]} -gt 0 ]] && { verbose "update: main pull: skipping (dry-run)"; return 0; }
     [[ ${#commit_hash[@]} -gt 0 || ${#range[@]} -gt 0 ]] && { verbose "update: main pull: skipping (range mode)"; return 0; }
 
-    # Phase 2 (components): only pull if at least one component actually updated.
-    # Without this gate, phase 2 fetches from component remotes advance origin/main,
-    # causing the dotfiles repo to pull arbitrary untagged commits that are unrelated
-    # to any component change (e.g. doc-only commits between release tags).
-    if [[ "$_phase" == components ]] && (( ! _force )); then
-        local _any_updated=0
-        local _n
-        for _n in "${_dotfiler_registered_hooks[@]}"; do
-            [[ "$_n" == main ]] && continue
-            local _outcome_var="_dotfiler_plan_${_n}_pull_outcome"
-            if [[ "${(P)_outcome_var:-skip}" != skip ]]; then
-                _any_updated=1
-                break
-            fi
-        done
-        if (( ! _any_updated )); then
-            verbose "update: main pull: skipping phase 2 (no component updates)"
-            return 0
-        fi
+    # Phase 2 (components): no-op. The dotfiles repo is the parent that receives
+    # marker/gitlink commits from post_marker — it is never pulled from upstream
+    # in phase 2. Upstream pulls are a phase 1 concern only.
+    if [[ "$_phase" == components ]]; then
+        verbose "update: main pull: skipping (phase 2 — no upstream pull)"
+        return 0
     fi
     # Always pull when there are commits in the range, even if no top-level
     # dotfiles changed.  The diff range may contain subtree/submodule pointer
