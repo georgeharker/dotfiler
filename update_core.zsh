@@ -103,10 +103,16 @@ _update_core_semver_tag_p() {
 }
 
 # _update_core_resolve_latest_semver_tag_sha \
-#     <remote_url> <branch> <comp_dir> [<remote_name>]
+#     <remote_url> <branch> <comp_dir> [<remote_name>] [<tip_sha>]
 #
 # Phase 2 prepass: find the SHA of the latest semver tag (v<N>.<N>.<N>[...])
 # that is reachable from the remote branch tip.
+#
+# <tip_sha>: if supplied, used directly as the branch tip for ancestry checks.
+#   Callers that know the tip (e.g. just ran a fetch and captured FETCH_HEAD)
+#   should pass it to avoid stale FETCH_HEAD races when multiple fetches run
+#   in the same process (e.g. zdot pre-fetch overwriting FETCH_HEAD before the
+#   dotfiler subtree check runs).
 #
 # Strategy:
 #   GitHub remotes:
@@ -126,12 +132,15 @@ _update_core_semver_tag_p() {
 # Sets REPLY to the tag's commit SHA on success (returns 0).
 # Sets REPLY="" and returns 1 when no qualifying tag is found.
 _update_core_resolve_latest_semver_tag_sha() {
-    local _remote_url=$1 _branch=$2 _comp_dir=$3 _remote_name=${4:-}
+    local _remote_url=$1 _branch=$2 _comp_dir=$3 _remote_name=${4:-} _tip_sha_hint=${5:-}
     REPLY=""
 
     # Resolve the local ref for the remote branch tip (available after fetch).
+    # Priority: explicit hint > remote-tracking ref > FETCH_HEAD.
     local _tip_sha
-    if [[ -n "$_remote_name" ]]; then
+    if [[ -n "$_tip_sha_hint" ]]; then
+        _tip_sha="$_tip_sha_hint"
+    elif [[ -n "$_remote_name" ]]; then
         _tip_sha=$(git -C "$_comp_dir" rev-parse \
             "${_remote_name}/${_branch}" 2>/dev/null)
     fi
@@ -281,16 +290,17 @@ _update_core_component_tip_range() {
             _update_core_read_sha_marker "$_comp_dir" || return 1
             _old="$REPLY"
             [[ -n "$_subtree_url" && -n "$_branch" ]] || return 1
-            local _fetch_err
+            local _fetch_err _fetched_tip
             _fetch_err=$(git -C "$_comp_dir" fetch -q "$_subtree_url" "$_branch" --tags 2>&1 >/dev/null) || {
                 error "update_core: component_tip_range: subtree fetch failed: ${_fetch_err}"
                 return 1
             }
+            _fetched_tip=$(git -C "$_comp_dir" rev-parse FETCH_HEAD 2>/dev/null)
             if [[ -n "$_scope" ]]; then
                 _update_core_get_release_channel "$_scope"
                 if [[ "$REPLY" == release ]]; then
                     _update_core_resolve_latest_semver_tag_sha \
-                        "$_subtree_url" "$_branch" "$_comp_dir" "" || { REPLY=""; return 0; }
+                        "$_subtree_url" "$_branch" "$_comp_dir" "" "$_fetched_tip" || { REPLY=""; return 0; }
                     _new="$REPLY"
                 else
                     _new=$(_update_core_resolve_remote_sha "$_subtree_url" "$_branch") \
@@ -1676,9 +1686,15 @@ _update_core_is_available_subtree() {
     fi
 
     if [[ "$_channel" == release ]]; then
-        # Tag-constraint prepass: fetch to materialise objects locally for
-        # merge-base ancestry checks, then resolve to the latest semver tag.
-        git -C "$_subtree_dir" fetch -q "$_remote_url" "$_branch" --tags 2>/dev/null
+        # Tag-constraint prepass: fetch to materialise objects locally and update
+        # the remote-tracking ref (e.g. dotfiler/main) so ancestry checks use the
+        # current tip.  Prefer fetching by remote name so the tracking ref is
+        # updated; fall back to URL-based fetch (updates FETCH_HEAD only).
+        if [[ -n "$_remote" ]]; then
+            git -C "$_subtree_dir" fetch -q "$_remote" "$_branch" --tags 2>/dev/null
+        else
+            git -C "$_subtree_dir" fetch -q "$_remote_url" "$_branch" --tags 2>/dev/null
+        fi
         _update_core_resolve_latest_semver_tag_sha \
             "$_remote_url" "$_branch" "$_subtree_dir" "$_remote" || return 1
         _remote_head="$REPLY"
