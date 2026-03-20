@@ -250,8 +250,8 @@ push a tag.
 
 ```zsh
 # Default — only update to published releases:
-zstyle ':zdot:update'     release-channel tags
-zstyle ':dotfiler:update' release-channel tags
+zstyle ':zdot:update'     release-channel release
+zstyle ':dotfiler:update' release-channel release
 
 # Track every commit (for maintainers / automated testing):
 zstyle ':zdot:update'     release-channel any
@@ -280,13 +280,13 @@ effect on users with the default configuration.
 
 | Setting | Behaviour |
 |---------|-----------|
-| `tags` (default) | Only advance to the latest semver-tagged commit reachable from the remote branch tip. No tag ahead of current position = no update. |
+| `release` (default) | Only advance to the latest semver-tagged commit reachable from the remote branch tip. No tag ahead of current position = no update. |
 | `any` | Advance to the branch tip on every check (pre-v0.x behaviour). |
 
 ```zsh
 # Default (explicit):
-zstyle ':zdot:update'     release-channel tags
-zstyle ':dotfiler:update' release-channel tags
+zstyle ':zdot:update'     release-channel release
+zstyle ':dotfiler:update' release-channel release
 
 # Track every commit pushed to main:
 zstyle ':zdot:update'     release-channel any

@@ -29,9 +29,9 @@
 # Future work: --component=<name> to target a single hook with an explicit range.
 #
 # Release-channel zstyle:
-#   zstyle ':dotfiler:update' release-channel  tags   # tags (default) | any
+#   zstyle ':dotfiler:update' release-channel  release   # release (default) | any
 #
-#   tags (default) — self-directed (Phase 2) updates only advance to semver tags
+#   release (default) — self-directed (Phase 2) updates only advance to semver tags
 #                    matching v<N>.<N>.<N>[...].  Applies to both the dotfiler
 #                    scripts repo and to zdot (via ':zdot:update' release-channel).
 #                    Phase 1 (dotfiles-directed) is unaffected.

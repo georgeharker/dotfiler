@@ -83,15 +83,15 @@ _update_core_get_default_branch() {
 
 # _update_core_get_release_channel <zstyle_scope>
 # Reads the release-channel preference from a zstyle scope.
-# Valid values: tags | any
-# Default: tags  (updates are constrained to semver-tagged commits)
+# Valid values: release | any
+# Default: release  (updates are constrained to semver-tagged releases)
 # Sets REPLY.
 _update_core_get_release_channel() {
     local _ch
-    zstyle -s "${1}" release-channel _ch 2>/dev/null || _ch=tags
-    case "${_ch:-tags}" in
+    zstyle -s "${1}" release-channel _ch 2>/dev/null || _ch=release
+    case "${_ch:-release}" in
         any|all|tip) REPLY=any ;;
-        *)           REPLY=tags ;;
+        *)           REPLY=release ;;
     esac
 }
 
@@ -250,7 +250,7 @@ _update_core_resolve_latest_semver_tag_sha() {
 #   standalone|submodule : HEAD of the component git repo
 #   subtree              : SHA marker file (HEAD belongs to the parent repo)
 #
-# When --scope is given and the resolved release-channel is 'tags', a prepass
+# When --scope is given and the resolved release-channel is 'release', a prepass
 # resolves _new to the latest semver tag reachable from the branch tip rather
 # than the tip commit itself.  If no qualifying tag is found, returns empty
 # (nothing to update).  Phase 1 callers omit --scope so tag constraint never
@@ -288,7 +288,7 @@ _update_core_component_tip_range() {
             }
             if [[ -n "$_scope" ]]; then
                 _update_core_get_release_channel "$_scope"
-                if [[ "$REPLY" == tags ]]; then
+                if [[ "$REPLY" == release ]]; then
                     _update_core_resolve_latest_semver_tag_sha \
                         "$_subtree_url" "$_branch" "$_comp_dir" "" || { REPLY=""; return 0; }
                     _new="$REPLY"
@@ -316,7 +316,7 @@ _update_core_component_tip_range() {
                 _remote_url=$(git -C "$_comp_dir" config \
                     "remote.${_remote}.url" 2>/dev/null) || _remote_url=""
                 _update_core_get_release_channel "$_scope"
-                if [[ "$REPLY" == tags ]]; then
+                if [[ "$REPLY" == release ]]; then
                     _update_core_resolve_latest_semver_tag_sha \
                         "$_remote_url" "$_branch" "$_comp_dir" "$_remote" \
                         || { REPLY=""; return 0; }
@@ -443,7 +443,7 @@ _update_core_safe_rm() {
 # Returns 0 if an update is available (local is behind, or diverged and
 # allow_diverged=1), 1 to skip (up to date or local is ahead), 2 on error.
 # When diverged and allow_diverged is unset/0, warns and returns 1.
-# When <scope> is given and its release-channel=tags, _remote_sha is resolved
+# When <scope> is given and its release-channel=release, _remote_sha is resolved
 # to the latest semver tag reachable from the remote branch tip rather than
 # the tip commit itself.  If no semver tag exists returns 1 (skip).
 _update_core_is_available_fetch() {
@@ -457,7 +457,7 @@ _update_core_is_available_fetch() {
     # Tag-constraint prepass (Phase 2 only): resolve target to latest semver tag.
     if [[ -n "$_scope" ]]; then
         _update_core_get_release_channel "$_scope"
-        if [[ "$REPLY" == tags ]]; then
+        if [[ "$REPLY" == release ]]; then
             local _remote_url
             _remote_url=$(git -C "$_repo_dir" config \
                 "remote.${_remote}.url" 2>/dev/null) || _remote_url=""
@@ -1483,9 +1483,9 @@ _update_core_should_update() {
 # <remote_url_override>: if non-empty, used instead of reading git config.
 # <allow_diverged>: 1 = warn and proceed on diverged; 0 = warn and skip (default).
 # <scope>: when non-empty, reads release-channel from this zstyle scope.
-#   release-channel=tags (default): comparison target is the latest semver tag
+#   release-channel=release (default): comparison target is the latest semver tag
 #     reachable from the remote branch tip rather than the tip commit itself.
-#     GitHub API path: uses /repos/<owner>/<repo>/tags.
+#     GitHub API path: uses /repos/<owner>/<repo>/releases.
 #     Fetch path: delegates to _update_core_is_available_fetch with scope.
 #     If no qualifying semver tag exists, returns 1 (nothing to update).
 #   release-channel=any: current behaviour — compare against branch tip.
@@ -1523,7 +1523,7 @@ _update_core_is_available() {
         # (e.g. freshly updated submodule), whereas HEAD always resolves.
         _local_head=$(git -C "$_repo_dir" rev-parse HEAD 2>/dev/null) || return 1
 
-        if [[ "$_channel" == tags ]]; then
+        if [[ "$_channel" == release ]]; then
             # Tag-constraint prepass via the releases/tags API.
             # We need objects locally for merge-base checks, so fetch first.
             git -C "$_repo_dir" fetch -q "$_remote" "$_branch" --tags 2>/dev/null
@@ -1641,7 +1641,7 @@ _update_core_resolve_subtree_spec() {
 # _update_core_is_available_subtree <subtree_dir> <subtree_spec> [<url_hint>] [<scope>]
 # <subtree_spec> is "<remote_name> [branch]" (same format as zstyle subtree-remote).
 # <scope> is a zstyle scope string (e.g. ':zdot:update').  When present and
-# release-channel=tags, the remote target is resolved to the latest semver tag
+# release-channel=release, the remote target is resolved to the latest semver tag
 # reachable from the branch tip rather than the tip commit itself.
 # Returns:
 #   0 — update is available
@@ -1675,7 +1675,7 @@ _update_core_is_available_subtree() {
         return 0
     fi
 
-    if [[ "$_channel" == tags ]]; then
+    if [[ "$_channel" == release ]]; then
         # Tag-constraint prepass: fetch to materialise objects locally for
         # merge-base ancestry checks, then resolve to the latest semver tag.
         git -C "$_subtree_dir" fetch -q "$_remote_url" "$_branch" --tags 2>/dev/null
@@ -1734,8 +1734,8 @@ _update_core_is_available_subtree() {
 #   none|*      — not a git repo; nothing to check
 #
 # Release-channel constraint (Phase 2 only):
-#   Reads ':dotfiler:update' release-channel (default: tags).
-#   When 'tags', the availability check compares local position against the
+#   Reads ':dotfiler:update' release-channel (default: release).
+#   When 'release', the availability check compares local position against the
 #   latest semver tag reachable from the remote branch tip, not the tip itself.
 #   This means dotfiler updates only when a new v<N>.<N>.<N> tag has been
 #   published.

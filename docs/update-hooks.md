@@ -175,7 +175,7 @@ _update_core_is_available "/path/to/repo"
 
 # Phase 2 (self-directed): apply release-channel constraint from a zstyle scope
 _update_core_is_available "/path/to/repo" "" 0 ':my-component:update'
-# When ':my-component:update' release-channel=tags (default), only returns 0
+# When ':my-component:update' release-channel=release (default), only returns 0
 # if a new semver tag (v<N>.<N>.<N>[...]) is reachable from the remote branch tip.
 
 # For subtree deployments (with release-channel constraint)
@@ -192,7 +192,7 @@ non-GitHub remotes.
 ```zsh
 # Read release-channel preference from a zstyle scope
 _update_core_get_release_channel ':my-component:update'
-# Sets REPLY = "tags" (default) or "any"
+# Sets REPLY = "release" (default) or "any"
 
 # Resolve the SHA of the latest semver tag reachable from the remote branch tip
 # (after a git fetch has been done to materialise remote objects locally)
@@ -213,7 +213,7 @@ release-channel constraint automatically during plan phase:
 ```zsh
 _update_core_component_tip_range "/path/to/repo" "$topology" \
     "" "" --scope ':my-component:update'
-# When release-channel=tags, REPLY is set to "old_sha..tag_sha" rather than
+# When release-channel=release, REPLY is set to "old_sha..tag_sha" rather than
 # "old_sha..branch_tip_sha". Returns empty string if no qualifying tag exists.
 ```
 

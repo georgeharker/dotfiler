@@ -48,7 +48,7 @@ releases** — commits that are reachable from a semver tag matching
 update is offered.
 
 ```zsh
-zstyle ':dotfiler:update' release-channel tags   # default — wait for a release tag
+zstyle ':dotfiler:update' release-channel release   # default — wait for a release tag
 zstyle ':dotfiler:update' release-channel any    # track branch tip (developers/CI)
 ```
 
