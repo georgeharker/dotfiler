@@ -245,11 +245,18 @@ function _update_dotfiler_plan() {
 
     else
         # Phase 2 / standalone run: self-directed, check own upstream.
+        local _available=1
         _update_core_is_dotfiler_available \
             "$script_dir" "$_dotfiler_subtree_spec" "$_dotfiler_subtree_url" \
-            || { verbose "update_self: plan done — dotfiler up to date"; info "dotfiler: up to date"; return 0; }
+            && _available=0
+
+        if (( _available != 0 && ! _force )); then
+            verbose "update_self: plan done — dotfiler up to date"; info "dotfiler: up to date"; return 0
+        fi
 
         # Compute tip range for file-list building.
+        # When force is active and nothing is available, we still need
+        # remote/branch for pull to use — resolve them unconditionally.
         case $_dotfiler_topology in
             subtree)
                 _update_core_resolve_subtree_spec "$script_dir" \
@@ -269,26 +276,36 @@ function _update_dotfiler_plan() {
         esac
         local _tip_range="$REPLY"
         if [[ -z "$_tip_range" ]]; then
-            verbose "update_self: plan done — dotfiler up to date"; info "dotfiler: up to date"; return 0
+            if (( ! _force )); then
+                verbose "update_self: plan done — dotfiler up to date"; info "dotfiler: up to date"; return 0
+            fi
+            verbose "update_self: plan: up to date but force active — populating plan vars"
+            _old=$(git -C "$script_dir" rev-parse HEAD 2>/dev/null) || _old=""
+            _new="$_old"
+        else
+            _old="${_tip_range%%..*}"
+            _new="${_tip_range##*..}"
         fi
-        _old="${_tip_range%%..*}"
-        _new="${_tip_range##*..}"
     fi
+
+    # ── Store context for pull/post to consume ────────────────────────────
+    # Avoids re-deriving remote/branch/parent in each subsequent phase fn.
+    # Stored unconditionally so force mode has valid context even when old==new.
+    _dotfiler_plan_dotfiler_remote="$_remote"
+    _dotfiler_plan_dotfiler_branch="$_branch"
+    _dotfiler_plan_dotfiler_subtree_spec="$_dotfiler_subtree_spec"
+    _dotfiler_plan_dotfiler_subtree_url="$_dotfiler_subtree_url"
 
     # ── _old == _new guard ────────────────────────────────────────────────
     # Can occur when hint resolution gives identical SHAs (e.g. marker already
     # matches remote). Treat as nothing to do, not as an error.
     if [[ "$_old" == "$_new" ]]; then
-        log_debug "update_self: plan: old==new (${_old[1,12]}) — nothing to do"
-        return 0
+        if (( ! _force )); then
+            log_debug "update_self: plan: old==new (${_old[1,12]}) — nothing to do"
+            return 0
+        fi
+        log_debug "update_self: plan: old==new (${_old[1,12]}) but force active"
     fi
-
-    # ── Store context for pull/post to consume ────────────────────────────
-    # Avoids re-deriving remote/branch/parent in each subsequent phase fn.
-    _dotfiler_plan_dotfiler_remote="$_remote"
-    _dotfiler_plan_dotfiler_branch="$_branch"
-    _dotfiler_plan_dotfiler_subtree_spec="$_dotfiler_subtree_spec"
-    _dotfiler_plan_dotfiler_subtree_url="$_dotfiler_subtree_url"
 
     # ── Build file lists and set range sentinel ───────────────────────────
     local _range="${_old}..${_new}"
