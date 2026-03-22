@@ -59,7 +59,7 @@ install_copilot() {
 install_opencode() {
     action "Installing opencode Node.js packages..."
     install_npm_package opencode-ai
-    if is_os_macos; then
+    if [[ "$DOTFILES_OS" == "Darwin" ]]; then
         brew install --cask opencode-desktop
     fi
 }
