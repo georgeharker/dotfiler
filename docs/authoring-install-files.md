@@ -37,11 +37,8 @@ underscores. `dotfiler install` discovers and calls it automatically.
 
 ## Available Functions
 
-Source `helpers.zsh` at the top of your module to get the full helper API:
-
-```zsh
-source "$(dirname "$0")/helpers.zsh"
-```
+The full helper API is available automatically — you do not need to source
+`helpers.zsh` yourself. `dotfiler install` loads it before any module runs.
 
 ### Output / Logging
 
@@ -55,8 +52,10 @@ error  "foo install failed"   # red stderr — fatal
 
 ### OS Detection
 
+`DOTFILES_OS` is set automatically before any module runs — you do not need to
+call `detect_os` yourself. Its value is either `Darwin` (macOS) or `Linux`.
+
 ```zsh
-detect_os   # sets DOTFILES_OS=Darwin or Linux
 if [[ "$DOTFILES_OS" = "Darwin" ]]; then
     # macOS-specific
 fi
@@ -110,11 +109,7 @@ add_final_instruction "Restart your shell to activate foo"
 module_name="my-tools"
 module_description="Install my development tools"
 
-source "$(dirname "$0")/helpers.zsh"
-
 function run_my_tools_module() {
-    detect_os
-
     print_section "My Tools"
 
     # Skip if already present

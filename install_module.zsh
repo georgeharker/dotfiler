@@ -51,19 +51,6 @@ if [[ $# -eq 0 || ${#help[@]} -gt 0 ]]; then
     exit 1
 fi
 
-# Display accumulated final instructions
-if [[ ${#final_instructions[@]} -gt 0 ]]; then
-    echo ""
-    echo "=== Next Steps ==="
-    local step_num=1
-    for instruction in "${final_instructions[@]}"; do
-        echo "$step_num. $instruction"
-        ((step_num++))
-    done
-else
-    echo ""
-    echo "=== Module Complete ==="
-fi
 # Source helpers
 source "$install_dir/helpers.zsh"
 detect_os
@@ -107,4 +94,20 @@ else
         list_module_functions "$module_file" "$module_name"
         exit 1
     fi
+fi
+
+echo ""
+echo "=== Module Complete ==="
+echo ""
+
+# Display accumulated final instructions
+if [[ ${#final_instructions[@]} -gt 0 ]]; then
+    echo "Next steps:"
+    local step_num=1
+    for instruction in "${final_instructions[@]}"; do
+        echo "$step_num. $instruction"
+        ((step_num++))
+    done
+else
+    echo "No additional steps required."
 fi

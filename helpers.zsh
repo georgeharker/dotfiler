@@ -16,6 +16,7 @@ find_script_directory_simple() {
 # This should be called at the end of scripts to clean up the environment
 function cleanup_helpers(){
     # Unset all functions defined in this file
+    unset -f detect_os 2>/dev/null
     unset -f find_script_directory_simple 2>/dev/null
     unset -f resolve_dotfiles_path 2>/dev/null
     unset -f find_dotfiles_script_directory 2>/dev/null
@@ -27,6 +28,17 @@ function cleanup_helpers(){
     unset -f cleanup_helpers 2>/dev/null
 
     cleanup_logging
+}
+
+# Detect operating system, exporting DOTFILES_OS as "Darwin" or "Linux"
+detect_os() {
+    if [[ "$(uname)" == "Darwin" ]]; then
+        export DOTFILES_OS="Darwin"
+        info "Detected macOS"
+    else
+        export DOTFILES_OS="Linux"
+        info "Detected Linux"
+    fi
 }
 
 # Helper function to resolve paths relative to dotfiles directory
