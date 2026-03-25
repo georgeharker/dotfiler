@@ -59,7 +59,7 @@ install_copilot() {
 install_opencode() {
     action "Installing opencode Node.js packages..."
     install_npm_package opencode-ai
-    if is_os_macos; then
+    if [[ "$DOTFILES_OS" == "Darwin" ]]; then
         brew install --cask opencode-desktop
     fi
 }
@@ -81,13 +81,13 @@ install_treesitter() {
 
 install_jupyter() {
     action "Installing jupyter packages..."
-    install_package jupyter
+    install_package jupyterlab
 
     ensure_global_python_venv
     activate_global_or_local_python_venv
 
     action "Installing jupyter Python packages..."
-    pip_install jupyter_client ipykernel cairosvg pnglatex nbformat
+    pip_install jupyter_client ipykernel cairosvg pnglatex nbformat matplotlib
 
     deactivate
 }
