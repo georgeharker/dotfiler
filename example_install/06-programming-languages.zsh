@@ -17,8 +17,8 @@ run_programming_languages_module() {
     install_gemini
     install_opencode
     install_jupyter
-    install_mcphub
     install_opsdk
+    install_basic_memory
 }
 
 install_python_environment() {
@@ -59,6 +59,7 @@ install_copilot() {
 install_opencode() {
     action "Installing opencode Node.js packages..."
     install_npm_package opencode-ai
+    install_npm_package @tarquinen/opencode-dcp@latest
     if [[ "$DOTFILES_OS" == "Darwin" ]]; then
         brew install --cask opencode-desktop
     fi
@@ -67,11 +68,6 @@ install_opencode() {
 install_gemini() {
     action "Installing gemini-cli Node.js packages..."
     install_npm_package @google/gemini-cli
-}
-
-install_mcphub() {
-    action "Install mcphub Node.js packages..."
-    install_npm_package mcp-hub
 }
 
 install_treesitter() {
@@ -99,6 +95,17 @@ install_pytorch() {
     activate_global_or_local_python_venv
 
     pip_install torch torchvision torchaudio torchcodec
+
+    deactivate
+}
+
+install_basic_memory() {
+    action "Installing basic-memory..."
+
+    ensure_global_python_venv
+    activate_global_or_local_python_venv
+
+    pip_install basic-memory
 
     deactivate
 }
