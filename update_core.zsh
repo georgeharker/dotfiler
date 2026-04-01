@@ -960,7 +960,17 @@ _update_core_component_pull_standalone() {
             REPLY=ff
             return 0
         fi
-        # Fast-forward failed — offer rebase (stash already active).
+        # Fast-forward failed.  First check whether we are already ahead of
+        # the target (the component was advanced beyond what dotfiles records,
+        # e.g. from a prior Phase-2 pull with itc_mode=none).  If so, the
+        # merge failure is not a real divergence — just treat it as ff.
+        if git -C "$_repo_dir" merge-base --is-ancestor "$_target_ref" HEAD 2>/dev/null; then
+            verbose "component pull: standalone: HEAD already ahead of ${_target_ref[1,12]} — no-op"
+            (( _stashed )) && _update_core_pop_stash "$_repo_dir" "standalone component"
+            REPLY=ff
+            return 0
+        fi
+        # Genuinely diverged — offer rebase (stash already active).
         _update_core_maybe_rebase "$_repo_dir" "standalone component" "$_target_ref" || {
             (( _stashed )) && _update_core_pop_stash "$_repo_dir" "standalone component"
             return 1
@@ -1044,6 +1054,13 @@ _update_core_component_pull_submodule() {
                 return 1
             }
             (( _stashed )) && _update_core_pop_stash "$_sub_dir" "submodule component"
+            REPLY=ff
+        elif git -C "$_sub_dir" merge-base --is-ancestor "$_target_ref" "$_current_sha" 2>/dev/null; then
+            # Current HEAD is already ahead of the target SHA — the submodule
+            # was advanced beyond what dotfiles currently records (e.g. from a
+            # prior Phase-2 pull whose pointer was not yet persisted into
+            # dotfiles, typically because itc_mode=none).  Nothing to do.
+            verbose "component pull: submodule: HEAD already ahead of ${_target_ref[1,12]} — no-op"
             REPLY=ff
         else
             # Diverged — stash submodule dirty state, offer rebase, pop.
