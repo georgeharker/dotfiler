@@ -71,7 +71,8 @@ _prune_dir_names=()
 #                  minimal ruleset (.git/, .nounpack/) is loaded instead.
 _read_exclusion_patterns_into() {
     local _repi_rules_var=$1; shift
-    typeset -n _repi_rules=$_repi_rules_var
+    # Indirect array append via set -A with ${(@P)varname} — the idiomatic zsh
+    # approach (typeset -n nameref is not supported in plain zsh).
 
     local _repi_enforce=0 _repi_prune_var='' _repi_file=''
     while [[ $# -gt 0 ]]; do
@@ -89,10 +90,10 @@ _read_exclusion_patterns_into() {
     if [[ -z "$_repi_file" || ! -f "$_repi_file" ]]; then
         if (( _repi_enforce )); then
             # Minimal baked-in rules — only things that break dotfiler if linked.
-            _repi_rules+=("${_repi_flag}:.git/" "${_repi_flag}:.nounpack/")
+            set -A $_repi_rules_var "${(@P)_repi_rules_var}" \
+                "${_repi_flag}:.git/" "${_repi_flag}:.nounpack/"
             if [[ -n "$_repi_prune_var" ]]; then
-                typeset -n _repi_prune=$_repi_prune_var
-                _repi_prune+=(".git" ".nounpack")
+                set -A $_repi_prune_var "${(@P)_repi_prune_var}" ".git" ".nounpack"
             fi
         fi
         return 0
@@ -104,13 +105,12 @@ _read_exclusion_patterns_into() {
         [[ "$_repi_line" =~ ^[[:space:]]*$ ]] && continue
         [[ "$_repi_line" =~ ^[[:space:]]*# ]] && continue
 
-        _repi_rules+=("${_repi_flag}:${_repi_line}")
+        set -A $_repi_rules_var "${(@P)_repi_rules_var}" "${_repi_flag}:${_repi_line}"
 
         # Collect plain directory names for find -prune (performance).
         # Only add if: no path separator, no glob chars, and either has a
         # trailing / (explicit dir marker) or has no extension.
         if [[ -n "$_repi_prune_var" ]]; then
-            typeset -n _repi_prune=$_repi_prune_var
             local _repi_bare="${_repi_line#!}"  # strip possible leading !
             local _repi_has_slash=0
             [[ "$_repi_bare" == */ ]] && _repi_has_slash=1
@@ -118,7 +118,7 @@ _read_exclusion_patterns_into() {
             if [[ "$_repi_bare" != */* && "$_repi_bare" != "/"* && \
                   "$_repi_bare" != *[\*\?\[]* ]]; then
                 if (( _repi_has_slash )) || [[ "$_repi_bare" != *.* ]]; then
-                    _repi_prune+=("$_repi_bare")
+                    set -A $_repi_prune_var "${(@P)_repi_prune_var}" "$_repi_bare"
                 fi
             fi
         fi

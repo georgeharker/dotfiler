@@ -1318,24 +1318,25 @@ _update_core_component_post_marker() {
             fi
             ;;
         submodule)
-            # Stage the gitlink and commit — mirrors how standalone stages
-            # its ext-marker above.  The gitlink is staged here (not in pull)
-            # so the stash above runs against a clean index.
+            # Commit the updated gitlink into the parent repo.  Staging is
+            # handled inside _update_core_commit_parent (for auto/prompt modes)
+            # so we do NOT git-add here — an unconditional add would dirty the
+            # index even when itc_mode=none, causing the subsequent subtree
+            # stash/pop cycle to pick up staged-but-uncommitted changes and
+            # conflict on pop.
             if [[ "$_phase" == dotfiles && "$_outcome" == ff ]]; then
                 # ff: submodule update already moved HEAD to match the
                 # gitlink recorded by the parent pull — nothing to commit.
                 _post_rc=0
             elif [[ "$_phase" == dotfiles ]]; then
-                # rebase: submodule HEAD diverged from the gitlink; stage
-                # the new pointer and commit.
-                git -C "$_parent" add "$_rel" 2>/dev/null
+                # rebase: submodule HEAD diverged from the gitlink; commit
+                # the new pointer.
                 _update_core_commit_parent "$_parent" "$_rel" \
                     "submodule pointer updated (${_outcome})" \
                     "$(basename "$_repo_dir"): record submodule pointer" \
                     "$_itc_mode"
             else
                 # Phase 2: submodule advanced beyond what dotfiles records.
-                git -C "$_parent" add "$_rel" 2>/dev/null
                 _update_core_commit_parent "$_parent" "$_rel" \
                     "submodule pointer updated" \
                     "$(basename "$_repo_dir"): update submodule to ${_new_sha[1,12]}" \
