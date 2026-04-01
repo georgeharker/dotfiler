@@ -1793,16 +1793,99 @@ _update_core_is_dotfiler_available() {
 # File list builder (promoted from update.zsh for use by hooks)
 # ---------------------------------------------------------------------------
 
-# _update_core_build_file_lists <repo_dir> <diff_range>
+# _update_core_build_file_lists [--excludes <file>] <repo_dir> <diff_range>
 # Walks commits in <diff_range> commit-by-commit (-m for merge awareness) and
 # populates two *caller-declared* unique arrays:
 #   _update_core_files_to_unpack  — files to add/update via setup.zsh
 #   _update_core_files_to_remove  — deleted/renamed-away symlinks to remove
 # The arrays must be declared (typeset -aU) by the caller before this call.
 # Callers should copy them out immediately; they are overwritten on each call.
+#
+# Options:
+#   --excludes <file>
+#       Path to a gitignore-style exclude file (e.g. dotfiles_exclude,
+#       zdot_exclude).  Loaded as the user layer (layer 3).
+#       Exclusion rules are built in three layers, mirroring _setup_init:
+#         1. Enforce: .git/ and .nounpack/ always excluded.
+#         2. Always:  always_exclude from <repo_dir>, falling back to the
+#                     dotfiler script directory.
+#         3. User:    the --excludes file, if provided.
+#       Without --excludes only layers 1+2 apply.
 _update_core_build_file_lists() {
     setopt local_options extended_glob no_unset
+    local _excludes_file=''
+    while [[ "${1:-}" == --* ]]; do
+        case "$1" in
+            --excludes) _excludes_file=$2; shift 2 ;;
+            --) shift; break ;;
+            *) break ;;
+        esac
+    done
     local _repo_dir=$1 _diff_range=$2
+
+    # Build a local exclusion rules array mirroring the three-layer model used
+    # by _setup_init in setup_core.zsh:
+    #   Layer 1 (enforce): .git/ and .nounpack/ are always excluded.
+    #   Layer 2 (always):  always_exclude in the repo dir (or dotfiler fallback).
+    #   Layer 3 (user):    the caller-supplied --excludes file.
+    # Rules are stored as "FLAG:PATTERN" strings matching setup_core.zsh's
+    # _gitignore_rules format.  _read_exclusion_patterns_into is the shared
+    # parser; we use it here with a local array to avoid touching the global
+    # _gitignore_rules used by the setup path.
+    local -a _excl_rules=()
+    _read_exclusion_patterns_into _excl_rules --enforce
+
+    local _always_excl="${_repo_dir}/always_exclude"
+    [[ -f "$_always_excl" ]] || \
+        _always_excl="${${(%):-%x}:A:h}/always_exclude"
+    [[ -f "$_always_excl" ]] && \
+        _read_exclusion_patterns_into _excl_rules "$_always_excl"
+
+    [[ -n "$_excludes_file" ]] && \
+        _read_exclusion_patterns_into _excl_rules "$_excludes_file"
+
+    # _build_should_exclude <rel_path>
+    # Returns 0 (exclude) or 1 (keep), honoring negation (!) and enforce priority.
+    # Mirrors the last-match-wins logic of should_exclude_file in setup_core.zsh,
+    # including the verdict_enforced guard that prevents user negations from
+    # overriding enforce-level exclusions.
+    _build_should_exclude() {
+        local _bse_path="$1"
+        local _bse_verdict=1         # 1 = keep (default)
+        local _bse_verdict_enforced=0  # 1 if current verdict came from an enforce rule
+        local _bse_rule _bse_flag _bse_pat _bse_negated
+        for _bse_rule in "${_excl_rules[@]}"; do
+            _bse_flag="${_bse_rule%%:*}"
+            _bse_pat="${_bse_rule#*:}"
+            _bse_negated=0
+            if [[ "$_bse_pat" == !* ]]; then
+                _bse_negated=1
+                _bse_pat="${_bse_pat#!}"
+            fi
+            if (( _bse_negated )); then
+                # Negation: un-exclude if pattern matches — but user negation
+                # cannot override an enforce exclusion.
+                if [[ "$_bse_flag" == "enforce" ]]; then
+                    # Enforce negation re-includes even enforced exclusions.
+                    _gitignore_match_single "$_bse_pat" "$_bse_path" 0 && \
+                        { _bse_verdict=1; _bse_verdict_enforced=0; }
+                else
+                    # User negation: only effective if not currently enforce-excluded.
+                    if (( ! _bse_verdict_enforced )) || [[ "$_bse_verdict" == "1" ]]; then
+                        _gitignore_match_single "$_bse_pat" "$_bse_path" 0 && \
+                            { _bse_verdict=1; _bse_verdict_enforced=0; }
+                    fi
+                fi
+            else
+                _gitignore_match_single "$_bse_pat" "$_bse_path" 0 && {
+                    _bse_verdict=0
+                    [[ "$_bse_flag" == "enforce" ]] && _bse_verdict_enforced=1 || _bse_verdict_enforced=0
+                }
+            fi
+        done
+        return $_bse_verdict
+    }
+
     local _line _hash _message _git_log
     local _update_type _file_refs
 
@@ -1872,21 +1955,24 @@ _update_core_build_file_lists() {
 
             if [[ "$_update_type" == M ]]; then
                 local _file=$_file_refs
-                [[ -n "$_file" && "$_file" == .* && "$_file" != .nounpack/* ]] || continue
+                [[ -n "$_file" ]] || continue
+                _build_should_exclude "$_file" && continue
                 log_debug "  $_file modified"
                 _update_core_files_to_unpack+=("$_file")
                 _update_core_files_to_remove=(${_update_core_files_to_remove:#"$_file"})
 
             elif [[ "$_update_type" == A ]]; then
                 local _file=$_file_refs
-                [[ -n "$_file" && "$_file" == .* && "$_file" != .nounpack/* ]] || continue
+                [[ -n "$_file" ]] || continue
+                _build_should_exclude "$_file" && continue
                 log_debug "  $_file added"
                 _update_core_files_to_unpack+=("$_file")
                 _update_core_files_to_remove=(${_update_core_files_to_remove:#"$_file"})
 
             elif [[ "$_update_type" == C<-> ]]; then
                 local _dst_file=${_file_refs#*$'\t'}
-                [[ -n "$_dst_file" && "$_dst_file" == .* && "$_dst_file" != .nounpack/* ]] || continue
+                [[ -n "$_dst_file" ]] || continue
+                _build_should_exclude "$_dst_file" && continue
                 log_debug "  $_dst_file copied"
                 _update_core_files_to_remove=(${_update_core_files_to_remove:#"$_dst_file"})
                 _update_core_files_to_unpack+=("$_dst_file")
@@ -1897,14 +1983,15 @@ _update_core_build_file_lists() {
                 [[ -n "$_dst_file" ]] || continue
                 log_debug "  $_dst_file renamed (from $_src_file)"
                 _update_core_files_to_unpack=(${_update_core_files_to_unpack:#"$_src_file"})
-                [[ "$_src_file" == .* && "$_src_file" != .nounpack/* ]] && \
+                _build_should_exclude "$_src_file" || \
                 _update_core_files_to_remove+=("$_src_file")
-                [[ "$_dst_file" == .* && "$_dst_file" != .nounpack/* ]] && \
+                _build_should_exclude "$_dst_file" || \
                 _update_core_files_to_unpack+=("$_dst_file")
 
             elif [[ "$_update_type" == D ]]; then
                 local _file=$_file_refs
-                [[ -n "$_file" && "$_file" == .* && "$_file" != .nounpack/* ]] || continue
+                [[ -n "$_file" ]] || continue
+                _build_should_exclude "$_file" && continue
                 log_debug "  $_file deleted"
                 _update_core_files_to_unpack=(${_update_core_files_to_unpack:#"$_file"})
                 _update_core_files_to_remove+=("$_file")

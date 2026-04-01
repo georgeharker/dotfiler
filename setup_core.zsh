@@ -55,56 +55,95 @@ fi
 _gitignore_rules=()
 _prune_dir_names=()
 
+# _read_exclusion_patterns_into <rules_var> [--enforce] [file]
+#                               [--prune-var <prune_var>]
+#
+#   Core parser shared by read_exclusion_patterns and any function that needs
+#   a *local* rules array instead of the global one.
+#
+#   <rules_var>    Name of a caller-declared array to append rules into.
+#                  Patterns are stored as "FLAG:PATTERN" strings.
+#   --enforce      Mark patterns as enforce-level (cannot be negated by user).
+#   --prune-var    Name of an array to append plain dir names into (for
+#                  find -prune).  Omit when a find-based scan is not needed.
+#   [file]         Path to a gitignore-style exclude file.  When absent (or
+#                  the file does not exist) and --enforce is set, the baked-in
+#                  minimal ruleset (.git/, .nounpack/) is loaded instead.
+_read_exclusion_patterns_into() {
+    local _repi_rules_var=$1; shift
+    typeset -n _repi_rules=$_repi_rules_var
+
+    local _repi_enforce=0 _repi_prune_var='' _repi_file=''
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --enforce)   _repi_enforce=1; shift ;;
+            --prune-var) _repi_prune_var=$2; shift 2 ;;
+            --)          shift; break ;;
+            *)           _repi_file=$1; shift; break ;;
+        esac
+    done
+
+    local _repi_flag='user'
+    (( _repi_enforce )) && _repi_flag='enforce'
+
+    if [[ -z "$_repi_file" || ! -f "$_repi_file" ]]; then
+        if (( _repi_enforce )); then
+            # Minimal baked-in rules — only things that break dotfiler if linked.
+            _repi_rules+=("${_repi_flag}:.git/" "${_repi_flag}:.nounpack/")
+            if [[ -n "$_repi_prune_var" ]]; then
+                typeset -n _repi_prune=$_repi_prune_var
+                _repi_prune+=(".git" ".nounpack")
+            fi
+        fi
+        return 0
+    fi
+
+    local _repi_line
+    while IFS= read -r _repi_line || [[ -n "$_repi_line" ]]; do
+        # Skip blank lines and comment-only lines.
+        [[ "$_repi_line" =~ ^[[:space:]]*$ ]] && continue
+        [[ "$_repi_line" =~ ^[[:space:]]*# ]] && continue
+
+        _repi_rules+=("${_repi_flag}:${_repi_line}")
+
+        # Collect plain directory names for find -prune (performance).
+        # Only add if: no path separator, no glob chars, and either has a
+        # trailing / (explicit dir marker) or has no extension.
+        if [[ -n "$_repi_prune_var" ]]; then
+            typeset -n _repi_prune=$_repi_prune_var
+            local _repi_bare="${_repi_line#!}"  # strip possible leading !
+            local _repi_has_slash=0
+            [[ "$_repi_bare" == */ ]] && _repi_has_slash=1
+            _repi_bare="${_repi_bare%/}"
+            if [[ "$_repi_bare" != */* && "$_repi_bare" != "/"* && \
+                  "$_repi_bare" != *[\*\?\[]* ]]; then
+                if (( _repi_has_slash )) || [[ "$_repi_bare" != *.* ]]; then
+                    _repi_prune+=("$_repi_bare")
+                fi
+            fi
+        fi
+    done < "$_repi_file"
+}
+
 # read_exclusion_patterns [--enforce] [file]
 #
-#   Accumulates patterns from a file (or baked-in defaults) into
-#   _gitignore_rules.  May be called multiple times.
+#   Accumulates patterns from a file (or baked-in defaults) into the module-
+#   level globals _gitignore_rules and _prune_dir_names.  May be called
+#   multiple times.
 #
 #   --enforce  patterns from this call cannot be overridden by user negation
 #
 #   If no file is given (or the file does not exist) and --enforce is set,
 #   the baked-in minimal ruleset is loaded instead.
+#
+#   Delegates to _read_exclusion_patterns_into for the actual file parsing.
 read_exclusion_patterns() {
-    local enforce=0
-    [[ "${1:-}" == "--enforce" ]] && { enforce=1; shift; }
-    local exclusion_file="${1:-}"
-    local flag="user"
-    (( enforce )) && flag="enforce"
-    
-    if [[ -z "$exclusion_file" ]] || [[ ! -f "$exclusion_file" ]]; then
-        if (( enforce )); then
-            # Minimal baked-in rules — only things that break dotfiler if linked.
-            # These are stored as enforce rules so user negation cannot un-exclude them.
-            _gitignore_rules+=("${flag}:.git/" "${flag}:.nounpack/")
-            _prune_dir_names+=(".git" ".nounpack")
-        fi
-        return 0
-    fi
-
-    # Read file line-by-line; (f) splits on newlines, (@) preserves array form.
-    local line
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        # Strip inline comments (not standard gitignore but harmless)
-        # Skip blank lines and comment-only lines
-        [[ "$line" =~ ^[[:space:]]*$ ]] && continue
-        [[ "$line" =~ ^[[:space:]]*# ]] && continue
-
-        _gitignore_rules+=("${flag}:${line}")
-
-        # Collect plain directory names for find -prune (performance).
-        # Only add if: no path separator, no glob chars, and either has a
-        # trailing / (explicit dir marker) or starts with a dot and has no
-        # extension (e.g. .git, .venv) or is a plain word with no extension.
-        local bare="${line#!}"      # strip possible leading !
-        local has_trailing_slash=0
-        [[ "$bare" == */ ]] && has_trailing_slash=1
-        bare="${bare%/}"            # strip trailing /
-        if [[ "$bare" != */* ]] && [[ "$bare" != "/"* ]] && [[ "$bare" != *[\*\?\[]* ]]; then
-            if (( has_trailing_slash )) || [[ "$bare" != *.* ]]; then
-                _prune_dir_names+=("$bare")
-            fi
-        fi
-    done < "$exclusion_file"
+    local _rep_enforce_flag=''
+    [[ "${1:-}" == "--enforce" ]] && { _rep_enforce_flag='--enforce'; shift; }
+    _read_exclusion_patterns_into _gitignore_rules \
+        ${_rep_enforce_flag:+$_rep_enforce_flag} \
+        --prune-var _prune_dir_names \
+        "${1:-}"
 }
 
 # exclude_component_dirs
@@ -168,7 +207,7 @@ build_find_prune_args() {
 
 # _gitignore_match_single PATTERN RELATIVE_PATH IS_DIR
 #
-#   Tests one gitignore pattern against a dotfiles-relative path.
+#   Tests one gitignore pattern against a repo-relative path.
 #   Returns 0 (exclude) or 1 (keep).  Does not handle negation.
 #   See gitignore_match.zsh for full semantics documentation.
 

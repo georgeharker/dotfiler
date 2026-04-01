@@ -309,7 +309,7 @@ function _update_dotfiler_plan() {
 
     # ── Build file lists and set range sentinel ───────────────────────────
     local _range="${_old}..${_new}"
-    _update_core_build_file_lists "$script_dir" "$_range" || \
+    _update_core_build_file_lists --excludes "${script_dir}/dotfiles_exclude" "$script_dir" "$_range" || \
         warn "update: file list unavailable for dotfiler — unpack may be incomplete"
     _dotfiler_plan_dotfiler_to_unpack=("${_update_core_files_to_unpack[@]}")
     _dotfiler_plan_dotfiler_to_remove=("${_update_core_files_to_remove[@]}")
@@ -635,7 +635,7 @@ function _update_phase_plan(){
 
         # ── Main repo file lists ──────────────────────────────────────────
         typeset -gaU _update_core_files_to_unpack _update_core_files_to_remove
-        _update_core_build_file_lists "$dotfiles_dir" "$_update_diff_range" || \
+        _update_core_build_file_lists --excludes "${dotfiles_dir}/dotfiles_exclude" "$dotfiles_dir" "$_update_diff_range" || \
             warn "update: file list unavailable for dotfiles — unpack may be incomplete"
         _dotfiler_plan_main_to_unpack=("${_update_core_files_to_unpack[@]}")
         _dotfiler_plan_main_to_remove=("${_update_core_files_to_remove[@]}")
