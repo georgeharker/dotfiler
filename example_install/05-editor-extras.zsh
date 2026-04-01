@@ -1,10 +1,10 @@
 #!/bin/zsh
-# Editor support plugins and extensions
+# Programming language environments
 
 # Module identification
 module_name="editor-extras"
 module_description="Editor support"
-module_main_function="run_editor_extras_module"
+module_main_function="run_programming_languages_module"
 
 # Main function for this module
 run_editor_extras_module() {
@@ -34,7 +34,7 @@ install_quarto() {
         if ! check_command quarto; then
             action "Installing Quarto..."
             mkdir -p ~/ext
-            curl -L https://github.com/quarto-dev/quarto-cli/releases/download/v1.8.26/quarto-1.8.26-linux-arm64.deb -o ~/ext/quarto.deb
+            curl -L https://github.com/quarto-dev/quarto-cli/releases/download/v1.9.36/quarto-1.9.36-linux-arm64.pkg -o ~/ext/quarto.deb
             sudo dpkg -i ~/ext/quarto.deb
         fi
     fi
