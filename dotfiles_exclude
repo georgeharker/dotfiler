@@ -24,8 +24,6 @@ dotfiler
 node_modules/
 __pycache__/
 .venv/
-venv/
-env/
 .tox/
 dist/
 build/
