@@ -12,13 +12,9 @@ run_programming_languages_module() {
     ensure_rust
     uninstall_system_nodejs
     ensure_nodejs
-    install_claude
-    install_copilot
-    install_gemini
-    install_opencode
+    install_treesitter
     install_jupyter
-    install_opsdk
-    install_basic_memory
+    install_datascience
 }
 
 install_python_environment() {
@@ -43,31 +39,6 @@ install_basic_python_packages() {
     pip_install flake8 flake8-bugbear flake8-comprehensions flake8-builtins flake8-import-order
 
     deactivate
-}
-
-install_claude() {
-    action "Installing claude-code Node.js packages..."
-    install_npm_package @anthropic-ai/claude-code
-    install_npm_package @zed-industries/claude-agent-acp
-}
-
-install_copilot() {
-    action "Installing copilot Node.js packages..."
-    install_npm_package @github/copilot
-}
-
-install_opencode() {
-    action "Installing opencode Node.js packages..."
-    install_npm_package opencode-ai
-    install_npm_package @tarquinen/opencode-dcp@latest
-    if [[ "$DOTFILES_OS" == "Darwin" ]]; then
-        brew install --cask opencode-desktop
-    fi
-}
-
-install_gemini() {
-    action "Installing gemini-cli Node.js packages..."
-    install_npm_package @google/gemini-cli
 }
 
 install_treesitter() {
@@ -99,19 +70,8 @@ install_pytorch() {
     deactivate
 }
 
-install_basic_memory() {
-    action "Installing basic-memory..."
-
-    ensure_global_python_venv
-    activate_global_or_local_python_venv
-
-    pip_install basic-memory
-
-    deactivate
-}
-
 install_datascience() {
-    action "Installing PyTorch..."
+    action "Installing Datascience..."
 
     ensure_global_python_venv
     activate_global_or_local_python_venv

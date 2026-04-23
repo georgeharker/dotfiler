@@ -9,17 +9,6 @@ script_dir=${script_dir:A}
 # Pull in logging
 source "${script_dir}/logging.zsh"
 
-# Detect operating system
-detect_os() {
-    if [[ `uname` == "Darwin" ]]; then
-        export DOTFILES_OS="Darwin"
-        info "Detected macOS"
-    else
-        export DOTFILES_OS="Linux"
-        info "Detected Linux"
-    fi
-}
-
 force_install() {
     if [[ $FORCE_INSTALL -gt 0 ]]; then
         return 0
