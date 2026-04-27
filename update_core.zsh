@@ -2236,17 +2236,29 @@ function _update_register_hook() {
 _update_core_announce_breaking_changes() {
     local _label=$1 _repo_dir=$2 _range=$3
     [[ -z "$_range" || -z "$_repo_dir" ]] && return 0
-    local -a _breaking=()
-    local _line
+
+    # Pass 1: collect SHAs of breaking-change commits (matched by subject line).
+    # %H is always exactly 40 hex chars; slice [1,40]=sha, [42,-1]=subject so
+    # subjects containing any character (including '|') are handled correctly.
+    local -a _breaking_shas=()
+    local _line _sha _subject
     while IFS= read -r _line; do
-        _breaking+=("$_line")
-    done < <(git -C "$_repo_dir" log --format='%s' "${_range}" 2>/dev/null \
-        | grep -E '^!|^[a-z]+(\([^)]*\))?!:')
-    (( ${#_breaking} == 0 )) && return 0
+        _sha="${_line[1,40]}"
+        _subject="${_line[42,-1]}"
+        print -r -- "$_subject" | grep -qE '^!|^[a-z]+(\([^)]*\))?!:' \
+            && _breaking_shas+=("$_sha")
+    done < <(git -C "$_repo_dir" log --format='%H %s' "${_range}" 2>/dev/null)
+
+    (( ${#_breaking_shas} == 0 )) && return 0
+
+    # Pass 2: print the full commit message body for each match.
     warn "${_label}: breaking changes in this update:"
-    local _msg
-    for _msg in "${_breaking[@]}"; do
-        warn "  ${_msg}"
+    local _sha _line
+    for _sha in "${_breaking_shas[@]}"; do
+        warn "---"
+        while IFS= read -r _line; do
+            warn "  ${_line}"
+        done < <(git -C "$_repo_dir" log -1 --format='%B' "$_sha" 2>/dev/null)
     done
     return 0
 }
