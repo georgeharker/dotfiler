@@ -493,6 +493,8 @@ function _update_dotfiler_post() {
 
     local _new="${_range#*..}"
 
+    _update_core_announce_breaking_changes "dotfiler" "$script_dir" "$_range"
+
     local _mode
     _update_core_get_in_tree_commit_mode ':dotfiler:update'; _mode=$REPLY
 

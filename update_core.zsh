@@ -2216,6 +2216,42 @@ function _update_register_hook() {
 }
 
 # ---------------------------------------------------------------------------
+# _update_core_announce_breaking_changes <label> <repo_dir> <old..new>
+#
+# Scans the commit range for breaking-change subjects and warns about each one.
+# Matches two patterns:
+#   "! ..."              — bare bang prefix (e.g. "! remove fsh from autocompletion")
+#   "type[!(scope)]: …"  — Conventional Commits breaking marker (e.g. "feat!: ...")
+# No-ops silently when the range is empty or no breaking commits are found.
+#
+# Range provenance by topology:
+#   submodule/standalone — old=HEAD before pull, new=remote tip; both are local
+#                          commits after the pull phase. Always safe.
+#   subtree              — old=SHA marker (remote commit), new=FETCH_HEAD; both are
+#                          remote objects fetched during plan/pull and retained in the
+#                          object store. Safe as long as this runs before GC (it does —
+#                          called from post, which runs in the same process as pull).
+# ---------------------------------------------------------------------------
+
+_update_core_announce_breaking_changes() {
+    local _label=$1 _repo_dir=$2 _range=$3
+    [[ -z "$_range" || -z "$_repo_dir" ]] && return 0
+    local -a _breaking=()
+    local _line
+    while IFS= read -r _line; do
+        _breaking+=("$_line")
+    done < <(git -C "$_repo_dir" log --format='%s' "${_range}" 2>/dev/null \
+        | grep -E '^!|^[a-z]+(\([^)]*\))?!:')
+    (( ${#_breaking} == 0 )) && return 0
+    warn "${_label}: breaking changes in this update:"
+    local _msg
+    for _msg in "${_breaking[@]}"; do
+        warn "  ${_msg}"
+    done
+    return 0
+}
+
+# ---------------------------------------------------------------------------
 
 _update_core_cleanup() {
     unset -f \
@@ -2267,6 +2303,7 @@ _update_core_cleanup() {
         _update_core_resolve_component_range \
         _update_core_init_registry \
         _update_register_hook \
+        _update_core_announce_breaking_changes \
         2>/dev/null
 
     # Registry arrays — may not exist if _update_core_init_registry was never called
