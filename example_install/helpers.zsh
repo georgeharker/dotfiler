@@ -423,6 +423,30 @@ install_deb_package() {
     fi
 }
 
+## github release based installs
+
+# Get latest release version for a GitHub repo (strips leading 'v')
+github_latest_version() {
+    curl -sf "https://api.github.com/repos/$1/releases/latest" \
+        | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\{0,1\}\([^"]*\)".*/\1/p'
+}
+
+# Download a .deb from a URL and install it with dpkg
+install_deb_from_url() {
+    local url="$1"
+    local tmp_deb
+    tmp_deb=$(mktemp /tmp/install-XXXXXX.deb)
+    action "Downloading $(basename "$url")..."
+    if curl -sfL "$url" -o "$tmp_deb"; then
+        sudo dpkg -i "$tmp_deb"
+        rm -f "$tmp_deb"
+    else
+        error "Failed to download from ${url}"
+        rm -f "$tmp_deb"
+        return 1
+    fi
+}
+
 # Cargo checks are done via command for now
 cargo_crate_installed() {
     cargo install --list | grep "$1"

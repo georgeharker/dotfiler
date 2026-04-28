@@ -46,6 +46,16 @@ install_gemini() {
     install_npm_package @google/gemini-cli
 }
 
+install_llama() {
+    action "Installing llama.cpp..."
+    if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+        brew tap mostlygeek/llama-swap
+        brew install llama-swap
+    fi
+    # or build locally
+    install_package llama-cpp
+}
+
 install_basic_memory() {
     action "Installing basic-memory..."
 

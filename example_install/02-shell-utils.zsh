@@ -14,6 +14,7 @@ run_shell_utils_module() {
     install_antidote
     install_shell_tools
     install_onepassword
+    install_patina
 }
 
 install_eza() {
@@ -102,6 +103,28 @@ install_shell_tools() {
         install_cargo_package procs
     fi
     bat cache --build
+}
+
+install_patina() {
+    action "Installing patina..."
+    if check_command patina; then
+        verbose "patina already installed"
+        return 0
+    fi
+
+    if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+        brew tap michel-kraemer/zsh-patina
+        install_package zsh-patina
+    else
+        local version
+        version=$(github_latest_version "michel-kraemer/zsh-patina")
+        [[ -z "$version" ]] && { error "Failed to fetch patina version"; return 1; }
+
+        local deb_arch
+        deb_arch=$(dpkg --print-architecture)
+
+        install_deb_from_url "https://github.com/michel-kraemer/zsh-patina/releases/download/v${version}/zsh-patina_${version}_${deb_arch}.deb"
+    fi
 }
 
 # Legacy - non antidote install, prefer antidote installers
