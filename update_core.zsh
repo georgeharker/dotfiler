@@ -740,34 +740,44 @@ _update_core_resolve_remote_sha() {
 # Dirty repo check + stash helpers
 # ---------------------------------------------------------------------------
 
-# _update_core_check_dirty <repo_dir> [--exclude <path>]
+# _update_core_check_dirty <repo_dir> [--exclude <path>]...
 # Returns 0 if clean, 1 if dirty.
 # Uses git status --porcelain rather than git diff --quiet so that submodule
 # working tree mismatches (stale submodule HEAD vs gitlink) are detected —
 # git diff --quiet ignores submodule state by default.
-# With --exclude <path>, lines matching that path are ignored (e.g. an
-# expected submodule gitlink mismatch that will be staged later).
+# Multiple --exclude <path> args may be provided; lines whose path matches
+# any exclude are ignored (e.g. expected submodule gitlink mismatches that
+# will be staged later by their own component's post-marker).
 _update_core_check_dirty() {
     local _dir=$1; shift
-    local _exclude=""
-    if [[ "${1:-}" == --exclude ]]; then
-        _exclude=$2
-    fi
-    if [[ -z "$_exclude" ]]; then
+    local -a _excludes=()
+    while [[ "${1:-}" == --exclude ]]; do
+        _excludes+=("$2")
+        shift 2
+    done
+    if (( ${#_excludes[@]} == 0 )); then
         [[ -z "$(git -C "$_dir" status --porcelain 2>/dev/null)" ]]
-    else
-        # Filter out lines whose path matches the exclude prefix.
-        local _line
-        while IFS= read -r _line; do
-            # porcelain format: XY <path> or XY <path> -> <path>
-            # The path starts at column 4 (after the two status chars + space).
-            local _path="${_line[4,-1]}"
-            [[ "$_path" == "$_exclude" || "$_path" == "$_exclude "* || "$_path" == "$_exclude/"* ]] && continue
-            # If any non-excluded dirty line remains, repo is dirty.
-            return 1
-        done < <(git -C "$_dir" status --porcelain 2>/dev/null)
-        return 0
+        return
     fi
+    # Filter out lines whose path matches any exclude prefix.
+    local _line _path _ex _matched
+    while IFS= read -r _line; do
+        # porcelain format: XY <path> or XY <path> -> <path>
+        # The path starts at column 4 (after the two status chars + space).
+        _path="${_line[4,-1]}"
+        _matched=0
+        for _ex in "${_excludes[@]}"; do
+            if [[ "$_path" == "$_ex" \
+               || "$_path" == "$_ex "* \
+               || "$_path" == "$_ex/"* ]]; then
+                _matched=1
+                break
+            fi
+        done
+        # If any non-excluded dirty line remains, repo is dirty.
+        (( _matched )) || return 1
+    done < <(git -C "$_dir" status --porcelain 2>/dev/null)
+    return 0
 }
 
 # _update_core_prompt_dirty <repo_dir> <label>
@@ -818,18 +828,20 @@ _update_core_prompt_dirty() {
 
 # _update_core_maybe_stash / _update_core_pop_stash — see below.
 
-# _update_core_maybe_stash <repo_dir> <label> [--exclude <path>]
+# _update_core_maybe_stash <repo_dir> <label> [--exclude <path>]...
 # If dirty, prompts the user (using per-repo consent cache). On consent, stashes.
 # Sets REPLY=1 if a stash was created, REPLY=0 if not.
 # Returns 0 to proceed, 1 to abort.
-# With --exclude <path>, that path is ignored when checking dirt (e.g. an
-# expected submodule gitlink mismatch that post_marker will stage later).
+# Multiple --exclude <path> args may be provided; each excluded path is
+# ignored when checking dirt (e.g. expected submodule gitlink mismatches
+# that post_marker will stage later).
 _update_core_maybe_stash() {
     local _dir=$1 _label=${2:-update}; shift 2
     local -a _exclude_args=()
-    if [[ "${1:-}" == --exclude ]]; then
-        _exclude_args=(--exclude "$2")
-    fi
+    while [[ "${1:-}" == --exclude ]]; do
+        _exclude_args+=(--exclude "$2")
+        shift 2
+    done
     REPLY=0
 
     # In dry-run mode, never prompt or stash — report clean to caller.
@@ -1118,6 +1130,10 @@ _update_core_component_pull_submodule() {
             }
             (( _stashed_parent )) && _update_core_pop_stash "$_parent" "dotfiles repo (submodule)"
             (( _stashed_sub )) && _update_core_pop_stash "$_sub_dir" "submodule component"
+            # Submodule HEAD is now ahead of the parent's gitlink — register
+            # the path so subsequent stash checks in this Phase 2 run ignore
+            # the gitlink mismatch that post-marker will commit.
+            _update_core_register_expected_dirt "$_parent" "$_rel"
             REPLY=pull
         else
             # Diverged — stash, offer rebase onto remote tip, pop afterwards.
@@ -1130,6 +1146,9 @@ _update_core_component_pull_submodule() {
             }
             (( _stashed_diverge_p2 )) && _update_core_pop_stash "$_sub_dir" "submodule component"
             if (( REPLY )); then
+                # Rebased: submodule HEAD now diverges from gitlink — register
+                # the dirt for downstream stash checks (post-marker commits it).
+                _update_core_register_expected_dirt "$_parent" "$_rel"
                 REPLY=rebase
             else
                 return 1
@@ -1259,11 +1278,18 @@ _update_core_component_post_marker() {
     #   subtree:    no payload at stash time; plain stash is fine.
     local _post_stashed=0
     local _payload_path=""
+    # Collect sibling expected-dirt excludes (gitlink mismatches from earlier
+    # Phase-2 pulls).  Without this, post-marker stash verification trips on
+    # a sibling's pending pointer, even though it will be committed by that
+    # sibling's own post-marker step shortly.
+    local -a _sibling_excludes=()
+    _update_core_get_expected_dirt_excludes "$_parent"
+    _sibling_excludes=("${reply[@]}")
     if [[ -n "$_parent" && "$_itc_mode" != none ]]; then
         case "$_topology" in
             submodule)
                 _update_core_maybe_stash "$_parent" "dotfiles repo (post marker)" \
-                    --exclude "$_rel" || return 1
+                    --exclude "$_rel" "${_sibling_excludes[@]}" || return 1
                 _post_stashed=$REPLY
                 ;;
             standalone)
@@ -1276,7 +1302,8 @@ _update_core_component_post_marker() {
                         git -C "$_parent" reset -q HEAD -- "$_payload_path" 2>/dev/null
                 fi
 
-                _update_core_maybe_stash "$_parent" "dotfiles repo (post marker)" || {
+                _update_core_maybe_stash "$_parent" "dotfiles repo (post marker)" \
+                    "${_sibling_excludes[@]}" || {
                     [[ -n "$_payload_path" ]] && \
                         git -C "$_parent" add "$_payload_path" 2>/dev/null
                     return 1
@@ -1288,7 +1315,8 @@ _update_core_component_post_marker() {
                 fi
                 ;;
             *)
-                _update_core_maybe_stash "$_parent" "dotfiles repo (post marker)" || return 1
+                _update_core_maybe_stash "$_parent" "dotfiles repo (post marker)" \
+                    "${_sibling_excludes[@]}" || return 1
                 _post_stashed=$REPLY
                 ;;
         esac
@@ -2189,6 +2217,14 @@ function _update_core_init_registry() {
     # Populated on first prompt per repo; reused for subsequent prompts
     # within the same update run so the user is only asked once per repo.
     typeset -gA  _dotfiler_stash_consent
+    # Per-parent expected-dirt list.  Keyed by canonicalised parent path.
+    # Values: space-separated relative paths inside the parent whose dirty
+    # state in the parent's working tree/index is *expected* and will be
+    # committed by a subsequent post-marker step.  Currently populated by
+    # successful Phase 2 submodule pulls (gitlink mismatches) so that
+    # downstream stash checks on the same parent ignore that dirt while a
+    # sibling component runs its own pull/unpack/post.
+    typeset -gA  _dotfiler_phase2_expected_dirt
 }
 
 # _update_register_hook \
@@ -2214,6 +2250,68 @@ function _update_register_hook() {
     _dotfiler_hook_component_dir[$_name]=${8:-}
     _dotfiler_hook_topology[$_name]=${9:-}
     _dotfiler_hook_setup_fn[$_name]=${10:-}
+}
+
+# ---------------------------------------------------------------------------
+# Phase-2 expected-dirt registry
+#
+# When a Phase-2 pull moves a sibling component (e.g. submodule update --remote
+# advances the submodule HEAD past the gitlink the parent records), the
+# parent repo becomes dirty until the corresponding post-marker step commits
+# the new pointer.  In the meantime, *other* components in the same parent
+# also run their pull/unpack/post steps and may need to stash the parent —
+# but `git stash` cannot capture submodule pointer drift, so the stash
+# verification in _update_core_check_dirty would falsely report the parent as
+# still dirty.
+#
+# To resolve this, each Phase-2 pull that introduces such expected dirt
+# registers the dirty path here.  Subsequent stash checks call
+# _update_core_get_expected_dirt_excludes <parent> to retrieve the list and
+# pass them as additional --exclude arguments to _update_core_check_dirty.
+#
+# Keyed by the canonicalised parent path; values are space-separated relative
+# paths inside the parent.
+# ---------------------------------------------------------------------------
+
+# _update_core_register_expected_dirt <parent> <rel_path>
+# Append <rel_path> to the expected-dirt list for <parent>.
+# Idempotent: same path appended multiple times has the same effect as once.
+_update_core_register_expected_dirt() {
+    local _parent=$1 _rel=$2
+    [[ -z "$_parent" || -z "$_rel" ]] && return 0
+    # Init registry on first use so callers don't have to.
+    typeset -gA _dotfiler_phase2_expected_dirt 2>/dev/null
+    local _canon="${_parent:A}"
+    local _existing="${_dotfiler_phase2_expected_dirt[$_canon]:-}"
+    # Skip if already present.
+    case " ${_existing} " in
+        *" ${_rel} "*) return 0 ;;
+    esac
+    if [[ -z "$_existing" ]]; then
+        _dotfiler_phase2_expected_dirt[$_canon]="$_rel"
+    else
+        _dotfiler_phase2_expected_dirt[$_canon]="${_existing} ${_rel}"
+    fi
+    log_debug "expected-dirt: registered ${_rel} in ${_canon}"
+    return 0
+}
+
+# _update_core_get_expected_dirt_excludes <parent>
+# Sets reply=(--exclude <p1> --exclude <p2> ...) for use as args to
+# _update_core_check_dirty / _update_core_maybe_stash.  reply=() if none.
+_update_core_get_expected_dirt_excludes() {
+    local _parent=$1
+    reply=()
+    [[ -z "$_parent" ]] && return 0
+    typeset -gA _dotfiler_phase2_expected_dirt 2>/dev/null
+    local _canon="${_parent:A}"
+    local _list="${_dotfiler_phase2_expected_dirt[$_canon]:-}"
+    [[ -z "$_list" ]] && return 0
+    local _p
+    for _p in ${=_list}; do
+        reply+=(--exclude "$_p")
+    done
+    return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -2325,7 +2423,8 @@ _update_core_cleanup() {
           _dotfiler_hook_pull_fn _dotfiler_hook_unpack_fn \
           _dotfiler_hook_post_fn _dotfiler_hook_cleanup_fn \
           _dotfiler_hook_component_dir _dotfiler_hook_topology \
-          _dotfiler_hook_setup_fn _dotfiler_stash_consent 2>/dev/null
+          _dotfiler_hook_setup_fn _dotfiler_stash_consent \
+          _dotfiler_phase2_expected_dirt 2>/dev/null
 
     unset -f _update_core_cleanup 2>/dev/null
 }

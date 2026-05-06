@@ -1039,6 +1039,7 @@ function _update_cleanup() {
         _dotfiler_hook_component_dir \
         _dotfiler_hook_topology \
         _dotfiler_stash_consent \
+        _dotfiler_phase2_expected_dirt \
         2>/dev/null
     unset \
         _dotfiler_registered_hooks \
