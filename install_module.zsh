@@ -52,7 +52,7 @@ if [[ $# -eq 0 || ${#help[@]} -gt 0 ]]; then
 fi
 
 # Source helpers
-source "$install_dir/helpers.zsh"  # shuck: ignore=C003
+source "$install_dir/helpers.zsh"
 detect_os
 
 module_name="$1"

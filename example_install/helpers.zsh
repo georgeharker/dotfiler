@@ -212,9 +212,9 @@ install_using_git() {
 activate_nvm() {
     if [[ -s "${NVM_DIR}/nvm.sh" ]]; then
         export NVM_DIR="${HOME}/.local/share/nvm"
-        source "${NVM_DIR}/nvm.sh"  # shuck: ignore=C003
+        source "${NVM_DIR}/nvm.sh"
         if ! nvm use node &> /dev/null; then
-            nvm install node && source "${NVM_DIR}/nvm.sh"  # shuck: ignore=C003
+            nvm install node && source "${NVM_DIR}/nvm.sh"
         fi
     fi
 }
@@ -318,7 +318,7 @@ ensure_uv() {
         echo "Installing uv dependency..."
         curl -LsSf https://astral.sh/uv/install.sh | sh
     fi
-    [[ -f "$HOME/.local/bin/env" ]] && source "$HOME/.local/bin/env"  # shuck: ignore=C003
+    [[ -f "$HOME/.local/bin/env" ]] && source "$HOME/.local/bin/env"
     return 0
 }
 
@@ -480,7 +480,7 @@ install_cargo_package() {
 activate_global_or_local_python_venv() {
     if [ ${VIRTUAL_ENV+x} ]; then
         action "Using existing virtual environment at $VIRTUAL_ENV"
-        source ${VIRTUAL_ENV}/bin/activate  # shuck: ignore=C003
+        source ${VIRTUAL_ENV}/bin/activate
     else
         if [ -f ~/.venv/bin/activate ]; then
             source ~/.venv/bin/activate

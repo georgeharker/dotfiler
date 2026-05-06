@@ -18,7 +18,7 @@ script_dir=$(find_dotfiles_script_directory)   # shuck: ignore=C001
 install_dir=$(find_dotfiles_install_directory)
 
 # Source helper functions
-source "$install_dir/helpers.zsh"   # shuck: ignore=C003
+source "$install_dir/helpers.zsh" 
 
 # parse opts
 
