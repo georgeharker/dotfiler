@@ -203,11 +203,10 @@ function _gc_status() {
             action "Upstream commits not yet pulled$(( do_fetch )) && echo '' || echo ' (run --fetch for current state)':"
             echo "$behind_out"
         else
-            if (( do_fetch )); then
-                success "Up to date with upstream."
-            else
-                success "Up to date with upstream (cached; run --fetch for current state)."
-            fi
+            # shuck: disable=C010
+            (( do_fetch )) \
+                && success "Up to date with upstream." \
+                || success "Up to date with upstream (cached; run --fetch for current state)."
         fi
     fi
 
