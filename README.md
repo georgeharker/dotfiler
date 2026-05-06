@@ -671,3 +671,7 @@ dotfiler setup -u -D
 # Inspect git state
 cd ~/.dotfiles && git status
 ```
+
+## Acknowledgements
+
+Linting throughout this codebase is checked with [shuck](https://github.com/ewhauser/shuck) — a fast shell linter with first-class zsh support. Thanks to the shuck project for catching the bugs that bash-targeted linters miss.
