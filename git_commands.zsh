@@ -197,14 +197,17 @@ function _gc_status() {
     info "git -C $dotfiles_dir log ..@{u} --oneline"
     local behind_out
     behind_out=$(git -C "$dotfiles_dir" log '..@{u}' --oneline 2>/dev/null)
+    # shuck: disable=C107
     if (( $? == 0 )); then
         if [[ -n "$behind_out" ]]; then
             action "Upstream commits not yet pulled$(( do_fetch )) && echo '' || echo ' (run --fetch for current state)':"
             echo "$behind_out"
         else
-            (( do_fetch )) \
-                && success "Up to date with upstream." \
-                || success "Up to date with upstream (cached; run --fetch for current state)."
+            if (( do_fetch )); then
+                success "Up to date with upstream."
+            else
+                success "Up to date with upstream (cached; run --fetch for current state)."
+            fi
         fi
     fi
 

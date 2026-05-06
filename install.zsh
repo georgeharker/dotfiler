@@ -14,11 +14,11 @@ source "${helper_script_dir}/module_helpers.zsh"
 set -e  # Exit on any error
 
 # Get the directory where this script is located
-script_dir=$(find_dotfiles_script_directory)
+script_dir=$(find_dotfiles_script_directory)   # shuck: ignore=C001
 install_dir=$(find_dotfiles_install_directory)
 
 # Source helper functions
-source "$install_dir/helpers.zsh"
+source "$install_dir/helpers.zsh"   # shuck: ignore=C003
 
 # parse opts
 
@@ -27,7 +27,7 @@ zparseopts -D -E - f=force -force=force \
                    h=help -help=help \
                    p:=profile -profile:=profile
 
-FORCE_INSTALL=$(( ${#force[@]} > 0 ))
+FORCE_INSTALL=$(( ${#force[@]} > 0 ))   # shuck: ignore=C001
 
 # Set profile from CLI arg, falling back to environment variable
 if [[ ${#profile[@]} -gt 0 ]]; then
@@ -80,8 +80,8 @@ main() {
     local module_count=1
     
     for module_basename in "${sorted_modules[@]}"; do
-        local section_name="${dotfiles_module_descriptions[$module_basename]}"
-        local main_function="${dotfiles_module_functions[$module_basename]}"
+        local section_name="${dotfiles_module_descriptions[$module_basename]}"  # shuck: ignore=C006
+        local main_function="${dotfiles_module_functions[$module_basename]}"  # shuck: ignore=C006
         
         # Execute the module
         print_section "$module_count. $section_name"

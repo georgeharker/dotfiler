@@ -104,7 +104,7 @@ function _update_parse_args() {
     # Strip --update-phases tokens, leaving only the values
     _update_phases=("${(@)_update_phases_raw:#--update-phases}")
 
-    [[ ${#quiet[@]} -gt 0 ]]      && quiet_mode=true
+    [[ ${#quiet[@]} -gt 0 ]]      && quiet_mode=true  # shuck: ignore=C001
     [[ ${#verbose[@]} -gt 0 ]]    && export DOTFILER_VERBOSE=1
     [[ ${#debug_flag[@]} -gt 0 ]] && export DOTFILER_DEBUG=1
 
@@ -220,7 +220,7 @@ function _update_dotfiler_plan() {
         fi
         # subdir/none: parent pull already advanced scripts — nothing to do.
         case $_dotfiler_topology in
-            subdir|none|*)
+            subdir|none)
                 verbose "update_self: plan: phase=dotfiles topology=${_dotfiler_topology} — parent manages scripts"
                 return 0
                 ;;
@@ -685,8 +685,8 @@ function _update_phase_plan(){
         for _hook in "$_hooks_dir"/*.zsh(N); do
             [[ -f "$_hook" ]] || continue
             verbose "update: phase plan: sourcing hook ${_hook:t}"
-            local _before=${#_dotfiler_registered_hooks}
-            source "$_hook"
+            local _before=${#_dotfiler_registered_hooks}  # shuck: ignore=C006
+            source "$_hook"   # shuck: ignore=C002
             if (( ${#_dotfiler_registered_hooks} == _before )); then
                 verbose "update: hook '${_hook:t}' did not register (up-to-date or n/a)"
             else

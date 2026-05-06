@@ -160,6 +160,7 @@ exclude_component_dirs() {
     local _dotfiles_dir="${1:A}"
     local _name _comp_dir _topology _rel
 
+    # shuck: disable=C006
     for _name in "${_dotfiler_registered_hooks[@]}"; do
         _comp_dir="${_dotfiler_hook_component_dir[$_name]:-}"
         _topology="${_dotfiler_hook_topology[$_name]:-}"
@@ -925,7 +926,7 @@ function setup_find_deep() {
     if [[ ${#find_prune_args[@]} -gt 0 ]]; then
         find_output=$(find $_foptd "$start_dir" -mindepth 1 $_fopt \
             \( "${find_prune_args[@]}" \) -o \
-            \( -type f -o -type l \) -print )
+            \( -type f -o -type l \) -print )  # shuck: ignore=C103
     else
         find_output=$(find $_foptd "$start_dir" -mindepth 1 $_fopt \
             \( -type f -o -type l \) )
@@ -1052,7 +1053,7 @@ function _setup_do_unpack() {
             log_debug "deep find (with prune): find $findoptd $dotfiles_dir -mindepth 1 $findopt ( ${find_prune_args[@]} ) -o ( -type f -o -type l ) -print"
             find_output=$(find $findoptd $dotfiles_dir -mindepth 1 $findopt \
                 \( "${find_prune_args[@]}" \) -o \
-                \( -type f -o -type l \) -print)
+                \( -type f -o -type l \) -print)  # shuck: ignore=C103
         else
             log_debug "deep find (no prune): find $findoptd $dotfiles_dir -mindepth 1 $findopt ( -type f -o -type l )"
             find_output=$(find $findoptd $dotfiles_dir -mindepth 1 $findopt \( -type f -o -type l \))
@@ -1077,7 +1078,9 @@ _setup_normalize_path_array() {
     local _arr_name=$1 _label=$2 _force_dest_rel=${3:-0}
     local -a _result=()
     local _p _n
+    # eval used for indirect array access by name; zsh ${(@P)name} requires zsh 5.1+
     eval "local -a _src=(\"\${${_arr_name}[@]}\")"
+    # shuck: disable=C006
     for _p in "${_src[@]}"; do
         _n=$(normalize_path_to_dest_relative "$_p" "$_force_dest_rel") || {
             error "Failed to normalize ${_label} path: $_p"
@@ -1211,7 +1214,7 @@ function setup_find() {
     if [[ ${#find_prune_args[@]} -gt 0 ]]; then
         find_output=$(find $_foptd "$start_dir" -mindepth 1 $_fopt \
             \( "${find_prune_args[@]}" \) -o \
-            \( -type f -o -type l \) -print )
+            \( -type f -o -type l \) -print )  # shuck: ignore=C103
     else
         find_output=$(find $_foptd "$start_dir" -mindepth 1 $_fopt \( -type f -o -type l \) )
     fi
@@ -1312,7 +1315,7 @@ function setup_core_main() {
     unfunction _setup_main_usage
 
     [[ ${#debug_flag[@]} -gt 0 ]] && export DOTFILER_DEBUG=1
-    [[ ${#quiet[@]} -gt 0 ]] && quiet_mode=true
+    [[ ${#quiet[@]} -gt 0 ]] && quiet_mode=true  # shuck: ignore=C001
 
     local _dry_run_bool=0 _quiet_bool=0 _defyes_bool=0 _defno_bool=0
     [[ ${#dry_run[@]} -gt 0 ]] && _dry_run_bool=1

@@ -1481,6 +1481,7 @@ _update_core_should_update() {
     [[ "$_force" == "true" ]] && return 0
 
     local LAST_EPOCH EXIT_STATUS
+    # shuck: disable=C002
     if ! source "$_stamp" 2>/dev/null || [[ -z "$LAST_EPOCH" ]]; then
         _update_core_write_timestamp "$_stamp"
         return 1
@@ -1924,6 +1925,7 @@ _update_core_build_file_lists() {
         --diff-filter=ADMRC --no-decorate \
         --pretty=tformat:"%H%x09%s%n%B%x00" \
         "${_diff_range}" 2>/dev/null)
+    # shuck: disable=C107
     if (( $? != 0 )); then
         warn "update_core: git log failed for range ${_diff_range} in ${_repo_dir}"
         warn "update_core: one or both SHAs may not be present locally — run with --debug for details"

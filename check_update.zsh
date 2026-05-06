@@ -88,7 +88,7 @@ if [[ ! -w "$dotfiles_dir" || ! -O "$dotfiles_dir" ]]; then
     return
 fi
 
-if ! command git --version 2>&1 >/dev/null; then
+if ! command git --version 2>&1 >/dev/null; then  # shuck: ignore=C085
     log_debug "check_update: git not found — exiting"
     unset update_mode
     return
@@ -164,7 +164,8 @@ function _check_update_invoke_hooks() {
     for _hook in "$_hooks_dir"/*.zsh(N); do
         [[ -f "$_hook" ]] || continue
         log_debug "check_update: sourcing hook ${_hook:t} (check mode)"
-        source "$_hook"
+        source "$_hook"  # shuck: ignore=C002
+        # shuck: disable=C006
         log_debug "check_update: hook ${_hook:t} sourced; registered=(${_dotfiler_registered_hooks[*]})"
     done
 
@@ -256,6 +257,7 @@ function handle_update() {
     # an INT/QUIT is not swallowed.  Normal EXIT does only cleanup — no `return`
     # here because this function is called at script top-level and `return`
     # inside a trap body executes in the calling scope (= exit for top-level).
+    # shuck: disable=C008
     trap "
         unset update_mode 2>/dev/null
         unset dotfiles_dir dotfiles_cache_dir dotfiles_timestamp 2>/dev/null
@@ -266,6 +268,7 @@ function handle_update() {
         fi
         _update_core_release_lock '$dotfiles_cache_dir/update.lock'
     " EXIT
+    # shuck: disable=C008
     trap "
         ret=\$?
         unset update_mode 2>/dev/null
@@ -278,12 +281,14 @@ function handle_update() {
         _update_core_release_lock '$dotfiles_cache_dir/update.lock'
         return \$ret
     " INT QUIT
+    # shuck: enable=C008
 
     local _dotfiles_freq
     _update_core_get_update_frequency ':dotfiler:update'; local _dotfiles_freq=$REPLY
 
     # Warn if the previous dotfiles update run recorded a failure.
     local _prev_exit _prev_error
+    # shuck: disable=C002
     { local EXIT_STATUS ERROR; source "$dotfiles_timestamp" 2>/dev/null
       _prev_exit=${EXIT_STATUS:-}; _prev_error=${ERROR:-}; }
     if [[ -n "$_prev_exit" ]] && (( _prev_exit != 0 )); then
@@ -380,14 +385,14 @@ case "$update_mode" in
 
         _dotfiles_bg_update_status() {
             {
-                local LAST_EPOCH EXIT_STATUS ERROR
+                local LAST_EPOCH EXIT_STATUS ERROR  # shuck: ignore=C001
                 if [[ ! -f "$dotfiles_timestamp" ]]; then
                     verbose "check_update: _dotfiles_bg_update_status: timestamp file not yet present — waiting"
                     return 1
                 fi
 
                 # Source the timestamp file to read status variables
-                . "$dotfiles_timestamp"
+                source "$dotfiles_timestamp"  # shuck: ignore=C002
 
                 # Wait until the background job has written a result.
                 # A successful update writes EXIT_STATUS=0 and ERROR="Update successful".

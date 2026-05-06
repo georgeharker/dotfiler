@@ -164,8 +164,8 @@ _setup_bootstrap_hook() {
     # any heuristic.  _update_core_init_registry was called at setup_main entry.
     # -----------------------------------------------------------------------
     local -a _extra_add_paths=()
-    local _before=${#_dotfiler_registered_hooks}
-    source "$dest" 2>/dev/null
+    local _before=${#_dotfiler_registered_hooks}  # shuck: ignore=C006
+    source "$dest" 2>/dev/null  # shuck: ignore=C002
     if (( ${#_dotfiler_registered_hooks} > _before )); then
         local _comp_dir="${_dotfiler_hook_component_dir[$name]:-}"
         local _topology="${_dotfiler_hook_topology[$name]:-}"
@@ -178,22 +178,26 @@ _setup_bootstrap_hook() {
         case "$_topology" in
             subtree)
                 if [[ -n "$_comp_sha" && -n "$_comp_dir" ]]; then
-                    _update_core_write_sha_marker "$_comp_dir" "$_comp_sha" && {
+                    if _update_core_write_sha_marker "$_comp_dir" "$_comp_sha"; then
                         _update_core_sha_marker_path "$_comp_dir"
                         local _marker_rel=${REPLY#${_repo_root}/}
                         _extra_add_paths+=("$_marker_rel")
                         info "bootstrap-hook: wrote subtree SHA marker for $name (${_comp_sha[1,12]})"
-                    } || warn "bootstrap-hook: could not write subtree SHA marker for $name"
+                    else
+                        warn "bootstrap-hook: could not write subtree SHA marker for $name"
+                    fi
                 fi
                 ;;
             standalone)
                 if [[ -n "$_comp_sha" && -n "$_comp_dir" ]]; then
-                    _update_core_write_ext_marker "$_comp_dir" "$_comp_sha" && {
+                    if _update_core_write_ext_marker "$_comp_dir" "$_comp_sha"; then
                         _update_core_ext_marker_path "$_comp_dir"
                         local _marker_rel=${REPLY#${_repo_root}/}
                         _extra_add_paths+=("$_marker_rel")
                         info "bootstrap-hook: wrote ext SHA marker for $name (${_comp_sha[1,12]})"
-                    } || warn "bootstrap-hook: could not write ext SHA marker for $name"
+                    else
+                        warn "bootstrap-hook: could not write ext SHA marker for $name"
+                    fi
                 fi
                 ;;
         esac
@@ -253,7 +257,7 @@ _setup_discover_hooks() {
     local hook_file
     for hook_file in "$hook_dir"/*.zsh(N); do
         log_debug "setup: sourcing hook ${hook_file:t}"
-        source "$hook_file"
+        source "$hook_file"  # shuck: ignore=C002
     done
 }
 

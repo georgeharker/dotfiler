@@ -45,7 +45,7 @@ load_install_modules() {
     fi
     
     # Clear existing module data
-    dotfiles_module_functions=()
+    dotfiles_module_functions=()  # shuck: ignore=C001
     dotfiles_module_descriptions=()
     dotfiles_module_filenames=()
     dotfiles_module_names=()
@@ -56,7 +56,7 @@ load_install_modules() {
             # Reset module variables before sourcing
             unset module_name module_description module_main_function
             
-            source "$module"
+            source "$module"  # shuck: ignore=C002
             
             # Register the module after loading
             register_module "$module"
@@ -131,7 +131,7 @@ _extract_module_functions() {
     
     # Use subshell to avoid namespace pollution while getting accurate function list
     (
-        source "$module_file" 2>/dev/null || return 1
+        source "$module_file" 2>/dev/null || return 1  # shuck: ignore=C002
 typeset -f + | grep -E "^(install_[a-zA-Z0-9]*|ensure_[a-zA-Z0-9]*|setup_[a-zA-Z0-9]*|run_${module_name//-/_}_module)" | \
         while read -r func_name; do
             if [[ "$format" == "completion" ]]; then
@@ -170,6 +170,7 @@ get_module_functions() {
     # Find the module file
     local module_file
     module_file=$(find_module_by_name "$module_name" "$install_dir")
+    # shuck: disable=C107
     if [[ $? -ne 0 ]]; then
         return 1
     fi

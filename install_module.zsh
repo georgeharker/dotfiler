@@ -17,7 +17,7 @@ zparseopts -D -E - f=force -force=force \
                    h=help -help=help \
                    p:=profile -profile:=profile
 
-FORCE_INSTALL=$(( ${#force[@]} > 0 ))
+FORCE_INSTALL=$(( ${#force[@]} > 0 ))  # shuck: ignore=C001
 
 # Set profile from CLI arg, falling back to environment variable
 if [[ ${#profile[@]} -gt 0 ]]; then
@@ -52,7 +52,7 @@ if [[ $# -eq 0 || ${#help[@]} -gt 0 ]]; then
 fi
 
 # Source helpers
-source "$install_dir/helpers.zsh"
+source "$install_dir/helpers.zsh"  # shuck: ignore=C003
 detect_os
 
 module_name="$1"
@@ -60,7 +60,8 @@ target_function="$2"
 
 # Find the module file by name
 module_file=$(find_module_by_name "$module_name" "$install_dir")
-if [[ $? -ne 0 ]]; then
+    # shuck: disable=C107
+    if [[ $? -ne 0 ]]; then
     echo "Module '$module_name' not found."
     echo ""
     list_available_modules "$install_dir"
@@ -68,7 +69,7 @@ if [[ $? -ne 0 ]]; then
 fi
 
 echo "Running module: $(basename "$module_file")"
-source "$module_file"
+source "$module_file"  # shuck: ignore=C002
 
 # Determine which function to run
 if [[ -n "$target_function" ]]; then

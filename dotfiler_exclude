@@ -28,6 +28,7 @@ install.zsh
 install_module.zsh
 completions.zsh
 update_self.zsh
+.shuck.toml
 
 # Directories
 example_install/

@@ -212,9 +212,9 @@ install_using_git() {
 activate_nvm() {
     if [[ -s "${NVM_DIR}/nvm.sh" ]]; then
         export NVM_DIR="${HOME}/.local/share/nvm"
-        source "${NVM_DIR}/nvm.sh"
+        source "${NVM_DIR}/nvm.sh"  # shuck: ignore=C003
         if ! nvm use node &> /dev/null; then
-            nvm install node && source "${NVM_DIR}/nvm.sh"
+            nvm install node && source "${NVM_DIR}/nvm.sh"  # shuck: ignore=C003
         fi
     fi
 }
@@ -318,7 +318,7 @@ ensure_uv() {
         echo "Installing uv dependency..."
         curl -LsSf https://astral.sh/uv/install.sh | sh
     fi
-    [[ -f "$HOME/.local/bin/env" ]] && source "$HOME/.local/bin/env"
+    [[ -f "$HOME/.local/bin/env" ]] && source "$HOME/.local/bin/env"  # shuck: ignore=C003
     return 0
 }
 
@@ -344,7 +344,7 @@ ensure_global_python_venv() {
 
 activate_global_python_venv() {
     if [ -f ~/.venv/bin/activate ]; then
-        source ~/.venv/bin/activate
+        source ~/.venv/bin/activate  # shuck: ignore=C002
     fi
 }
 
@@ -381,7 +381,7 @@ ensure_rust() {
     if ! (check_command cargo && check_command rustc); then
         action "Installing Rust dependency..."
         curl https://sh.rustup.rs -sSf | sh -s -- --no-modify-path --default-toolchain stable --profile minimal -y
-        source ~/.cargo/env
+        source ~/.cargo/env  # shuck: ignore=C002
         rustup install stable
         rustup default stable
     fi
@@ -480,10 +480,10 @@ install_cargo_package() {
 activate_global_or_local_python_venv() {
     if [ ${VIRTUAL_ENV+x} ]; then
         action "Using existing virtual environment at $VIRTUAL_ENV"
-        source ${VIRTUAL_ENV}/bin/activate
+        source ${VIRTUAL_ENV}/bin/activate  # shuck: ignore=C003
     else
         if [ -f ~/.venv/bin/activate ]; then
-            source ~/.venv/bin/activate
+            source ~/.venv/bin/activate  # shuck: ignore=C002
         fi
     fi
 }

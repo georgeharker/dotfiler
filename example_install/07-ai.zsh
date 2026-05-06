@@ -20,7 +20,7 @@ run_ai_module() {
 
 install_claude() {
     action "Installing claude-code packages..."
-    if !check_command claude then
+    if !check_command claude; then
         curl -fsSL https://claude.ai/install.sh | bash
     fi
     install_npm_package @agentclientprotocol/claude-agent-acp

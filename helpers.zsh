@@ -148,7 +148,7 @@ _path_relative_to() {
 
     # Strip common prefix
     local i=1
-    while (( i <= $#tparts && i <= $#bparts )) && [[ ${tparts[i]} == ${bparts[i]} ]]; do
+    while (( i <= $#tparts && i <= $#bparts )) && [[ ${tparts[i]} == "${bparts[i]}" ]]; do
         (( i++ ))
     done
 
@@ -165,7 +165,7 @@ _path_relative_to() {
     if (( $#rel == 0 )); then
         REPLY='.'
     else
-        REPLY=${(j:/:)rel}
+        REPLY=${(j:/:)rel}  # shuck: ignore=C001
     fi
 }
 

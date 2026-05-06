@@ -4,7 +4,7 @@
 # Module identification
 module_name="editor-extras"
 module_description="Editor support"
-module_main_function="run_programming_languages_module"
+module_main_function="run_editor_extras_module"
 
 # Main function for this module
 run_editor_extras_module() {
@@ -13,6 +13,7 @@ run_editor_extras_module() {
     install_quarto
     install_harper
     install_shfmt
+    install_shuck
 }
 
 install_treesitter() {
@@ -49,3 +50,9 @@ install_shfmt() {
     action "Installing shfmt..."
     install_package shfmt
 }
+
+install_shuck() {
+    action "Installing shuck..."
+    install_cargo_package "shuck-cli"
+}
+
