@@ -56,7 +56,7 @@ load_install_modules() {
             # Reset module variables before sourcing
             unset module_name module_description module_main_function
             
-            source "$module"  # shuck: ignore=C002
+            source "$module"
             
             # Register the module after loading
             register_module "$module"
@@ -131,7 +131,7 @@ _extract_module_functions() {
     
     # Use subshell to avoid namespace pollution while getting accurate function list
     (
-        source "$module_file" 2>/dev/null || return 1  # shuck: ignore=C002
+        source "$module_file" 2>/dev/null || return 1
 typeset -f + | grep -E "^(install_[a-zA-Z0-9]*|ensure_[a-zA-Z0-9]*|setup_[a-zA-Z0-9]*|run_${module_name//-/_}_module)" | \
         while read -r func_name; do
             if [[ "$format" == "completion" ]]; then

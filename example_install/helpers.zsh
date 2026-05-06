@@ -344,7 +344,7 @@ ensure_global_python_venv() {
 
 activate_global_python_venv() {
     if [ -f ~/.venv/bin/activate ]; then
-        source ~/.venv/bin/activate  # shuck: ignore=C002
+        source ~/.venv/bin/activate
     fi
 }
 
@@ -381,7 +381,7 @@ ensure_rust() {
     if ! (check_command cargo && check_command rustc); then
         action "Installing Rust dependency..."
         curl https://sh.rustup.rs -sSf | sh -s -- --no-modify-path --default-toolchain stable --profile minimal -y
-        source ~/.cargo/env  # shuck: ignore=C002
+        source ~/.cargo/env
         rustup install stable
         rustup default stable
     fi
@@ -483,7 +483,7 @@ activate_global_or_local_python_venv() {
         source ${VIRTUAL_ENV}/bin/activate  # shuck: ignore=C003
     else
         if [ -f ~/.venv/bin/activate ]; then
-            source ~/.venv/bin/activate  # shuck: ignore=C002
+            source ~/.venv/bin/activate
         fi
     fi
 }

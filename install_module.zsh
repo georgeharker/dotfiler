@@ -69,7 +69,7 @@ module_file=$(find_module_by_name "$module_name" "$install_dir")
 fi
 
 echo "Running module: $(basename "$module_file")"
-source "$module_file"  # shuck: ignore=C002
+source "$module_file"
 
 # Determine which function to run
 if [[ -n "$target_function" ]]; then

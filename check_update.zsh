@@ -164,7 +164,7 @@ function _check_update_invoke_hooks() {
     for _hook in "$_hooks_dir"/*.zsh(N); do
         [[ -f "$_hook" ]] || continue
         log_debug "check_update: sourcing hook ${_hook:t} (check mode)"
-        source "$_hook"  # shuck: ignore=C002
+        source "$_hook"
         # shuck: disable=C006
         log_debug "check_update: hook ${_hook:t} sourced; registered=(${_dotfiler_registered_hooks[*]})"
     done
@@ -288,7 +288,6 @@ function handle_update() {
 
     # Warn if the previous dotfiles update run recorded a failure.
     local _prev_exit _prev_error
-    # shuck: disable=C002
     { local EXIT_STATUS ERROR; source "$dotfiles_timestamp" 2>/dev/null
       _prev_exit=${EXIT_STATUS:-}; _prev_error=${ERROR:-}; }
     if [[ -n "$_prev_exit" ]] && (( _prev_exit != 0 )); then
@@ -392,7 +391,7 @@ case "$update_mode" in
                 fi
 
                 # Source the timestamp file to read status variables
-                source "$dotfiles_timestamp"  # shuck: ignore=C002
+                source "$dotfiles_timestamp"
 
                 # Wait until the background job has written a result.
                 # A successful update writes EXIT_STATUS=0 and ERROR="Update successful".

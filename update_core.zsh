@@ -1481,7 +1481,6 @@ _update_core_should_update() {
     [[ "$_force" == "true" ]] && return 0
 
     local LAST_EPOCH EXIT_STATUS
-    # shuck: disable=C002
     if ! source "$_stamp" 2>/dev/null || [[ -z "$LAST_EPOCH" ]]; then
         _update_core_write_timestamp "$_stamp"
         return 1

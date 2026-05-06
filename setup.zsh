@@ -165,7 +165,7 @@ _setup_bootstrap_hook() {
     # -----------------------------------------------------------------------
     local -a _extra_add_paths=()
     local _before=${#_dotfiler_registered_hooks}  # shuck: ignore=C006
-    source "$dest" 2>/dev/null  # shuck: ignore=C002
+    source "$dest" 2>/dev/null
     if (( ${#_dotfiler_registered_hooks} > _before )); then
         local _comp_dir="${_dotfiler_hook_component_dir[$name]:-}"
         local _topology="${_dotfiler_hook_topology[$name]:-}"
@@ -257,7 +257,7 @@ _setup_discover_hooks() {
     local hook_file
     for hook_file in "$hook_dir"/*.zsh(N); do
         log_debug "setup: sourcing hook ${hook_file:t}"
-        source "$hook_file"  # shuck: ignore=C002
+        source "$hook_file"
     done
 }
 

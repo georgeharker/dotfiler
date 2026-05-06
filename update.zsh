@@ -686,7 +686,7 @@ function _update_phase_plan(){
             [[ -f "$_hook" ]] || continue
             verbose "update: phase plan: sourcing hook ${_hook:t}"
             local _before=${#_dotfiler_registered_hooks}  # shuck: ignore=C006
-            source "$_hook"   # shuck: ignore=C002
+            source "$_hook" 
             if (( ${#_dotfiler_registered_hooks} == _before )); then
                 verbose "update: hook '${_hook:t}' did not register (up-to-date or n/a)"
             else
