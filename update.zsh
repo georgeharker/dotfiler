@@ -789,8 +789,21 @@ function _update_phase_plan(){
         if [[ "$_phase" == dotfiles ]]; then
             if (( _nu > 0 || _nr > 0 )); then
                 info "${_display}: ${_nu} files to update, ${_nr} files to remove"
-            else
+            elif [[ "$_name" == main ]]; then
                 info "${_display}: up to date"
+            else
+                # For non-main hooks, Phase 1 only reports whether the parent
+                # dotfiles repo's recorded pointer/marker for this component
+                # advanced — it says nothing about the component's own upstream.
+                # Phase 2 will check upstream directly and emit the real status.
+                case "$_topology" in
+                    subtree|submodule|standalone)
+                        info "${_display}: no upstream dotfiles updates for ${_display}"
+                        ;;
+                    *)
+                        info "${_display}: up to date"
+                        ;;
+                esac
             fi
         fi
     done
@@ -1039,6 +1052,7 @@ function _update_cleanup() {
         _dotfiler_hook_component_dir \
         _dotfiler_hook_topology \
         _dotfiler_stash_consent \
+        _dotfiler_phase2_expected_dirt \
         2>/dev/null
     unset \
         _dotfiler_registered_hooks \
