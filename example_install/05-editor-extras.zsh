@@ -34,9 +34,11 @@ install_quarto() {
     else
         if ! check_command quarto; then
             action "Installing Quarto..."
-            mkdir -p ~/ext
-            curl -L https://github.com/quarto-dev/quarto-cli/releases/download/v1.9.36/quarto-1.9.36-linux-arm64.pkg -o ~/ext/quarto.deb
-            sudo dpkg -i ~/ext/quarto.deb
+            local dev_dir
+            dev_dir="$(get_dev_dir)"
+            mkdir -p "${dev_dir}"
+            curl -L https://github.com/quarto-dev/quarto-cli/releases/download/v1.9.36/quarto-1.9.36-linux-arm64.pkg -o "${dev_dir}/quarto.deb"
+            sudo dpkg -i "${dev_dir}/quarto.deb"
         fi
     fi
 }

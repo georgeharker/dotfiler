@@ -123,7 +123,8 @@ install_patina() {
         local deb_arch
         deb_arch=$(dpkg --print-architecture)
 
-        install_deb_from_url "https://github.com/michel-kraemer/zsh-patina/releases/download/v${version}/zsh-patina_${version}_${deb_arch}.deb"
+        # Note: release tag is bare version (no 'v' prefix in download path)
+        install_deb_from_url "https://github.com/michel-kraemer/zsh-patina/releases/download/${version}/zsh-patina_${version}_${deb_arch}.deb"
     fi
 }
 
@@ -141,7 +142,7 @@ install_ohmyzsh() {
         sh -c "$(curl -fsSL https://raw.github.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
     else
         warn "warning: need to install ohmyzsh"
-        warn '  sh -c "$(curl -fsSL https://raw.github.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"'  # shuck: ignore=C005
+        warn '  sh -c "$(curl -fsSL https://raw.github.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"'
     fi
 }
 

@@ -28,58 +28,62 @@ install_custom_tmux() {
     install_package libutempter-dev
     if ! install_deb_package tmux; then
         action "Building custom tmux..."
-        mkdir -p ~/ext
-        mkdir -p ~/ext/deb
+        local dev_dir
+        dev_dir="$(get_dev_dir)"
+        local tmux_deb_dir="${dev_dir}/tmux-deb"
+        local tmux_src_dir="${tmux_deb_dir}/tmux-3.5"
+        local debian_dir="${tmux_src_dir}/debian"
+        mkdir -p "${tmux_deb_dir}"
+        mkdir -p "${dev_dir}/deb"
 
         sudo dpkg -r tmux || echo "No local tmux installed"
-        if [[ ! -f ~/ext/tmux-deb/tmux_3.5a-1_arm64.deb ]] || force_install; then
+        if [[ ! -f "${tmux_deb_dir}/tmux_3.5a-1_arm64.deb" ]] || force_install; then
             info "Building tmux from source..."
             sudo apt-get install -y libutempter-dev git-buildpackage
-            pushd ~/ext/
-            [[ -d tmux-deb ]] && rm -rf tmux-deb
-            mkdir -p tmux-deb
-            cd tmux-deb
-            if [[ ! -d tmux-3.5 ]]; then
-                git clone https://github.com/tmux/tmux.git tmux-3.5
+            pushd "${tmux_deb_dir}"
+            if ! git_directory_exists "${tmux_src_dir}"; then
+                git clone https://github.com/tmux/tmux.git "${tmux_src_dir}"
             fi
-            cd tmux-3.5
-            if [[ ! -d debian ]]; then
-                git clone git@github.com:georgeharker/tmux-deb.git debian
+            cd "${tmux_src_dir}"
+            if ! git_directory_exists "${debian_dir}"; then
+                git clone git@github.com:georgeharker/tmux-deb.git "${debian_dir}"
             fi
             gbp export-orig --upstream-tree=BRANCH --upstream-branch=master
             debuild -us -uc
             popd
         fi
-        sudo dpkg -i ~/ext/tmux-deb/tmux_3.5a-1_arm64.deb
-        cp ~/ext/tmux-deb/tmux_3.5a-1_arm64.deb ~/ext/deb/
+        sudo dpkg -i "${tmux_deb_dir}/tmux_3.5a-1_arm64.deb"
+        cp "${tmux_deb_dir}/tmux_3.5a-1_arm64.deb" "${dev_dir}/deb/"
     fi
 }
 
 install_custom_neovim() {
     if ! install_deb_package neovim; then
         action "Building custom neovim..."
+        local dev_dir
+        dev_dir="$(get_dev_dir)"
+        local nvim_deb_dir="${dev_dir}/neovim-deb"
+        local nvim_src_dir="${nvim_deb_dir}/neovim-0.12"
+        mkdir -p "${nvim_deb_dir}"
+        mkdir -p "${dev_dir}/deb"
+
         sudo dpkg -r neovim || echo "No local neovim installed"
-        if [[ ! -f ~/ext/neovim-deb/nvim-linux-arm64.deb ]] || force_install; then
+        if [[ ! -f "${nvim_deb_dir}/nvim-linux-arm64.deb" ]] || force_install; then
             info "Building neovim from source..."
-            pushd ~/ext/
-            [[ -f neovim-deb ]] && rm -rf neovim-deb
-            mkdir -p neovim-deb
-            cd neovim-deb
-            if [[ ! -d neovim-0.11 ]]; then
-                git clone git@github.com:neovim/neovim.git neovim-0.11
+            if ! git_directory_exists "${nvim_src_dir}"; then
+                git clone git@github.com:neovim/neovim.git "${nvim_src_dir}"
             fi
-            cd neovim-0.11
-            git checkout v0.11.5
+            cd "${nvim_src_dir}"
+            git checkout v0.12.2
             make clean
             make distclean
             make CMAKE_BUILD_TYPE=RelWithDebInfo CMAKE_INSTALL_PREFIX=/usr/local/ CMAKE_EXTRA_FLAGS="-DCPACK_PACKAGING_INSTALL_PREFIX=/usr/local"
             cd build/
             cpack -g DEB
-            cp nvim-linux-arm64.deb ~/ext/neovim-deb/
-            popd
+            cp nvim-linux-arm64.deb "${nvim_deb_dir}/"
         fi
-        sudo dpkg -i ~/ext/neovim-deb/nvim-linux-arm64.deb
-        cp ~/ext/neovim-deb/nvim-linux-arm64.deb ~/ext/deb/
+        sudo dpkg -i "${nvim_deb_dir}/nvim-linux-arm64.deb"
+        cp "${nvim_deb_dir}/nvim-linux-arm64.deb" "${dev_dir}/deb/"
     fi
 }
 
