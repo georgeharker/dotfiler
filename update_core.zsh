@@ -43,17 +43,133 @@ _update_core_get_default_remote() {
     print -n "${_upstream:-origin}"
 }
 
-# _update_core_get_default_branch <repo_dir> <remote>
-# Prints the default branch name for <remote>.  Tries symbolic-ref, then
-# `git remote show`, then falls back to main/master.
+# _update_core_get_explicit_branch_override <repo_dir> [scope]
+#
+# Returns 0 with REPLY=<branch> only when the user has set an *explicit*
+# branch override: either zstyle "${scope}" branch <name> (when scope is
+# non-empty) or .gitmodules submodule.<rel>.branch <name> (when <repo_dir>
+# is a submodule). Returns 1 otherwise.
+#
+# This is a strict subset of _update_core_get_default_branch: that function
+# always returns *some* branch by falling through to origin/HEAD, remote-
+# show, and main/master. Phase-2 callers need to distinguish "user picked
+# this branch" (justifies an active worktree switch) from "default inferred
+# from git config" (don't impose it on the user's manual checkout). This
+# helper answers that question.
+_update_core_get_explicit_branch_override() {
+    local _repo_dir=$1 _scope=${2:-} _val
+    if [[ -n "$_scope" ]]; then
+        zstyle -s "$_scope" branch _val 2>/dev/null
+        if [[ -n "$_val" ]]; then
+            REPLY=$_val
+            return 0
+        fi
+    fi
+    if _update_core_get_branch_from_gitmodules "$_repo_dir" 2>/dev/null; then
+        return 0
+    fi
+    return 1
+}
+
+# _update_core_ensure_on_branch <repo_dir> <remote> <branch> <label>
+#
+# Phase-2 helper: make <repo_dir>'s worktree be ON the named <branch>,
+# creating a local tracking branch from <remote>/<branch> if it doesn't
+# exist yet. Caller is responsible for stashing dirty state before
+# calling this (a checkout into dirty state would fail).
+#
+# This is the active-switch primitive: if the configured branch
+# (zstyle / .gitmodules / origin/HEAD) differs from the worktree's
+# current branch, the apply path needs to *switch* before fast-forwarding
+# — otherwise `git pull --ff-only <remote> <branch>` would merge that
+# branch's lineage into whatever happens to be checked out.
+#
+# Returns 0 if the worktree is now on <branch>, 1 on failure.
+_update_core_ensure_on_branch() {
+    local _repo_dir=$1 _remote=$2 _branch=$3 _label=$4
+    local _current
+    _current=$(git -C "$_repo_dir" symbolic-ref --short HEAD 2>/dev/null)
+    [[ "$_current" == "$_branch" ]] && return 0
+
+    # Fetch first so the remote-tracking ref exists even if local <branch>
+    # has never been created.
+    git -C "$_repo_dir" fetch --quiet "$_remote" "$_branch" 2>/dev/null || {
+        warn "${_label}: fetch ${_remote}/${_branch} failed"
+        return 1
+    }
+
+    # Create local <branch> tracking <remote>/<branch> if missing.
+    if ! git -C "$_repo_dir" show-ref --verify --quiet "refs/heads/${_branch}"; then
+        git -C "$_repo_dir" branch --quiet --track "$_branch" "${_remote}/${_branch}" 2>/dev/null || {
+            warn "${_label}: failed to create local branch ${_branch} tracking ${_remote}/${_branch}"
+            return 1
+        }
+    fi
+
+    git -C "$_repo_dir" checkout --quiet "$_branch" 2>/dev/null || {
+        warn "${_label}: checkout ${_branch} failed (dirty worktree?)"
+        return 1
+    }
+    return 0
+}
+
+# _update_core_get_branch_from_gitmodules <repo_dir>
+# If <repo_dir> is a registered submodule, read the `branch =` field from
+# its parent's .gitmodules. Sets REPLY to the branch name; returns 0 on
+# hit, 1 if not a submodule or no branch declared.
+#
+# Called from _update_core_get_default_branch which only receives a
+# repo_dir, so we derive the rel path inline here. Hooks themselves do
+# not call this — they have their own component_dir and rel registered.
+_update_core_get_branch_from_gitmodules() {
+    local _repo_dir=$1 _parent _abs_repo _abs_parent _path _branch
+    _parent=$(git -C "$_repo_dir" rev-parse --show-superproject-working-tree 2>/dev/null) || return 1
+    [[ -n "$_parent" && -f "$_parent/.gitmodules" ]] || return 1
+    _abs_repo=${_repo_dir:A}
+    _abs_parent=${_parent:A}
+    _path=${_abs_repo#${_abs_parent}/}
+    [[ "$_path" != "$_abs_repo" ]] || return 1
+    _branch=$(git -C "$_parent" config -f .gitmodules \
+        --get "submodule.${_path}.branch" 2>/dev/null) || return 1
+    [[ -n "$_branch" ]] || return 1
+    REPLY=$_branch
+    return 0
+}
+
+# _update_core_get_default_branch <repo_dir> <remote> [scope]
+# Prints the branch name to track for <remote>. Resolution order:
+#   1. zstyle "${scope}" branch <var>            (scope is e.g. ':zdot:update')
+#   2. .gitmodules `branch =` for the submodule  (read from the parent repo)
+#   3. refs/remotes/<remote>/HEAD                (local mirror of remote default)
+#   4. `git remote show <remote>` HEAD branch    (round-trip to remote)
+#   5. main, master                              (last-ditch fallback)
+#
+# Scopes 1 and 2 are additive — older callers passing only (repo_dir, remote)
+# fall straight through to the original behaviour. The .gitmodules check is
+# free for non-submodule repos (rev-parse returns empty, helper returns 1).
 _update_core_get_default_branch() {
-    local _repo_dir=$1 _remote=${2:-origin}
+    local _repo_dir=$1 _remote=${2:-origin} _scope=${3:-}
     local _branch _line _remote_output
 
+    # 1. Per-consumer override via zstyle.
+    if [[ -n "$_scope" ]]; then
+        zstyle -s "$_scope" branch _branch 2>/dev/null
+        if [[ -n "$_branch" ]]; then
+            print -n "$_branch"; return 0
+        fi
+    fi
+
+    # 2. Submodule branch declared in the parent's .gitmodules.
+    if _update_core_get_branch_from_gitmodules "$_repo_dir"; then
+        print -n "$REPLY"; return 0
+    fi
+
+    # 3. Local mirror of remote default.
     _branch=$(git -C "$_repo_dir" symbolic-ref \
         "refs/remotes/${_remote}/HEAD" 2>/dev/null)
     _branch=${_branch#refs/remotes/${_remote}/}
 
+    # 4. Ask the remote.
     if [[ -z "$_branch" ]]; then
         _remote_output=$(git -C "$_repo_dir" remote show "$_remote" 2>/dev/null)
         for _line in ${(f)_remote_output}; do
@@ -64,6 +180,7 @@ _update_core_get_default_branch() {
         done
     fi
 
+    # 5. Last-ditch fallback.
     if [[ -z "$_branch" ]]; then
         local _b
         for _b in main master; do
@@ -314,7 +431,7 @@ _update_core_component_tip_range() {
         submodule|standalone|*)
             # Current position is the component repo HEAD.
             _remote=$(_update_core_get_default_remote "$_comp_dir")
-            _branch=$(_update_core_get_default_branch "$_comp_dir" "$_remote")
+            _branch=$(_update_core_get_default_branch "$_comp_dir" "$_remote" "$_scope")
             _old=$(git -C "$_comp_dir" rev-parse HEAD 2>/dev/null) || return 1
             local _fetch_err
             _fetch_err=$(git -C "$_comp_dir" fetch -q "$_remote" "$_branch" --tags 2>&1 >/dev/null) || {
@@ -460,7 +577,7 @@ _update_core_is_available_fetch() {
     local _repo_dir=$1 _allow_diverged=${2:-0} _scope=${3:-}
     local _remote _branch _local_sha _remote_sha _base
     _remote=$(_update_core_get_default_remote "$_repo_dir")
-    _branch=$(_update_core_get_default_branch "$_repo_dir" "$_remote")
+    _branch=$(_update_core_get_default_branch "$_repo_dir" "$_remote" "$_scope")
     git -C "$_repo_dir" fetch "$_remote" "$_branch" --quiet --tags 2>/dev/null || return 2
     _local_sha=$(git -C "$_repo_dir" rev-parse HEAD 2>/dev/null) || return 2
 
@@ -953,7 +1070,7 @@ _update_core_maybe_rebase() {
 # Returns 0 on success, 1 on failure.
 # ---------------------------------------------------------------------------
 _update_core_component_pull_standalone() {
-    local _repo_dir=$1 _target_ref=$2 _remote=$3 _branch=$4 _phase=$5
+    local _repo_dir=$1 _target_ref=$2 _remote=$3 _branch=$4 _phase=$5 _scope=${6:-}
     REPLY=skip
 
     if [[ "$_phase" == dotfiles ]]; then
@@ -1001,17 +1118,57 @@ _update_core_component_pull_standalone() {
             return 1
         fi
     else
+        # Phase 2 (components): the active-branch-switch path only fires
+        # when the user has explicitly chosen a branch via zstyle ($_scope
+        # branch <name>) or .gitmodules' submodule.<rel>.branch. Without
+        # an explicit override, fall through to the existing
+        # `git pull --ff-only --autostash` flow on whatever branch the
+        # worktree is currently on — this avoids surprising the user by
+        # switching them onto origin/HEAD just because they happened to
+        # check out a different branch for testing.
         if (( ${_dry_run:-0} )); then
-            verbose "component pull: [dry-run] would: standalone: git pull --ff-only --autostash ${_remote} ${_branch}"
+            verbose "component pull: [dry-run] would: standalone: ff to ${_remote}/${_branch}"
             REPLY=pull
             return 0
         fi
-        verbose "component pull: standalone: git pull --ff-only --autostash ${_remote} ${_branch}"
-        git -C "$_repo_dir" pull -q --ff-only --autostash "$_remote" "$_branch" || {
-            warn "component pull: standalone: git pull failed."
-            return 1
-        }
-        REPLY=pull
+
+        local _override_branch=""
+        if _update_core_get_explicit_branch_override "$_repo_dir" "$_scope"; then
+            _override_branch=$REPLY
+        fi
+
+        local _current
+        _current=$(git -C "$_repo_dir" symbolic-ref --short HEAD 2>/dev/null)
+
+        if [[ -n "$_override_branch" && "$_current" != "$_override_branch" ]]; then
+            # Explicit override and we're not on it — actively switch.
+            verbose "component pull: standalone: switching to ${_override_branch} and ff to ${_remote}/${_override_branch}"
+            local _stashed=0
+            _update_core_maybe_stash "$_repo_dir" "standalone component" || return 1
+            _stashed=$REPLY
+
+            _update_core_ensure_on_branch "$_repo_dir" "$_remote" "$_override_branch" "standalone component" || {
+                (( _stashed )) && _update_core_pop_stash "$_repo_dir" "standalone component"
+                return 1
+            }
+
+            if ! git -C "$_repo_dir" merge --quiet --ff-only "${_remote}/${_override_branch}" 2>/dev/null; then
+                (( _stashed )) && _update_core_pop_stash "$_repo_dir" "standalone component"
+                warn "component pull: standalone: ff to ${_remote}/${_override_branch} failed — local commits ahead?"
+                return 1
+            fi
+
+            (( _stashed )) && _update_core_pop_stash "$_repo_dir" "standalone component"
+            REPLY=pull
+        else
+            # No override OR already on the override branch — existing flow.
+            verbose "component pull: standalone: git pull --ff-only --autostash ${_remote} ${_branch}"
+            git -C "$_repo_dir" pull -q --ff-only --autostash "$_remote" "$_branch" || {
+                warn "component pull: standalone: git pull failed."
+                return 1
+            }
+            REPLY=pull
+        fi
     fi
     return 0
 }
@@ -1031,7 +1188,7 @@ _update_core_component_pull_standalone() {
 # Returns 0 on success, 1 on failure.
 # ---------------------------------------------------------------------------
 _update_core_component_pull_submodule() {
-    local _parent=$1 _rel=$2 _target_ref=$3 _phase=$4
+    local _parent=$1 _rel=$2 _target_ref=$3 _phase=$4 _scope=${5:-}
     REPLY=skip
 
     local _sub_dir="${_parent}/${_rel}"
@@ -1097,6 +1254,48 @@ _update_core_component_pull_submodule() {
             REPLY=pull
             return 0
         fi
+
+        # Branch-switch path: only fires when the user has EXPLICITLY chosen
+        # a branch for this submodule via zstyle ($_scope branch <name>) or
+        # .gitmodules submodule.<rel>.branch — and the worktree isn't on
+        # that branch (typical: Phase 1 just detached us to the dotfiles-
+        # recorded SHA on a different branch). Without an explicit override,
+        # we don't impose origin/HEAD's choice on a user who happened to
+        # check out a different branch — fall through to the existing flow.
+        local _override_branch="" _override_remote=origin
+        if _update_core_get_explicit_branch_override "$_sub_dir" "$_scope"; then
+            _override_branch=$REPLY
+            _override_remote=$(_update_core_get_default_remote "$_sub_dir" 2>/dev/null) || _override_remote=origin
+        fi
+
+        local _current_branch
+        _current_branch=$(git -C "$_sub_dir" symbolic-ref --short HEAD 2>/dev/null)
+
+        if [[ -n "$_override_branch" && "$_current_branch" != "$_override_branch" ]]; then
+            verbose "component pull: submodule: switching to ${_override_branch} and ff to ${_override_remote}/${_override_branch}"
+            local _stashed_sw=0
+            _update_core_maybe_stash "$_sub_dir" "submodule component" || return 1
+            _stashed_sw=$REPLY
+
+            _update_core_ensure_on_branch "$_sub_dir" "$_override_remote" "$_override_branch" "submodule component" || {
+                (( _stashed_sw )) && _update_core_pop_stash "$_sub_dir" "submodule component"
+                return 1
+            }
+
+            if ! git -C "$_sub_dir" merge --quiet --ff-only "${_override_remote}/${_override_branch}" 2>/dev/null; then
+                (( _stashed_sw )) && _update_core_pop_stash "$_sub_dir" "submodule component"
+                warn "component pull: submodule: ff to ${_override_remote}/${_override_branch} failed — local commits ahead?"
+                return 1
+            fi
+
+            (( _stashed_sw )) && _update_core_pop_stash "$_sub_dir" "submodule component"
+            _update_core_register_expected_dirt "$_parent" "$_rel"
+            REPLY=pull
+            return 0
+        fi
+
+        # Same-branch path (no override OR already on override): existing
+        # `submodule update --remote` flow.
 
         # Determine current submodule HEAD and remote tip for divergence check.
         local _current_sha_p2 _remote_sha_p2
@@ -1179,6 +1378,13 @@ _update_core_component_pull_subtree() {
         REPLY=ff
         return 0
     fi
+
+    # No branch-alignment check here: subtree's $_branch is the *remote*
+    # branch on the subtree's own remote (e.g. `dotfiler main`). The
+    # parent repo's current branch is independent — the user may legit
+    # be on any branch of the dotfiles repo while pulling the subtree's
+    # main. There is no "current branch should equal expected branch"
+    # invariant to enforce at this layer.
 
     if (( ${_dry_run:-0} )); then
         verbose "component pull: [dry-run] would: subtree: git subtree pull --prefix=${_rel} ${_remote} ${_branch} --squash"
@@ -1553,7 +1759,7 @@ _update_core_is_available() {
     local _remote _branch _remote_url
 
     _remote=$(_update_core_get_default_remote "$_repo_dir")
-    _branch=$(_update_core_get_default_branch "$_repo_dir" "$_remote")
+    _branch=$(_update_core_get_default_branch "$_repo_dir" "$_remote" "$_scope")
 
     if [[ -n "$_remote_url_override" ]]; then
         _remote_url=$_remote_url_override
@@ -1669,13 +1875,23 @@ _update_core_get_update_frequency() {
     REPLY=$_freq
 }
 
-# _update_core_resolve_subtree_spec <repo_dir> <subtree_spec> [<remote_url>]
-# <subtree_spec> is "<remote_name> [branch]".
+# _update_core_resolve_subtree_spec <repo_dir> <subtree_spec> [<remote_url>] [<scope>]
+# <subtree_spec> is "<remote_name>" or "<remote_name> <branch>" — the
+# branch part is optional. When omitted, the branch is resolved through
+# the unified chain (zstyle "${scope}" branch / .gitmodules /
+# origin/HEAD / git remote show / main+master fallback). This lets
+#
+#   zstyle ':dotfiler:update' subtree-remote 'dotfiler'
+#   zstyle ':dotfiler:update' branch dev
+#
+# express the same intent as `subtree-remote 'dotfiler dev'` while sharing
+# the branch knob with non-subtree topologies.
+#
 # If <remote_url> is supplied and the remote is not yet registered in the repo,
 # the remote is added automatically (bootstrapping a fresh clone).
 # Sets reply=( remote branch remote_url ) and returns 0, or returns 1 on error.
 _update_core_resolve_subtree_spec() {
-    local _dir=$1 _spec=$2 _url_hint=${3:-}
+    local _dir=$1 _spec=$2 _url_hint=${3:-} _scope=${4:-}
     local _remote _branch _remote_url
     _remote="${_spec%% *}"
     _branch="${_spec#* }"
@@ -1689,7 +1905,7 @@ _update_core_resolve_subtree_spec() {
     fi
     [[ -z "$_remote_url" ]] && return 1
     [[ -z "$_branch" ]] && \
-        _branch=$(_update_core_get_default_branch "$_dir" "$_remote")
+        _branch=$(_update_core_get_default_branch "$_dir" "$_remote" "$_scope")
     reply=( "$_remote" "$_branch" "$_remote_url" )
     return 0
 }
@@ -1712,7 +1928,7 @@ _update_core_resolve_subtree_spec() {
 # available to bootstrap the marker.
 _update_core_is_available_subtree() {
     local _subtree_dir=$1 _subtree_spec=$2 _url_hint=${3:-} _scope=${4:-}
-    _update_core_resolve_subtree_spec "$_subtree_dir" "$_subtree_spec" "$_url_hint" || return 1
+    _update_core_resolve_subtree_spec "$_subtree_dir" "$_subtree_spec" "$_url_hint" "$_scope" || return 1
     local _remote="$reply[1]" _branch="$reply[2]" _remote_url="$reply[3]"
     local _local_head _remote_head
 
@@ -2369,6 +2585,9 @@ _update_core_cleanup() {
         _update_core_current_epoch \
         _update_core_get_default_remote \
         _update_core_get_default_branch \
+        _update_core_get_branch_from_gitmodules \
+        _update_core_get_explicit_branch_override \
+        _update_core_ensure_on_branch \
         _update_core_get_release_channel \
         _update_core_semver_tag_p \
         _update_core_resolve_latest_semver_tag_sha \

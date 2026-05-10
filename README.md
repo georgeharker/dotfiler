@@ -171,6 +171,12 @@ to your `.zshrc` **before** sourcing `check_update.zsh`:
 zstyle ':dotfiler:update' subtree-remote 'dotfiler main'
 ```
 
+The value can be `'<remote>'` or `'<remote> <branch>'`. With just the
+remote name, the branch is resolved through the chain in
+[Branch overrides and switching](#branch-overrides-and-switching) — useful
+when paired with `zstyle ':dotfiler:update' branch <name>` to keep the
+branch knob unified across topologies.
+
 Without this, dotfiler cannot detect that it is installed as a subtree and
 will silently skip self-update checks.
 
@@ -520,11 +526,58 @@ zstyle ':dotfiler:update' mode 'prompt'   # auto | prompt | background | reminde
 zstyle ':dotfiler:update' frequency 86400 # check interval in seconds
 
 # Subtree remote (required when dotfiler is embedded as a git subtree)
+# Either '<remote>' (branch resolved via chain below) or '<remote> <branch>'
 zstyle ':dotfiler:update' subtree-remote 'dotfiler main'
+
+# Explicit upstream branch override for Round 2 (the self-directed pull
+# from dotfiler's own upstream). See "Branch overrides and switching" below.
+# zstyle ':dotfiler:update' branch dev
 
 # Hooks directory (optional — for component check-update / update hooks)
 zstyle ':dotfiler:hooks' dir "$HOME/.config/dotfiler/hooks"
 ```
+
+### Branch overrides and switching
+
+Updates run in **two rounds**: Round 1 (dotfiles-driven, applies whatever
+SHA the upstream dotfiles repo records) and Round 2 (self-directed,
+each component pulls from its own upstream). See [How Updates Work](docs/how-updates-work.md)
+for the full lifecycle.
+
+Round 2 resolves the upstream branch via this chain (highest-priority first):
+
+1. `zstyle ':<scope>:update' branch <name>` — `:dotfiler:update` for dotfiler-self, `:zdot:update` for zdot
+2. `.gitmodules` `submodule.<rel>.branch` *(submodule topology only)*
+3. `refs/remotes/<remote>/HEAD`
+4. `git remote show <remote>` HEAD branch
+5. `main` / `master` fallback
+
+**Switch behaviour.** When tier 1 or 2 produces a value (= the user
+**explicitly** picked a branch) and the worktree's current branch isn't
+that, Round 2 actively `git checkout`s the configured branch — creating a
+local tracking branch from `<remote>/<branch>` if missing — then
+fast-forwards. No rebase fallback.
+
+If only tiers 3–5 fire (no explicit override; default inferred from git
+config), the existing flow runs on whatever branch is currently checked
+out: `git pull --ff-only --autostash` for standalone, `git submodule
+update --remote` for submodule. This avoids surprising users who have
+manually checked out a feature branch — origin/HEAD isn't imposed on
+them just because they didn't configure an override.
+
+**Use case: testing dotfiler's `dev` branch in a normal main-tracking
+dotfiles repo.** Set `zstyle ':dotfiler:update' branch dev` in your
+`.zshrc`. Round 1 still follows the dotfiles-recorded SHA (Round 1 owns
+the pointer trajectory; whatever branch the upstream maintainer recorded
+is followed faithfully). Round 2 then actively switches to `dev` and
+fast-forwards there. The dotfiles parent's gitlink will show the
+submodule as differing from worktree — that's expected when you're
+intentionally on a different branch from the recorded pointer.
+
+**Subtree:** `subtree-remote 'dotfiler dev'` (two-word, explicit branch)
+remains valid. `subtree-remote 'dotfiler'` (single-word) plus
+`zstyle ':dotfiler:update' branch dev` is equivalent — when the
+subtree-remote spec omits the branch, the resolution chain fills it in.
 
 ---
 

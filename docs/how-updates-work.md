@@ -63,6 +63,45 @@ new `v<N>.<N>.<N>` tag. Commits pushed to `main` between releases are invisible
 to users with the default channel — only you (with `release-channel any`) and
 automated CI will pick them up immediately.
 
+### Branch Overrides (Round 2 only)
+
+Round 2 (the self-directed pull from a component's own upstream) resolves
+the upstream branch via a chain. The two highest-priority tiers are
+**explicit overrides** — when either is set, Round 2 actively `git
+checkout`s the configured branch (creating local tracking from
+`<remote>/<branch>` if missing) and fast-forwards.
+
+Resolution chain (highest-priority first):
+
+1. `zstyle ':<scope>:update' branch <name>` — `:dotfiler:update` for dotfiler self-update, `:zdot:update` for zdot's self-directed component update.
+2. `.gitmodules` `submodule.<rel>.branch` *(submodule topology only)*.
+3. `refs/remotes/<remote>/HEAD`.
+4. `git remote show <remote>` HEAD branch.
+5. `main` / `master` fallback.
+
+When tiers 3–5 produce the answer (no explicit override), Round 2 runs the
+existing flow on whatever branch is currently checked out
+(`git pull --ff-only --autostash` standalone; `git submodule update --remote`
+submodule). This avoids surprising users who manually checked out a feature
+branch for ad-hoc testing — origin/HEAD isn't imposed on them.
+
+```zsh
+# Test dotfiler's dev branch in your normal main-tracking dotfiles repo
+zstyle ':dotfiler:update' branch dev
+
+# Or for zdot
+zstyle ':zdot:update' branch dev
+```
+
+Round 1 (dotfiles-driven) is unaffected by branch overrides — Round 1
+follows whatever pointer the upstream dotfiles maintainer recorded,
+faithfully. Branch overrides only change Round 2's pull target.
+
+`subtree-remote 'dotfiler dev'` continues to work (explicit branch in
+spec). The single-word form `subtree-remote 'dotfiler'` plus
+`branch dev` is equivalent — when the subtree spec omits the branch, the
+resolution chain fills it in.
+
 ---
 
 ## Two Rounds of Four Phases

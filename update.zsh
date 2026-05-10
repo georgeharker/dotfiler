@@ -28,6 +28,14 @@
 # own ranges from the dotfiles history via marker files (see _update_phase_plan).
 # Future work: --component=<name> to target a single hook with an explicit range.
 #
+# Code-side terminology note: this file (and update_core.zsh) refer to
+# update phases as "Phase 1 / Phase 2" matching the _phase variable.
+# User-facing docs (README, docs/how-updates-work.md) use "Round 1 /
+# Round 2" — same concept, different scope: a "round" is the full
+# init/plan/pull/post lifecycle, run twice (once dotfiles-directed,
+# once self-directed). The variable name is `_phase` because the code
+# only branches on dotfiles-vs-components within each round.
+#
 # Release-channel zstyle:
 #   zstyle ':dotfiler:update' release-channel  release   # release (default) | any
 #
@@ -36,6 +44,21 @@
 #                    scripts repo and to zdot (via ':zdot:update' release-channel).
 #                    Phase 1 (dotfiles-directed) is unaffected.
 #   any            — advance to the branch tip (previous behaviour).
+#
+# Branch override zstyle (Phase 2 only):
+#   zstyle ':dotfiler:update' branch <name>   # explicit upstream branch
+#   zstyle ':zdot:update'     branch <name>
+#
+#   Tier 1 of the resolution chain in _update_core_get_default_branch.
+#   When set (or .gitmodules submodule.<rel>.branch is set, tier 2),
+#   Phase 2 actively `git checkout`s the configured branch and ff-merges
+#   to <remote>/<branch>. Without an explicit override, Phase 2 falls
+#   through to origin/HEAD and runs the existing flow on whatever branch
+#   the worktree is currently on. Phase 1 is unaffected — it always
+#   follows the dotfiles-recorded SHA.
+#
+#   subtree-remote can now be either '<remote>' (branch resolved via the
+#   chain above) or '<remote> <branch>' (explicit branch in the spec).
 
 emulate -L zsh
 # PIPE_FAIL and NO_UNSET are useful hardening; ERR_EXIT is intentionally
@@ -260,7 +283,7 @@ function _update_dotfiler_plan() {
         case $_dotfiler_topology in
             subtree)
                 _update_core_resolve_subtree_spec "$script_dir" \
-                    "$_dotfiler_subtree_spec" "$_dotfiler_subtree_url" || {
+                    "$_dotfiler_subtree_spec" "$_dotfiler_subtree_url" ':dotfiler:update' || {
                     error "update_self: plan: could not resolve subtree spec"; return 1
                 }
                 _remote="$reply[1]" _branch="$reply[2]"
@@ -269,7 +292,7 @@ function _update_dotfiler_plan() {
                 ;;
             *)
                 _remote=$(_update_core_get_default_remote "$script_dir")
-                _branch=$(_update_core_get_default_branch "$script_dir" "$_remote")
+                _branch=$(_update_core_get_default_branch "$script_dir" "$_remote" ':dotfiler:update')
                 _update_core_component_tip_range "$script_dir" "$_dotfiler_topology" \
                     "" "" --scope ':dotfiler:update'
                 ;;
@@ -402,7 +425,7 @@ function _update_dotfiler_pull() {
         standalone)
         # -------------------------------------------------------------------
             _update_core_component_pull_standalone \
-                "$script_dir" "$_target_ref" "$_remote" "$_branch" "$_phase" || {
+                "$script_dir" "$_target_ref" "$_remote" "$_branch" "$_phase" ':dotfiler:update' || {
                 error "update_self: standalone pull failed."
                 _update_core_write_timestamp "$_dotfiler_self_stamp" 1 "standalone pull failed"
                 return 1
@@ -424,7 +447,7 @@ function _update_dotfiler_pull() {
             local _rel=${_submod_root#${_parent}/}
             log_debug "update_self: submodule parent=${_parent} rel=${_rel}"
             _update_core_component_pull_submodule \
-                "$_parent" "$_rel" "$_target_ref" "$_phase" || {
+                "$_parent" "$_rel" "$_target_ref" "$_phase" ':dotfiler:update' || {
                 error "update_self: submodule pull failed."
                 _update_core_write_timestamp "$_dotfiler_self_stamp" 1 "submodule pull failed"
                 return 1
