@@ -1142,7 +1142,8 @@ _update_core_component_pull_standalone() {
 
         if [[ -n "$_override_branch" && "$_current" != "$_override_branch" ]]; then
             # Explicit override and we're not on it — actively switch.
-            verbose "component pull: standalone: switching to ${_override_branch} and ff to ${_remote}/${_override_branch}"
+            local _from_label="${_current:-detached HEAD}"
+            warn "standalone component: switching from ${_from_label} to ${_override_branch} (explicit branch override)"
             local _stashed=0
             _update_core_maybe_stash "$_repo_dir" "standalone component" || return 1
             _stashed=$REPLY
@@ -1272,7 +1273,8 @@ _update_core_component_pull_submodule() {
         _current_branch=$(git -C "$_sub_dir" symbolic-ref --short HEAD 2>/dev/null)
 
         if [[ -n "$_override_branch" && "$_current_branch" != "$_override_branch" ]]; then
-            verbose "component pull: submodule: switching to ${_override_branch} and ff to ${_override_remote}/${_override_branch}"
+            local _from_label="${_current_branch:-detached HEAD}"
+            warn "submodule component: switching from ${_from_label} to ${_override_branch} (explicit branch override)"
             local _stashed_sw=0
             _update_core_maybe_stash "$_sub_dir" "submodule component" || return 1
             _stashed_sw=$REPLY
