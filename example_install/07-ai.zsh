@@ -76,6 +76,9 @@ install_llama() {
     fi
 
     action "Building llama.cpp..."
+    pushd "${llama_dir}"
+    rm -rf build
+    popd
     cmake -B "${llama_dir}/build" "${llama_dir}"
     cmake --build "${llama_dir}/build" --config Release
 
