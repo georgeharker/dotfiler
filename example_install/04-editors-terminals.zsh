@@ -29,7 +29,7 @@ install_custom_tmux() {
     if ! install_deb_package tmux; then
         action "Building custom tmux..."
         local dev_dir
-        dev_dir="$(get_dev_dir)"
+        dev_dir="$(get_ext_dev_dir)"
         local tmux_deb_dir="${dev_dir}/tmux-deb"
         local tmux_src_dir="${tmux_deb_dir}/tmux-3.5"
         local debian_dir="${tmux_src_dir}/debian"
@@ -61,7 +61,7 @@ install_custom_neovim() {
     if ! install_deb_package neovim; then
         action "Building custom neovim..."
         local dev_dir
-        dev_dir="$(get_dev_dir)"
+        dev_dir="$(get_ext_dev_dir)"
         local nvim_deb_dir="${dev_dir}/neovim-deb"
         local nvim_src_dir="${nvim_deb_dir}/neovim-0.12"
         mkdir -p "${nvim_deb_dir}"

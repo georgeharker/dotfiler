@@ -30,7 +30,7 @@ configure_system() {
     if [[ "$DOTFILES_OS" != "Darwin" ]]; then
         add_final_instruction "Note: Enable X11Forwarding in /etc/ssh/sshd_config"
         action "Note: Create dev directory for extensions"
-        mkdir -p "$(get_dev_dir)"
+        mkdir -p "$(get_ext_dev_dir)"
     fi
 
     rehash

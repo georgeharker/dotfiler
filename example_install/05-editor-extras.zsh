@@ -34,11 +34,15 @@ install_quarto() {
     else
         if ! check_command quarto; then
             action "Installing Quarto..."
-            local dev_dir
-            dev_dir="$(get_dev_dir)"
-            mkdir -p "${dev_dir}"
-            curl -L https://github.com/quarto-dev/quarto-cli/releases/download/v1.9.36/quarto-1.9.36-linux-arm64.pkg -o "${dev_dir}/quarto.deb"
-            sudo dpkg -i "${dev_dir}/quarto.deb"
+            local version
+            version="$(github_latest_version quarto-dev/quarto-cli)"
+            if [[ -z "${version}" ]]; then
+                error "Failed to determine latest Quarto version"
+                return 1
+            fi
+            local deb_arch
+            deb_arch="$(dpkg --print-architecture)"
+            install_deb_from_url "https://github.com/quarto-dev/quarto-cli/releases/download/v${version}/quarto-${version}-linux-${deb_arch}.deb"
         fi
     fi
 }

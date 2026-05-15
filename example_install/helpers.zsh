@@ -155,12 +155,24 @@ check_command() {
 
 # Returns the base directory for external/source checkouts
 # macOS: ~/Development/ext, Linux: ~/ext
-get_dev_dir() {
+get_ext_dev_dir() {
     if [[ "$DOTFILES_OS" == "Darwin" ]]; then
-        echo "${HOME}/Development/ext"
+        REPLY="${HOME}/Development/"
     else
-        echo "${HOME}/ext"
+        REPLY="${HOME}"
     fi
+    mkdir -p "$REPLY"
+    echo "$REPLY"
+}
+
+get_ext_dev_dir() {
+    if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+        REPLY="${HOME}/Development/ext"
+    else
+        REPLY="${HOME}/ext"
+    fi
+    mkdir -p "$REPLY"
+    echo "$REPLY"
 }
 
 ## git based installs
@@ -402,7 +414,7 @@ ensure_rust() {
 ensure_deb_packages() {
     ensure_git
     local dev_dir
-    dev_dir="$(get_dev_dir)"
+    dev_dir="$(get_ext_dev_dir)"
     local deb_pkg_dir="${dev_dir}/debian-packages"
     if [[ ! -d "${deb_pkg_dir}" ]]; then
         if [[ "$DOTFILES_OS" == "Darwin" ]]; then
@@ -423,7 +435,7 @@ install_deb_package() {
         ensure_deb_packages
         local package_name="$1"
         local deb_arch=$(dpkg --print-architecture)
-        local package_path="$(get_dev_dir)/debian-packages/${deb_arch}/${package_name}_${deb_arch}.deb"
+        local package_path="$(get_ext_dev_dir)/debian-packages/${deb_arch}/${package_name}_${deb_arch}.deb"
         if ! check_package "${package_name}"; then
             if [[ -f ${package_path} ]]; then
                 action "Installing deb package: ${package_name}"

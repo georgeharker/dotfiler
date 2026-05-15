@@ -57,9 +57,11 @@ install_llama() {
         install_package llama-cpp 2>/dev/null || true
     fi
 
+    install_package libomp
+
     # Build from source as fallback / to get latest binaries
     local dev_dir
-    dev_dir="$(get_dev_dir)"
+    dev_dir="$(get_ext_dev_dir)"
     local llama_dir="${dev_dir}/llama.cpp"
 
     ensure_git
