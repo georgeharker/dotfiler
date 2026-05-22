@@ -253,12 +253,17 @@ function _update_dotfiler_plan() {
         _old="${_hint%%..*}"
         _new="${_hint##*..}"
         # Fetch to materialise the component SHAs locally before diffing.
+        # Scope ':dotfiler:update' so the branch override (zstyle scope or
+        # .gitmodules) is honored — otherwise the fetch falls through to
+        # origin/HEAD and may miss SHAs that only live on the override
+        # branch (e.g. dev-only commits when zstyle picks dev but
+        # origin/HEAD is main).
         if [[ "$_dotfiler_topology" == subtree ]]; then
             _remote="$_dotfiler_subtree_url"
             _branch="${_dotfiler_subtree_spec#* }"
         else
             _remote=$(_update_core_get_default_remote "$script_dir")
-            _branch=$(_update_core_get_default_branch "$script_dir" "$_remote")
+            _branch=$(_update_core_get_default_branch "$script_dir" "$_remote" ':dotfiler:update')
         fi
         log_debug "update_self: plan: phase=dotfiles fetching ${_remote}/${_branch} to materialise ${_new}"
         local _fetch_err
@@ -731,11 +736,17 @@ function _update_phase_plan(){
             local _topology="${_dotfiler_hook_topology[$_name]:-}"
             [[ -n "$_comp_dir" ]] || continue
             [[ "$_topology" == submodule || "$_topology" == standalone ]] || continue
-            local _remote _branch
+            # Pass the conventional zstyle scope ':${name}:update' so the
+            # branch override (zstyle scope or .gitmodules) is honored. Without
+            # this the fetch falls through to origin/HEAD and may miss SHAs
+            # that only live on the override branch — causing the subsequent
+            # _update_core_build_file_lists in plan_fn to produce an empty /
+            # broken file list.
+            local _remote _branch _scope=":${_name}:update"
             _remote=$(_update_core_get_default_remote "$_comp_dir")
-            _branch=$(_update_core_get_default_branch "$_comp_dir" "$_remote")
+            _branch=$(_update_core_get_default_branch "$_comp_dir" "$_remote" "$_scope")
             [[ -n "$_remote" && -n "$_branch" ]] || continue
-            verbose "update: phase 1 plan: pre-fetching ${_name} remote ${_remote}/${_branch}"
+            verbose "update: phase 1 plan: pre-fetching ${_name} remote ${_remote}/${_branch} (scope=${_scope})"
             local _fetch_err
             _fetch_err=$(git -C "$_comp_dir" fetch -q "$_remote" "$_branch" 2>&1 >/dev/null) || {
                 error "update: phase 1 plan: pre-fetch for ${_name} failed — cannot proceed"

@@ -1251,7 +1251,7 @@ _update_core_component_pull_submodule() {
         fi
     else
         if (( ${_dry_run:-0} )); then
-            verbose "component pull: [dry-run] would: submodule: git submodule update --remote -- ${_rel}"
+            verbose "component pull: [dry-run] would: submodule: ff ${_rel} to resolved <remote>/<branch> tip"
             REPLY=pull
             return 0
         fi
@@ -1311,10 +1311,11 @@ _update_core_component_pull_submodule() {
         }
 
         if git -C "$_sub_dir" merge-base --is-ancestor "$_current_sha_p2" "$_remote_sha_p2" 2>/dev/null; then
-            verbose "component pull: submodule: git submodule update --remote -- ${_rel} (ff to ${_remote_sha_p2[1,12]})"
-            # Stash dirty state inside the submodule first (local edits to component
-            # files would block submodule update --remote), then stash any pre-existing
-            # real dirty state in the parent (e.g. unrelated staged changes).
+            verbose "component pull: submodule: ff ${_rel} to ${_remote_sha_p2[1,12]} (resolved from ${_target_ref})"
+            # Stash dirty state inside the submodule (local edits would block the
+            # ff-merge), then stash any pre-existing real dirty state in the
+            # parent (e.g. unrelated staged changes the post-marker would
+            # otherwise try to commit alongside the gitlink).
             local _stashed_sub=0 _stashed_parent=0
             _update_core_maybe_stash "$_sub_dir" "submodule component" || return 1
             _stashed_sub=$REPLY
@@ -1323,10 +1324,18 @@ _update_core_component_pull_submodule() {
                 return 1
             }
             _stashed_parent=$REPLY
-            git -C "$_parent" submodule update --remote -- "$_rel" || {
+            # Do NOT use `git submodule update --remote` — that command
+            # re-resolves the target branch via .gitmodules / origin/HEAD
+            # inside git, ignoring the scope-resolved _remote_sha_p2 (which
+            # derives from zstyle ${_scope} branch via the caller). When
+            # zstyle says one branch and .gitmodules has no `branch =` entry,
+            # `submodule update --remote` would silently advance the worktree
+            # to origin/HEAD's branch (typically main). Use an explicit
+            # ff-merge of the already-resolved tip SHA instead.
+            git -C "$_sub_dir" merge --quiet --ff-only "$_remote_sha_p2" 2>/dev/null || {
                 (( _stashed_parent )) && _update_core_pop_stash "$_parent" "dotfiles repo (submodule)"
                 (( _stashed_sub )) && _update_core_pop_stash "$_sub_dir" "submodule component"
-                warn "component pull: submodule update --remote failed."
+                warn "component pull: submodule: ff to ${_remote_sha_p2[1,12]} failed."
                 return 1
             }
             (( _stashed_parent )) && _update_core_pop_stash "$_parent" "dotfiles repo (submodule)"
