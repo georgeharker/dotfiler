@@ -16,7 +16,6 @@ run_ai_module() {
     install_jupyter
     install_opsdk
     install_basic_memory
-    install_llama
 }
 
 install_claude() {
@@ -37,7 +36,7 @@ install_opencode() {
     install_npm_package opencode-ai
     install_npm_package @tarquinen/opencode-dcp@latest
     install_npm_package @ai-sdk/openai-compatible
-    if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+    if os_is_osx; then
         brew install --cask opencode-desktop
     fi
 }
@@ -48,16 +47,42 @@ install_gemini() {
 }
 
 install_llama() {
-    action "Installing llama.cpp..."
-    if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+    action "Installing llama-swap..."
+    if os_is_osx; then
         # Try brew first (llama-swap pulls in llama.cpp)
         brew tap mostlygeek/llama-swap 2>/dev/null || true
         install_package llama-swap
+    install_package libomp
+    elif ! check_command llama-swap; then
+        local repo="mostlygeek/llama-swap"
+        local version
+        version=$(github_latest_version "${repo}")
+        if [[ -n "${version}" ]]; then
+            # llama-swap uses goreleaser-style asset names:
+            #   llama-swap_<version>_<os>_<arch>.tar.gz
+            local asset="llama-swap_${version}_$(goreleaser_os)_$(goreleaser_arch).tar.gz"
+            local url="https://github.com/${repo}/releases/download/v${version}/${asset}"
+            local tmp_dir
+            tmp_dir=$(mktemp -d /tmp/llama-swap-XXXXXX)
+            action "Downloading ${asset}..."
+            if curl -sfL "${url}" -o "${tmp_dir}/${asset}"; then
+                tar -xzf "${tmp_dir}/${asset}" -C "${tmp_dir}"
+                mkdir -p "${HOME}/bin"
+                cp "${tmp_dir}/llama-swap" "${HOME}/bin/"
+                chmod +x "${HOME}/bin/llama-swap"
+                info "llama-swap ${version} installed to ${HOME}/bin/"
+            else
+                error "Failed to download ${url}"
+            fi
+            rm -rf "${tmp_dir}"
+        else
+            error "Failed to look up latest llama-swap version"
+        fi
+        install_package libomp-dev
     else
-        install_package llama-cpp 2>/dev/null || true
+        verbose "llama-swap already installed"
     fi
 
-    install_package libomp
 
     # Build from source as fallback / to get latest binaries
     local dev_dir
@@ -75,11 +100,19 @@ install_llama() {
         git -C "${llama_dir}" pull
     fi
 
+    LLAMA_FLAGS=
+    if os_is_osx; then
+        export CPATH="$(brew --prefix)/include:$(brew --prefix)/opt/libomp/include:$CPATH"
+        export LIBRARY_PATH="$(brew --prefix)/lib:$(brew --prefix)/opt/libomp/lib:$LIBRARY_PATH"
+    elif [[ -x /usr/local/cuda/bin/nvcc ]]; then
+        export CUDACXX=/usr/local/cuda/bin/nvcc
+        LLAMA_FLAGS="-DGGML_CUDA=ON"
+    fi
     action "Building llama.cpp..."
     pushd "${llama_dir}"
     rm -rf build
     popd
-    cmake -B "${llama_dir}/build" "${llama_dir}"
+    cmake -B "${llama_dir}/build" "$LLAMA_FLAGS" "${llama_dir}"
     cmake --build "${llama_dir}/build" --config Release
 
     mkdir -p "${HOME}/bin"

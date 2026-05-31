@@ -20,7 +20,7 @@ run_shell_utils_module() {
 install_eza() {
     action "Installing eza..."
     if ! check_command eza; then
-        if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+        if os_is_osx; then
             install_package eza 
         else
             install_cargo_package eza
@@ -32,7 +32,7 @@ install_eza() {
 
 install_onepassword() {
     action "Installing onepassword..."
-    if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+    if os_is_osx; then
         install_package 1password-cli
     else
         if ! check_command op; then
@@ -56,7 +56,7 @@ install_onepassword() {
 
 install_fzf() {
     action "Installing fzf..."
-    if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+    if os_is_osx; then
         install_package fzf
     else
         # Install fzf from git on Linux (system packages are often too old)
@@ -78,7 +78,7 @@ install_antidote() {
 install_zoxide() {
     action "Installing zoxide..."
     if ! check_command zoxide; then
-        if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+        if os_is_osx; then
             install_package zoxide
         else
             curl -sSfL https://raw.githubusercontent.com/ajeetdsouza/zoxide/main/install.sh | sh
@@ -90,7 +90,7 @@ install_zoxide() {
 
 install_shell_tools() {
     action "Installing shell tools..."
-    if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+    if os_is_osx; then
         install_package ripgrep bat fd broot dust bottom procs dua-cli
     else
         install_cargo_package ripgrep
@@ -112,7 +112,7 @@ install_patina() {
         return 0
     fi
 
-    if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+    if os_is_osx; then
         brew tap michel-kraemer/zsh-patina
         install_package zsh-patina
     else

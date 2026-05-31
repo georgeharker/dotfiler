@@ -16,7 +16,7 @@ run_post_install_module() {
     add_final_instruction "Restart your shell or run 'source ~/.zshrc'"
     add_final_instruction "Configure your terminal to use the installed Nerd Font"
 
-    if [[ "$DOTFILES_OS" != "Darwin" ]]; then
+    if os_is_debian; then
         add_final_instruction "Enable X11Forwarding in /etc/ssh/sshd_config if needed"
     fi
 }
@@ -27,7 +27,7 @@ configure_neovim() {
 }
 
 configure_system() {
-    if [[ "$DOTFILES_OS" != "Darwin" ]]; then
+    if os_is_debian; then
         add_final_instruction "Note: Enable X11Forwarding in /etc/ssh/sshd_config"
         action "Note: Create dev directory for extensions"
         mkdir -p "$(get_ext_dev_dir)"

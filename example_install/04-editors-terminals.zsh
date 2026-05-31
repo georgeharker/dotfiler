@@ -14,7 +14,7 @@ run_editors_terminals_module() {
 
 install_terminal_apps() {
     action "Install terminal apps..."
-    if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+    if os_is_osx; then
         install_package tmux neovim
         install_package --cask ghostty
         install_package viu
@@ -90,7 +90,7 @@ install_custom_neovim() {
 install_ohmyposh() {
     action "Install ohmyposh..."
     # Oh-my-posh
-    if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+    if os_is_osx; then
         install_package jandedobbeleer/oh-my-posh/oh-my-posh
     else
         mkdir -p ~/bin

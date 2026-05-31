@@ -28,7 +28,7 @@ install_prettier() {
 }
 
 install_quarto() {
-    if os_is_mac; then
+    if os_is_osx; then
         action "Installing Quarto..."
         install_package quarto
     else

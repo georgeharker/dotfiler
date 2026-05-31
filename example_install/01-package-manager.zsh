@@ -12,7 +12,7 @@ run_package_manager_module() {
 }
 
 install_package_manager() {
-    if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+    if os_is_osx; then
         action "Installing Homebrew..."
         ensure_homebrew
     else
@@ -23,7 +23,7 @@ install_package_manager() {
 }
 
 setup_fonts() {
-    if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+    if os_is_osx; then
         install_package font-meslo-lg font-meslo-lg-dz font-meslo-lg-nerd-font
     else
         if [[ ! -n $(fc-list | grep 'Meslo.*NerdFont') ]] || force_install; then

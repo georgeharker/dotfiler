@@ -16,6 +16,23 @@ force_install() {
     return 1
 }
 
+## OS checks
+
+# Check if running on macOS
+os_is_osx() {
+    [[ "$DOTFILES_OS" == "Darwin" ]]
+}
+
+# Check if running on any Linux (e.g. "Linux", "Linux-Debian")
+os_is_linux() {
+    [[ "$DOTFILES_OS" == Linux* ]]
+}
+
+# Check if running on Debian-based Linux
+os_is_debian() {
+    [[ "$DOTFILES_OS" == "Linux-Debian" ]]
+}
+
 # Print section header
 print_section() {
     echo ""
@@ -63,14 +80,14 @@ show_profile() {
 ## package based installs
 
 ensure_homebrew() {
-    if [[ "$DOTFILES_OS" == "Darwin" ]] && ! check_command brew; then
+    if os_is_osx && ! check_command brew; then
         action "Installing Homebrew dependency..."
         /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
     fi
 }
 
 package_installed() {
-    if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+    if os_is_osx; then
         brew list "$1" >& /dev/null && return 0
     else
         dpkg -s "$1" &> /dev/null && return 0
@@ -97,7 +114,7 @@ install_package() {
         shift
     fi
 
-    if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+    if os_is_osx; then
         if $cask_mode; then
             for package in "$@"; do
                 action "Installing cask: $package"
@@ -156,7 +173,7 @@ check_command() {
 # Returns the base directory for external/source checkouts
 # macOS: ~/Development/ext, Linux: ~/ext
 get_ext_dev_dir() {
-    if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+    if os_is_osx; then
         REPLY="${HOME}/Development/"
     else
         REPLY="${HOME}"
@@ -166,7 +183,7 @@ get_ext_dev_dir() {
 }
 
 get_ext_dev_dir() {
-    if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+    if os_is_osx; then
         REPLY="${HOME}/Development/ext"
     else
         REPLY="${HOME}/ext"
@@ -244,7 +261,7 @@ activate_nvm() {
 }
 
 uninstall_nodesource_js() {
-    if [[ -f /etc/apt/sources.list.d/nodesource.list ]] || check_package nodejs; then
+    if [[ -f /etc/apt/sources.list.d/nodesource.list ]] && check_command nvm; then
         activate_nvm
         if check_command nvm; then
             nvm use system &> /dev/null || return 0
@@ -282,7 +299,7 @@ uninstall_brew_nodejs() {
 }
 
 uninstall_system_nodejs() {
-    if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+    if os_is_osx; then
         uninstall_brew_nodejs
     else
         uninstall_nodesource_js
@@ -295,7 +312,7 @@ ensure_nodejs() {
     mkdir -p "${NVM_DIR}"
     if [[ ! -s "${NVM_DIR}/nvm.sh" ]]; then
         action "Installing Node.js dependency..."
-        PROFILE=/dev/null curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+        curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | PROFILE="/dev/null" bash
     fi
     activate_nvm
 }
@@ -330,7 +347,7 @@ install_npm_package() {
 
 brew_python_version="3.14"
 python_version="cpython@3.14.0"
-if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+if os_is_osx; then
     # On OSX prefer homebrew installs to ensure library compatibility
     managed_python="--no-managed-python"
 else
@@ -350,7 +367,7 @@ ensure_python3() {
     ensure_uv
     if ! check_command "python${brew_python_version}"; then
         echo "Installing Python3 dependency..."
-        if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+        if os_is_osx; then
             # On OSX prefer homebrew installs to ensure library compatibility
             install_package "python@${brew_python_version}"
             rehash
@@ -417,7 +434,7 @@ ensure_deb_packages() {
     dev_dir="$(get_ext_dev_dir)"
     local deb_pkg_dir="${dev_dir}/debian-packages"
     if [[ ! -d "${deb_pkg_dir}" ]]; then
-        if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+        if os_is_osx; then
             action "Skipping deb package installation on macOS"
         else
             action "Cloning deb packages..."
@@ -428,7 +445,7 @@ ensure_deb_packages() {
 }
 
 install_deb_package() {
-    if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+    if os_is_osx; then
         action "Skipping deb package installation on macOS"
         return 1
     else
@@ -456,6 +473,27 @@ install_deb_package() {
 github_latest_version() {
     curl -sf "https://api.github.com/repos/$1/releases/latest" \
         | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\{0,1\}\([^"]*\)".*/\1/p'
+}
+
+# Platform name in goreleaser convention (darwin, linux) — what most Go
+# projects use in release asset filenames. Other projects may use "macos",
+# "osx", or capitalized "Linux"; check the asset names before reusing.
+goreleaser_os() {
+    case "$DOTFILES_OS" in
+        Darwin) echo "darwin" ;;
+        Linux) echo "linux" ;;
+        *) echo "${DOTFILES_OS:l}" ;;
+    esac
+}
+
+# CPU arch in goreleaser convention (amd64, arm64). For uname-style
+# ("x86_64", "aarch64") used by many non-Go projects, call `uname -m` directly.
+goreleaser_arch() {
+    case "$(uname -m)" in
+        x86_64|amd64) echo "amd64" ;;
+        aarch64|arm64) echo "arm64" ;;
+        *) uname -m ;;
+    esac
 }
 
 # Download a .deb from a URL and install it with dpkg

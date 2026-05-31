@@ -18,7 +18,7 @@ install_git_delta() {
     action "Installing git-delta..."
     ensure_rust
 
-    if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+    if os_is_osx; then
         install_package git-delta
     else
         install_cargo_package git-delta
@@ -33,7 +33,7 @@ install_development_tools() {
     # Language and core tools
     install_package python3 jq
 
-    if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+    if os_is_osx; then
         install_package bash
         install_package ninja
         install_package lua luarocks
@@ -58,7 +58,7 @@ install_development_tools() {
 install_github_cli() {
     action "Installing github cli..."
     if ! check_command gh || force_install; then
-        if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+        if os_is_osx; then
             install_package gh
         else
             (type -p wget >/dev/null || (sudo apt update && sudo apt install wget -y)) \

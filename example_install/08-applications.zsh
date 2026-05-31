@@ -16,7 +16,7 @@ run_applications_module() {
 install_tailscale() {
     action "Installing Tailscale..."
     if ! check_command tailscale; then
-        if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+        if os_is_osx; then
             install_package --cask tailscale-app
         else
             curl -fsSL https://tailscale.com/install.sh | sh
@@ -28,7 +28,7 @@ install_tailscale() {
 
 install_network_utils() {
     action "Installing network utils..."
-    if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+    if os_is_osx; then
         install_package iproute2mac
     else
         verbose "iproute2 already available on Linux systems"
@@ -36,14 +36,14 @@ install_network_utils() {
 }
 
 install_karabiner() {
-    if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+    if os_is_osx; then
         action "Installing Karabiner-Elements..."
         install_package karabiner-elements
     fi
 }
 
 install_terminal_notifier() {
-    if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+    if os_is_osx; then
         action "Installing terminal-notifier..."
         install_package terminal-notifier
     fi
