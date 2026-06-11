@@ -259,8 +259,16 @@ function _update_dotfiler_plan() {
         # branch (e.g. dev-only commits when zstyle picks dev but
         # origin/HEAD is main).
         if [[ "$_dotfiler_topology" == subtree ]]; then
-            _remote="$_dotfiler_subtree_url"
-            _branch="${_dotfiler_subtree_spec#* }"
+            # Resolve via the spec resolver, NOT "${spec#* }": the spec may be
+            # single-word, in which case the branch comes from the resolution
+            # chain — zstyle branch override included.
+            if _update_core_resolve_subtree_spec "$script_dir" \
+                    "$_dotfiler_subtree_spec" "$_dotfiler_subtree_url" ':dotfiler:update'; then
+                _remote="$reply[1]" _branch="$reply[2]"  # shuck: ignore=C006  # reply set by resolve_subtree_spec
+            else
+                _remote="$_dotfiler_subtree_url"
+                _branch=$(_update_core_get_default_branch "$script_dir" "" ':dotfiler:update')
+            fi
         else
             _remote=$(_update_core_get_default_remote "$script_dir")
             _branch=$(_update_core_get_default_branch "$script_dir" "$_remote" ':dotfiler:update')

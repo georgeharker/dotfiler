@@ -1860,8 +1860,13 @@ _update_core_is_available() {
 # Sets reply=( subtree_spec subtree_url ).
 _update_core_get_dotfiler_subtree_config() {
     local _spec _url
+    # Default is the SINGLE-word form: a two-word default ("dotfiler main")
+    # would hard-pin the branch and silently defeat the resolution chain —
+    # `zstyle ':dotfiler:update' branch dev` must be able to redirect the
+    # subtree pull (resolve_subtree_spec only consults the chain when the
+    # spec omits the branch).
     zstyle -s ':dotfiler:update' subtree-remote _spec 2>/dev/null \
-        || _spec="dotfiler main"
+        || _spec="dotfiler"
     zstyle -s ':dotfiler:update' subtree-url _url 2>/dev/null \
         || _url="https://github.com/georgeharker/dotfiler.git"
     reply=( "$_spec" "$_url" )
