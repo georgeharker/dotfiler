@@ -7,13 +7,13 @@ This directory contains the modular installation system for dotfiles. Each scrip
 - `helpers.zsh` - Common helper functions used by all modules
 - `00-dotfiler-install.zsh` - Install dotfiler command to ~/bin
 - `01-package-manager.zsh` - Package manager setup (Homebrew/APT) and fonts
-- `02-shell-utils.zsh` - Shell environment tools (eza, fzf, zoxide, antidote)
+- `02-shell-utils.zsh` - Shell environment tools (eza, fzf, zoxide, antidote, 1Password CLI)
 - `03-development-tools.zsh` - Core development tools (git, delta, cmake)
 - `04-editors-terminals.zsh` - Editors, terminals, and shell enhancements (tmux, neovim)
-- `05-editor-extras.zsh` - Additional editor support quarto etc
+- `05-editor-extras.zsh` - Additional editor support (quarto, prettier, stylua, treesitter)
 - `06-programming-languages.zsh` - Language-specific environments (Python, Rust, Node.js)
-- `07-ai.zsh` - AI Tools (claude code, copilot etc)
-- `08-applications.zsh` - Specific applications (1Password, tailscale)
+- `07-ai.zsh` - AI Tools (claude code, copilot, gemini etc)
+- `08-applications.zsh` - Specific applications (Tailscale, Karabiner, network utils)
 - `09-post-install.zsh` - Post-installation configuration
 
 ## Usage
@@ -93,6 +93,7 @@ The `helpers.zsh` file provides a comprehensive set of functions for building re
 ### Core System Functions
 
 - `detect_os()` - Sets `DOTFILES_OS` environment variable (Darwin/Linux)
+- `os_is_osx()` / `os_is_linux()` / `os_is_debian()` - OS checks; use these instead of testing `DOTFILES_OS` directly
 - `force_install()` - Returns true if `--force` flag was specified
 - `print_section(text)` - Print major section headers
 - `print_subsection(text)` - Print minor section headers
@@ -181,7 +182,7 @@ This ensures:
 install_ripgrep() {
     action "Installing ripgrep..."
     if ! check_command rg; then
-        if [[ "$DOTFILES_OS" == "Darwin" ]]; then
+        if os_is_osx; then
             install_package ripgrep
         else
             install_cargo_package ripgrep

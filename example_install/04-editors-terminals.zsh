@@ -105,7 +105,8 @@ install_ohmyposh() {
 install_tpm() {
     action "Install tpm..."
     # TPM (Tmux Plugin Manager)
-    install_using_git tpm https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
+    mkdir -p ~/.config/tmux/plugins/
+    install_using_git tpm https://github.com/tmux-plugins/tpm ~/.config/tmux/plugins/tpm
 }
 
 install_shell_enhancements() {

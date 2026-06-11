@@ -20,7 +20,7 @@ run_ai_module() {
 
 install_claude() {
     action "Installing claude-code packages..."
-    if !check_command claude; then
+    if ! check_command claude; then
         curl -fsSL https://claude.ai/install.sh | bash
     fi
     install_npm_package @agentclientprotocol/claude-agent-acp
@@ -52,7 +52,7 @@ install_llama() {
         # Try brew first (llama-swap pulls in llama.cpp)
         brew tap mostlygeek/llama-swap 2>/dev/null || true
         install_package llama-swap
-    install_package libomp
+        install_package libomp
     elif ! check_command llama-swap; then
         local repo="mostlygeek/llama-swap"
         local version

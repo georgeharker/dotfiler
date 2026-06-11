@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Shell utilities 
+# Shell utilities
 
 # Module identification
 module_name="shell-utils"
@@ -15,13 +15,15 @@ run_shell_utils_module() {
     install_shell_tools
     install_onepassword
     install_patina
+    install_debian_dns
+    install_macos_rsync
 }
 
 install_eza() {
     action "Installing eza..."
     if ! check_command eza; then
         if os_is_osx; then
-            install_package eza 
+            install_package eza
         else
             install_cargo_package eza
         fi
@@ -37,20 +39,32 @@ install_onepassword() {
     else
         if ! check_command op; then
             action "Installing 1Password CLI..."
-            curl -sS https://downloads.1password.com/linux/keys/1password.asc | \
-            sudo gpg --dearmor --output /usr/share/keyrings/1password-archive-keyring.gpg && \
-            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/$(dpkg --print-architecture) stable main" | \
-            sudo tee /etc/apt/sources.list.d/1password.list && \
-            sudo mkdir -p /etc/debsig/policies/AC2D62742012EA22/ && \
-            curl -sS https://downloads.1password.com/linux/debian/debsig/1password.pol | \
-            sudo tee /etc/debsig/policies/AC2D62742012EA22/1password.pol && \
-            sudo mkdir -p /usr/share/debsig/keyrings/AC2D62742012EA22 && \
-            curl -sS https://downloads.1password.com/linux/keys/1password.asc | \
-            sudo gpg --dearmor --output /usr/share/debsig/keyrings/AC2D62742012EA22/debsig.gpg && \
-            sudo apt update && sudo apt install 1password-cli
+            curl -sS https://downloads.1password.com/linux/keys/1password.asc |
+                sudo gpg --dearmor --output /usr/share/keyrings/1password-archive-keyring.gpg &&
+                echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/$(dpkg --print-architecture) stable main" |
+                sudo tee /etc/apt/sources.list.d/1password.list &&
+                sudo mkdir -p /etc/debsig/policies/AC2D62742012EA22/ &&
+                curl -sS https://downloads.1password.com/linux/debian/debsig/1password.pol |
+                sudo tee /etc/debsig/policies/AC2D62742012EA22/1password.pol &&
+                sudo mkdir -p /usr/share/debsig/keyrings/AC2D62742012EA22 &&
+                curl -sS https://downloads.1password.com/linux/keys/1password.asc |
+                sudo gpg --dearmor --output /usr/share/debsig/keyrings/AC2D62742012EA22/debsig.gpg &&
+                sudo apt update && sudo apt install 1password-cli
         else
             verbose "1Password CLI already installed"
         fi
+    fi
+}
+
+install_onepassword_gui() {
+    if os_is_debian; then
+        curl -S https://downloads.1password.com/linux/tar/stable/aarch64/1password-latest.tar.gz -o ~/ext/1password-latest.tar.gz
+        pushd ~/ext
+        sudo tar -xf ~/ext/1password-latest.tar.gz
+        sudo mkdir -p /opt/1Password && sudo mv 1password-*.arm64/* /opt/1Password
+        sudo rmdir 1password-*.arm64
+        sudo /opt/1Password/after-install.sh
+        popd
     fi
 }
 
@@ -60,20 +74,18 @@ install_fzf() {
         install_package fzf
     else
         # Install fzf from git on Linux (system packages are often too old)
-        function fzf_post_install() { ~/.local/share/fzf/install --no-update-rc --completion --key-bindings }
+        function fzf_post_install() { ~/.local/share/fzf/install --no-update-rc --completion --key-bindings; }
         install_using_git fzf https://github.com/junegunn/fzf.git ~/.local/share/fzf fzf_post_install
         unset -f fzf_post_install
     fi
-    # Install fzf-git from git on Linux 
+    # Install fzf-git from git on Linux
     install_using_git fzf-git https://github.com/junegunn/fzf-git.sh.git ~/.local/share/fzf-git
 }
-
 
 install_antidote() {
     action "Installing antidote..."
     install_using_git antidote https://github.com/mattmc3/antidote.git ${XDG_DATA_HOME:-${HOME}/.local/share}/antidote
 }
-
 
 install_zoxide() {
     action "Installing zoxide..."
@@ -118,7 +130,10 @@ install_patina() {
     else
         local version
         version=$(github_latest_version "michel-kraemer/zsh-patina")
-        [[ -z "$version" ]] && { error "Failed to fetch patina version"; return 1; }
+        [[ -z "$version" ]] && {
+            error "Failed to fetch patina version"
+            return 1
+        }
 
         local deb_arch
         deb_arch=$(dpkg --print-architecture)
@@ -158,3 +173,20 @@ install_zsh_autosuggestions() {
     install_using_git zsh-autosuggestions https://github.com/zsh-users/zsh-autosuggestions ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-autosuggestions
 }
 
+install_debian_dns() {
+    if os_is_debian; then
+        action "Installing dns setup..."
+        install_package dnsutils
+        install_package systemd-resolved
+        sudo systemctl enable --now systemd-resolved
+        sudo ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+    fi
+}
+
+install_macos_rsync() {
+    # OSX rsync doesn't work with rrsync
+    if os_is_osx; then
+        action "Installing rsync..."
+        install_package rsync
+    fi
+}

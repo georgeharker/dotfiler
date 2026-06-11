@@ -11,6 +11,7 @@ run_applications_module() {
     # Tailscale: skip for embedded systems and work environments
     check_profile_not work && install_tailscale
     install_network_utils
+    install_gnome_apps
 }
 
 install_tailscale() {
@@ -41,6 +42,16 @@ install_karabiner() {
         install_package karabiner-elements
     fi
 }
+
+install_gnome_apps() {
+    if os_is_debian; then
+        action "Installing gnome apps..."
+        install_package ptyxis
+        install_package neovim-qt
+        install_package gnome-shell-extension-manager
+    fi
+}
+
 
 install_terminal_notifier() {
     if os_is_osx; then

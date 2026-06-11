@@ -12,8 +12,8 @@ run_editor_extras_module() {
     install_prettier
     install_quarto
     install_harper
-    install_shfmt
     install_shuck
+    install_stylua
 }
 
 install_treesitter() {
@@ -52,13 +52,13 @@ install_harper() {
     install_cargo_package harper-ls
 }
 
-install_shfmt() {
-    action "Installing shfmt..."
-    install_package shfmt
-}
-
 install_shuck() {
     action "Installing shuck..."
     install_cargo_package "shuck-cli"
+}
+
+install_stylua() {
+    action "Installing stylua"
+    install_cargo_package "stylua"
 }
 
