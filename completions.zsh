@@ -102,7 +102,8 @@ _dotfiler_setup_args() {
         '(-s --setup)'{-s,--setup}'[Run complete setup process]' \
         '(-u --unpack)'{-u,--unpack}'[Unpack and link files (respects exclusions)]:file:_files' \
         '(-U --force-unpack)'{-U,--force-unpack}'[Force unpack files (ignore exclusions)]:file:_files' \
-        '(-t --untrack)'{-t,--untrack}'[Remove files from tracking]:file:_files' \
+        '(-t --track)'{-t,--track}'[Track files without creating symlinks]:file:_files' \
+        '(-x --untrack)'{-x,--untrack}'[Remove files from tracking]:file:_files' \
         '(-d --diff)'{-d,--diff}'[Show differences for tracked files]' \
         '(-q --quiet)'{-q,--quiet}'[Run in quiet mode (suppress output)]' \
         '(-D --dry-run)'{-D,--dry-run}'[Show what would be done without making changes]' \
@@ -137,8 +138,9 @@ _dotfiler_components() {
 # (check-updates checks for upstream changes in dotfiles + hooks)
 _dotfiler_check_update_args() {
     _arguments \
-        '(- *)--help[Show help message]' \
+        '(- *)'{-h,--help}'[Show help message]' \
         '(-f --force)'{-f,--force}'[Force update check even if timestamp is recent]' \
+        '(-v --verbose)'{-v,--verbose}'[Show progress output]' \
         '(-d --debug)'{-d,--debug}'[Enable debug output for troubleshooting]'
 }
 

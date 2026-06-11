@@ -1243,7 +1243,7 @@ function setup_core_main() {
     local script_name="${${(%):-%x}:A}"
 
     function _setup_main_usage() {
-        echo "Usage: $script_name ([-ingest path | -i path ...] | [-setup | -s]) [-unpack [file ...] | -u [file ...]] [-force-unpack [file ...] | -U [file ...]] [--untrack path | -t path ...] [--diff | -d] [--dry-run | -D] [--yes | y] [--no | -n] [--repo-dir <path>] [--link-dest <path>]"
+        echo "Usage: $script_name ([-ingest path | -i path ...] | [-setup | -s]) [-unpack [file ...] | -u [file ...]] [-force-unpack [file ...] | -U [file ...]] [--track path | -t path ...] [--untrack path | -x path ...] [--diff | -d] [--dry-run | -D] [--yes | y] [--no | -n] [--repo-dir <path>] [--link-dest <path>]"
         echo "  -s, --setup         Auto ingest dotfiles from ~/"
         echo "  -i, --ingest        Ingest files (track then link)"
         echo "  -t, --track         Track files"

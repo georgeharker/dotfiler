@@ -14,15 +14,23 @@ force_update=false
 if ! is_script_sourced; then
     # Script is being executed directly, parse arguments
     zmodload zsh/zutil
-    local -a force verbose_flag debug
+    local -a force verbose_flag debug help
     zparseopts -D -E - f=force -force=force v=verbose_flag -verbose=verbose_flag \
-        d=debug -debug=debug || {
-        error "Usage: ${script_name} [-f|--force] [-v|--verbose] [-d|--debug]"
+        d=debug -debug=debug h=help -help=help || {
+        error "Usage: ${0:t} [-f|--force] [-v|--verbose] [-d|--debug]"
         error "  -f, --force    Force update check even if timestamp is recent"
         error "  -v, --verbose  Enable verbose progress output"
         error "  -d, --debug    Enable debug tracing (implies --verbose)"
         exit 1
     }
+
+    if [[ ${#help[@]} -gt 0 ]]; then
+        print "Usage: ${0:t} [-f|--force] [-v|--verbose] [-d|--debug]"
+        print "  -f, --force    Force update check even if timestamp is recent"
+        print "  -v, --verbose  Enable verbose progress output"
+        print "  -d, --debug    Enable debug tracing (implies --verbose)"
+        exit 0
+    fi
 
     if [[ ${#force[@]} -gt 0 ]]; then
         force_update=true

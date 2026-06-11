@@ -241,23 +241,17 @@ real superproject.
 ```zsh
 _update_core_build_file_lists "/path/to/repo" "HEAD..origin/main"
 # Sets _update_core_files_to_unpack and _update_core_files_to_remove
+# (declare both as `typeset -aU` before calling)
 ```
 
-File discovery uses two independent find passes:
+Discovery is **commit-range based**: the function walks the incoming git
+commits in the range and derives exactly which files were added/modified
+(to unpack) and deleted (to remove). Exclusion patterns (`.git/`,
+`.nounpack/`, user-defined `dotfiles_exclude` rules) gate the result, and
+squashed subtree merge commits are skipped automatically.
 
-- **Shallow pass** (depth 1 only): top-level entries whose name begins with `.`
-  followed by a letter. Directories are never symlinked — this pass gates which
-  top-level directories are created in `$HOME`.
-- **Deep pass** (all depths, files and symlinks only): all files under the repo
-  root, pruned by exclusion patterns (`.git/`, `.nounpack/`, user-defined
-  exclusions). This pass is independent of the shallow pass.
-
-**Exclusion patterns are the authoritative gate** for controlling whether files
-inside non-dotted top-level directories (e.g. `bin/`, `notes/`) get unpacked.
-Any directory not in the exclusion list will have its files unpacked via the
-deep pass. Files under `.nounpack/` are never included at any depth.
-
-Squashed subtree merge commits are skipped automatically.
+(Full-tree discovery — the shallow/deep find passes over the whole repo —
+belongs to `setup.zsh`-style full unpacks, not to incremental update plans.)
 
 ### Component Range Resolution
 
@@ -278,11 +272,11 @@ Dispatches by topology:
 Used to track which version of a component was last unpacked:
 
 ```zsh
-_update_core_sha_marker_path "/path/to/repo"  # → reply[1]
-_update_core_read_sha_marker "/path/to/repo"  # → reply[1] (SHA or empty)
+_update_core_sha_marker_path "/path/to/repo"  # → REPLY (marker file path)
+_update_core_read_sha_marker "/path/to/repo"  # → REPLY (SHA or empty)
 _update_core_write_sha_marker "/path/to/repo" "$new_sha"
 
-# External (non-git) version markers
+# External (non-git) version markers — same REPLY conventions
 _update_core_ext_marker_path "/path/to/repo"
 _update_core_read_ext_marker "/path/to/repo"
 _update_core_write_ext_marker "/path/to/repo" "$version_string"
@@ -310,15 +304,30 @@ _update_core_write_timestamp "/path/to/timestamp" 1 "Error message"
 
 ### Committing Parent
 
-If your component is a submodule, commit the parent repo after updating:
+For the common case — write the SHA/ext marker and commit the parent repo's
+pointer after a component update, dispatched by topology — use the
+high-level helper (this is what dotfiler's own post phase uses):
 
 ```zsh
-_update_core_commit_parent "/path/to/component" "HEAD~1..HEAD"
+_update_core_get_in_tree_commit_mode ':my-component:update'  # → REPLY (mode)
+_update_core_component_post_marker \
+    "$repo_dir" "$parent" "$rel" "$new_sha" \
+    "$topology" "$REPLY" "$phase" "$outcome"
 ```
 
-The commit mode (`auto|prompt|none`) is read from:
+The low-level commit primitive takes five arguments — parent repo, the
+component's path relative to it, a label for messages, the commit message,
+and the mode:
+
 ```zsh
-zstyle ':dotfiler:update' in-tree-commit auto   # default: auto-commit
+_update_core_commit_parent "$parent" "$rel" "my-component" \
+    "chore: bump my-component" "$mode"
+```
+
+The commit mode (`auto|prompt|none`) is read from zstyle by
+`_update_core_get_in_tree_commit_mode`:
+```zsh
+zstyle ':dotfiler:update' in-tree-commit auto   # default: auto
 ```
 
 ### Update Frequency
