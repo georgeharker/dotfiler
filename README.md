@@ -5,7 +5,7 @@
 Keep your shell, editor, and tool config in sync across every machine you use.
 
 > 📖 Rendered documentation:
-> [docs.georgeharker.com/dotfiler/main](https://docs.georgeharker.com/dotfiler/main/)
+> [docs.georgeharker.com/dotfiler](https://docs.georgeharker.com/dotfiler/)
 > · [dev](https://docs.georgeharker.com/dotfiler/dev/)
 
 ---
