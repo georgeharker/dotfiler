@@ -20,6 +20,10 @@ website:
     style: docked
     logo: docs/images/dotfiler.png
     logo-alt: "dotfiler logo"
+    tools:
+      - icon: github
+        href: https://github.com/georgeharker/dotfiler
+        text: GitHub repository
     contents:
       - text: "Home"
         href: index.md

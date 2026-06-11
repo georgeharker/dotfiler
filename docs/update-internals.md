@@ -49,6 +49,14 @@ branch is currently checked out. This is deliberate: a user who manually
 checked out a feature branch for ad-hoc testing shouldn't have origin/HEAD
 imposed on them just because they didn't configure an override.
 
+Branch overrides change only Round 2's pull target — Round 1 owns the
+pointer trajectory and follows whatever the dotfiles maintainer recorded,
+faithfully. One expected side effect when overriding a submodule
+component's branch: the parent repo's gitlink will show the submodule as
+differing from the worktree. That is normal — you are intentionally ahead
+of (or beside) the recorded pointer, and the pointer catches up when the
+maintainer records the new SHA.
+
 For subtree topology, `zstyle ':dotfiler:update' subtree-remote` accepts
 `'<remote>'` or `'<remote> <branch>'`; when the branch is omitted, this
 chain fills it in (`_update_core_resolve_subtree_spec`).

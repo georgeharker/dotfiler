@@ -47,6 +47,14 @@ zstyle ':dotfiler:update' mode reminder    # just print a nudge
 zstyle ':dotfiler:update' mode disabled    # no checks at all
 ```
 
+| Mode | Behaviour |
+|------|-----------|
+| `prompt` | Asks `[Y/n]` at login (default answer Y). If you have already typed input when the prompt would fire, it falls back to a reminder instead of interrupting you. |
+| `auto` | Fetches and applies silently in the foreground at login. |
+| `background` | Check and apply run in background subshells; the result surfaces on the **next prompt** via a `precmd` hook, so login is never blocked (see [Background mode and typed input](#background-mode-and-typed-input)). |
+| `reminder` | Prints a notice but never pulls — for manual control via `dotfiler update`. |
+| `disabled` | Does nothing; no network activity at all. |
+
 ### Update Frequency
 
 By default, dotfiler checks at most once per hour. Override with:

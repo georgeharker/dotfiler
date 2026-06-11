@@ -111,6 +111,13 @@ Terminal UI for browsing, tracking, and managing files
 (`pip install -r requirements.txt` first). Options: `--dotfiles-dir <dir>`,
 `--setup-script <file>`.
 
+- **Add Mode** — browse the filesystem and track config files
+- **Manage Mode** — view status (linked, broken, conflicted) of tracked files
+- **Batch operations** — select multiple files for tracking or unlinking
+
+Controls: `↑↓←→` navigate, `Space`/`Enter` select, `I` track, `F` file
+info, `Q` quit.
+
 ## Git wrappers
 
 Transparent wrappers around git in the dotfiles repo — each prints the
