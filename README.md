@@ -196,8 +196,9 @@ Then optionally bootstrap your full environment:
 ```
 
 (With registered hook components like zdot, use
-`dotfiler setup --bootstrap` instead of `setup -u` — see
-[zdot Integration](docs/zdot-integration.md#bootstrap-new-machine).)
+`dotfiler setup --bootstrap` instead of `setup -u` — it also initializes
+submodules for you, so the `git submodule update` step above can be skipped.
+See [zdot Integration](docs/zdot-integration.md#bootstrap-new-machine).)
 
 ## Day-to-Day
 

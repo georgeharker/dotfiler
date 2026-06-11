@@ -426,6 +426,26 @@ function setup_main() {
             return 1
         fi
         _dotfiles_dir="${_dotfiles_dir:A}"
+
+        # Fresh clones typically have uninitialized submodules, and bootstrap
+        # depends on their content — the in-repo hook symlinks resolve into
+        # them (e.g. .config/dotfiler/hooks/zdot.zsh → ../../zdot/core/...).
+        # Initialize them before hook discovery. Idempotent on re-runs.
+        if [[ -f "${_dotfiles_dir}/.gitmodules" ]]; then
+            local _boot_dry=0
+            for _a in "${remaining_args[@]}"; do
+                [[ "$_a" == -D || "$_a" == --dry-run ]] && _boot_dry=1
+            done
+            if (( _boot_dry )); then
+                info "bootstrap: [dry-run] would initialize submodules (git submodule update --init --recursive)"
+            else
+                action "bootstrap: initializing submodules"
+                if ! git -C "$_dotfiles_dir" submodule update --init --recursive; then
+                    warn "bootstrap: submodule init failed — hooks living inside submodules may be missing"
+                fi
+            fi
+        fi
+
         _hooks_dir="${_dotfiles_dir}/.config/dotfiler/hooks"
         info "bootstrap: reading hooks from $_hooks_dir"
     else

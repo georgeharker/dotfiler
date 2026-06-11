@@ -41,7 +41,7 @@ Track and link dotfiles (`setup.zsh` / `setup_core.zsh`).
 | `-y` / `-n` | `--yes` / `--no` | Default answer to all prompts |
 | `-C name` | `--component name` | Operate on one registered hook component (repeatable) |
 | | `--list-components` | List registered components |
-| | `--bootstrap` | Fresh-machine mode: read hooks from the repo, implies `-u` |
+| | `--bootstrap` | Fresh-machine mode: initializes submodules (`--init --recursive`), reads hooks from the repo, implies `-u` |
 | | `--bootstrap-hook <file>` | Install a hook symlink into the dotfiles repo |
 
 ```zsh

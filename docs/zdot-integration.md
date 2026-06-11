@@ -313,17 +313,16 @@ On a fresh machine with your dotfiles repo already cloned:
 # 1. Clone dotfiles
 git clone <your-dotfiles-repo> ~/.dotfiles
 
-# 2. Initialise submodules (submodule topology only)
-git -C ~/.dotfiles submodule update --init --recursive
-
-# 3. Bootstrap unpack — reads hooks from repo, unpacks everything
+# 2. Bootstrap — initializes submodules, reads hooks from repo, unpacks everything
 dotfiler setup --bootstrap
 ```
 
-`--bootstrap` tells dotfiler to read hook files directly from the dotfiles repo
-(since the linktree hasn't been set up yet), and implies `-u` —
-unpacking both the main dotfiles tree and every registered hook component,
-including zdot. After this run the linktree is complete, including
+`--bootstrap` initializes the repo's submodules (`git submodule update
+--init --recursive` — fresh clones don't have them, and the hook symlinks
+resolve into submodule content), reads hook files directly from the
+dotfiles repo (since the linktree hasn't been set up yet), and implies
+`-u` — unpacking both the main dotfiles tree and every registered hook
+component, including zdot. After this run the linktree is complete, including
 `~/.config/dotfiler/hooks/zdot.zsh`.
 
 After the first `--bootstrap` run, subsequent unpacks use the normal command:

@@ -793,13 +793,19 @@ function _setup_init() {
     (( defyes_bool ))  && defyes=("-y")
     (( defno_bool ))   && defno=("-n")
 
+    # Resolve both paths (:A) so prefix-stripping between source paths and
+    # the link destination can never be defeated by symlinked path aliases —
+    # e.g. macOS /var → /private/var, where an unresolved --repo-dir mirrors
+    # full absolute source paths under the link dest instead of mapping
+    # relative names.
     if [[ -n "$dir_override" ]]; then
-        dotfiles_dir="$dir_override"
+        dotfiles_dir="${dir_override:A}"
     else
         dotfiles_dir=$(find_dotfiles_directory)
     fi
 
     _setup_link_dest="${link_dest_arg:-$HOME}"
+    _setup_link_dest="${_setup_link_dest:A}"
 
     findopt=()
     findoptd=()
