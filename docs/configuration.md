@@ -38,8 +38,8 @@ Source: `check_update.zsh`, `update_core.zsh`. See
 | `release-channel` | `release` | Round 2 targets: `release` (semver-tagged commits only) \| `any` (branch tip). |
 | `branch` | _(empty)_ | Explicit Round 2 branch override — actively checked out when set. |
 | `in-tree-commit` | `auto` | Pointer/marker recording after component updates: `auto` \| `prompt` \| `none`. |
-| `subtree-remote` | _(empty)_ | Subtree topology: `'<remote>'` or `'<remote> <branch>'`. **Required** for subtree self-update detection. |
-| `subtree-url` | _(empty)_ | Remote URL override for subtree pulls. |
+| `subtree-remote` | `dotfiler` | Subtree topology: `'<remote>'` or `'<remote> <branch>'`. Prefer the single-word form — an explicit branch in the spec hard-pins it and bypasses the `branch` zstyle and the rest of the resolution chain. |
+| `subtree-url` | canonical repo URL | Remote URL for subtree pulls (set for forks; auto-registers the remote if missing). |
 | `verbose` | `default` | Set `silent` to pass `-q` to the login-triggered update run. |
 
 Component scopes mirror these keys — e.g. `':zdot:update' branch`,

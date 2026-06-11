@@ -4,6 +4,10 @@
 
 Keep your shell, editor, and tool config in sync across every machine you use.
 
+> 📖 Rendered documentation:
+> [docs.georgeharker.com/dotfiler/main](https://docs.georgeharker.com/dotfiler/main/)
+> · [dev](https://docs.georgeharker.com/dotfiler/dev/)
+
 ---
 
 - [Why Dotfiler?](#why-dotfiler)
@@ -146,17 +150,19 @@ git subtree add --prefix=.nounpack/dotfiler dotfiler main --squash
 chmod +x .nounpack/dotfiler/dotfiler
 ```
 
-**Required:** tell dotfiler which remote to track for self-updates. Add this
-to your `.zshrc` **before** sourcing `check_update.zsh`:
+Self-update defaults to a remote named `dotfiler` pointing at the canonical
+repo, with the branch resolved through the normal chain (so
+`zstyle ':dotfiler:update' branch dev` works). Override only for a custom
+remote name or fork:
 
 ```zsh
-zstyle ':dotfiler:update' subtree-remote 'dotfiler main'
+zstyle ':dotfiler:update' subtree-remote 'dotfiler'
+zstyle ':dotfiler:update' subtree-url   'https://github.com/you/dotfiler.git'
 ```
 
-The value can be `'<remote>'` or `'<remote> <branch>'` — see
-[Configuration](docs/configuration.md#updates--dotfilerupdate). Without this,
-dotfiler cannot detect that it is installed as a subtree and will silently
-skip self-update checks.
+Prefer the single-word form — `'<remote> <branch>'` hard-pins the branch and
+bypasses the `branch` zstyle entirely. See
+[Configuration](docs/configuration.md#updates--dotfilerupdate).
 
 ### Option 3: Standalone Clone
 
