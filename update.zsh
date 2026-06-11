@@ -275,7 +275,7 @@ function _update_dotfiler_plan() {
         fi
         log_debug "update_self: plan: phase=dotfiles fetching ${_remote}/${_branch} to materialise ${_new}"
         local _fetch_err
-        _fetch_err=$(git -C "$script_dir" fetch -q "$_remote" "$_branch" 2>&1 >/dev/null) || \
+        _fetch_err=$(git -C "$script_dir" fetch --no-tags "$_remote" "$_branch" 2>&1 >/dev/null) || \
             log_debug "update_self: plan: fetch ${_remote}/${_branch} failed: ${_fetch_err}"
         verbose "update_self: plan: phase=dotfiles — using hint range ${_hint}"
 
@@ -756,7 +756,7 @@ function _update_phase_plan(){
             [[ -n "$_remote" && -n "$_branch" ]] || continue
             verbose "update: phase 1 plan: pre-fetching ${_name} remote ${_remote}/${_branch} (scope=${_scope})"
             local _fetch_err
-            _fetch_err=$(git -C "$_comp_dir" fetch -q "$_remote" "$_branch" 2>&1 >/dev/null) || {
+            _fetch_err=$(git -C "$_comp_dir" fetch --no-tags "$_remote" "$_branch" 2>&1 >/dev/null) || {
                 error "update: phase 1 plan: pre-fetch for ${_name} failed — cannot proceed"
                 log_debug "update: phase 1 plan: pre-fetch error: ${_fetch_err}"
                 return 1

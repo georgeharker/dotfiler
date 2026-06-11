@@ -219,6 +219,35 @@ _update_core_semver_tag_p() {
     [[ "$1" == v[0-9]*.[0-9]*.[0-9]* ]]
 }
 
+# _update_core_remote_tag_map <remote_url>
+# Fill the caller-scoped associative array _tag_map with semver tag name →
+# commit SHA pairs read REMOTE-side via ls-remote --tags. Annotated tags are
+# dereferenced: when both refs/tags/v1.2.3 and refs/tags/v1.2.3^{} appear,
+# the ^{} (peeled) entry overwrites the tag-object SHA with the commit SHA.
+# Remote-side resolution keeps the tag route independent of local tag refs —
+# essential for subtree topology, where the local repo is the PARENT and its
+# tag namespace never receives component tags.
+# Caller must declare:  local -A _tag_map=()
+_update_core_remote_tag_map() {
+    local _remote_url=$1
+    local _ls_out
+    _ls_out=$(git ls-remote --tags "$_remote_url" 2>/dev/null) || return 1
+    [[ -z "$_ls_out" ]] && return 1
+    local _ref_sha _ref_name
+    while IFS=$'\t' read -r _ref_sha _ref_name; do
+        _ref_name="${_ref_name#refs/tags/}"
+        # Strip the peel suffix via a variable: writing the pattern inline as
+        # "${_ref_name%'^{}'}" is a trap — inside double quotes, zsh's brace
+        # scanner ignores the single quotes and closes the expansion at the
+        # FIRST '}', silently appending a literal '} to every name.
+        local _peel='^{}'
+        local _bare_name="${_ref_name%$_peel}"
+        _update_core_semver_tag_p "$_bare_name" || continue
+        _tag_map[$_bare_name]="$_ref_sha"
+    done <<< "$_ls_out"
+    return 0
+}
+
 # _update_core_resolve_latest_semver_tag_sha \
 #     <remote_url> <branch> <comp_dir> [<remote_name>] [<tip_sha>]
 #
@@ -306,12 +335,21 @@ _update_core_resolve_latest_semver_tag_sha() {
 
             if [[ ${#_ordered_tags[@]} -gt 0 ]]; then
                 # Tags are already newest-first from the API.  Resolve each
-                # to a local SHA and check reachability; early-bail on first hit.
+                # tag NAME to a commit SHA remote-side (ls-remote, peeled) —
+                # NOT via local refs/tags/*: in subtree topology _comp_dir is
+                # the PARENT repo, whose tag namespace deliberately never
+                # receives component tags (fetches are --no-tags; see
+                # component_tip_range).  Local object presence is guaranteed
+                # for any tag that can pass the gate: merge-base ancestry
+                # requires reachability from the fetched branch tip, and the
+                # branch fetch materialises exactly those commits.
+                local -A _tag_map=()
+                _update_core_remote_tag_map "$_remote_url" || return 1
                 local _tag _sha
                 for _tag in "${_ordered_tags[@]}"; do
-                    _sha=$(git -C "$_comp_dir" rev-parse "refs/tags/${_tag}^{}" 2>/dev/null \
-                        || git -C "$_comp_dir" rev-parse "refs/tags/${_tag}" 2>/dev/null) \
-                        || continue
+                    _sha="${_tag_map[$_tag]:-}"
+                    [[ -n "$_sha" ]] || continue
+                    git -C "$_comp_dir" cat-file -e "${_sha}" 2>/dev/null || continue
                     if git -C "$_comp_dir" merge-base --is-ancestor \
                             "$_sha" "$_tip_sha" 2>/dev/null \
                        || [[ "$_sha" == "$_tip_sha" ]]; then
@@ -329,25 +367,8 @@ _update_core_resolve_latest_semver_tag_sha() {
     fi
 
     # --- Non-GitHub / API fallback: git ls-remote + local ancestry ---
-    # ls-remote --tags prints both lightweight and annotated (^{}) refs.
-    # For annotated tags, the ^{} line dereferences to the commit SHA.
-    local _ls_out
-    _ls_out=$(git ls-remote --tags "$_remote_url" 2>/dev/null) || return 1
-    [[ -z "$_ls_out" ]] && return 1
-
-    # Collect name→SHA pairs for semver tags (dereference annotated tags).
-    # When both refs/tags/v1.2.3 and refs/tags/v1.2.3^{} exist, the ^{}
-    # (dereferenced) entry overwrites the lightweight entry in the map,
-    # giving us the commit SHA rather than the tag object SHA.
     local -A _tag_map=()
-    local _ref_sha _ref_name
-    while IFS=$'\t' read -r _ref_sha _ref_name; do
-        _ref_name="${_ref_name#refs/tags/}"
-        local _bare_name="${_ref_name%'^{}'}"
-        _update_core_semver_tag_p "$_bare_name" || continue
-        _tag_map[$_bare_name]="$_ref_sha"
-    done <<< "$_ls_out"
-
+    _update_core_remote_tag_map "$_remote_url" || return 1
     [[ ${#_tag_map[@]} -eq 0 ]] && return 1
 
     # Sort tag names by version (newest first) and early-bail on the first
@@ -404,11 +425,17 @@ _update_core_component_tip_range() {
             # Current position is the SHA marker, not HEAD.
             # Fetch from the subtree's own remote URL — not the parent repo's
             # default remote, which points to a different repository entirely.
+            # --no-tags is load-bearing: this fetch lands in the PARENT repo,
+            # whose single tag namespace is shared by every component — two
+            # repos both tagging v<X>.<Y>.<Z> makes tag-following fail with
+            # "would clobber existing tag" (silently, under -q).
             _update_core_read_sha_marker "$_comp_dir" || return 1
             _old="$REPLY"
             [[ -n "$_subtree_url" && -n "$_branch" ]] || return 1
             local _fetch_err _fetched_tip
-            _fetch_err=$(git -C "$_comp_dir" fetch -q "$_subtree_url" "$_branch" --tags 2>&1 >/dev/null) || {
+            # No -q: per-ref rejections only print without it, and an empty
+            # "failed:" message is undebuggable. Success output is discarded.
+            _fetch_err=$(git -C "$_comp_dir" fetch "$_subtree_url" "$_branch" --no-tags 2>&1 >/dev/null) || {
                 error "update_core: component_tip_range: subtree fetch failed: ${_fetch_err}"
                 return 1
             }
@@ -434,7 +461,7 @@ _update_core_component_tip_range() {
             _branch=$(_update_core_get_default_branch "$_comp_dir" "$_remote" "$_scope")
             _old=$(git -C "$_comp_dir" rev-parse HEAD 2>/dev/null) || return 1
             local _fetch_err
-            _fetch_err=$(git -C "$_comp_dir" fetch -q "$_remote" "$_branch" --tags 2>&1 >/dev/null) || {
+            _fetch_err=$(git -C "$_comp_dir" fetch "$_remote" "$_branch" --tags 2>&1 >/dev/null) || {
                 error "update_core: component_tip_range: fetch failed: ${_fetch_err}"
                 return 1
             }
@@ -1914,9 +1941,13 @@ _update_core_resolve_subtree_spec() {
     [[ "$_branch" == "$_remote" ]] && _branch=""
     _remote_url=$(git -C "$_dir" config "remote.${_remote}.url" 2>/dev/null)
     # If the remote is missing but a URL hint was provided, register it now.
+    # tagOpt --no-tags: for subtree topology the remote is registered in the
+    # PARENT repo, whose tag namespace is shared by every component — never
+    # let this remote's tags follow into it (cross-repo semver tags collide).
     if [[ -z "$_remote_url" && -n "$_url_hint" ]]; then
         git -C "$_dir" remote add "$_remote" "$_url_hint" 2>/dev/null \
-            && git -C "$_dir" fetch "$_remote" 2>/dev/null \
+            && git -C "$_dir" config "remote.${_remote}.tagOpt" --no-tags 2>/dev/null \
+            && git -C "$_dir" fetch --no-tags "$_remote" 2>/dev/null \
             && _remote_url="$_url_hint"
     fi
     [[ -z "$_remote_url" ]] && return 1
@@ -1969,9 +2000,9 @@ _update_core_is_available_subtree() {
         # current tip.  Prefer fetching by remote name so the tracking ref is
         # updated; fall back to URL-based fetch (updates FETCH_HEAD only).
         if [[ -n "$_remote" ]]; then
-            git -C "$_subtree_dir" fetch -q "$_remote" "$_branch" --tags 2>/dev/null
+            git -C "$_subtree_dir" fetch -q "$_remote" "$_branch" --no-tags 2>/dev/null
         else
-            git -C "$_subtree_dir" fetch -q "$_remote_url" "$_branch" --tags 2>/dev/null
+            git -C "$_subtree_dir" fetch -q "$_remote_url" "$_branch" --no-tags 2>/dev/null
         fi
         _update_core_resolve_latest_semver_tag_sha \
             "$_remote_url" "$_branch" "$_subtree_dir" "$_remote" || return 1
