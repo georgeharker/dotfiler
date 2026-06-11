@@ -1,0 +1,54 @@
+project:
+  type: website
+  render:
+    - index.md
+    - README.md
+    - docs/README.md   # README files must be listed explicitly; globs skip them
+    - docs/*.md
+    - example_install/README.md
+    - "!docs/restructure-content-map.md"
+
+# gfm_auto_identifiers makes heading anchors match GitHub's slugs, which the
+# docs' cross-links use. Keep pandoc's full markdown reader otherwise —
+# `from: gfm` breaks Quarto's navigation divs.
+from: markdown+gfm_auto_identifiers
+
+website:
+  title: "dotfiler"
+  search: true
+  sidebar:
+    style: docked
+    logo: docs/images/dotfiler.png
+    logo-alt: "dotfiler logo"
+    tools:
+      - icon: github
+        href: https://github.com/georgeharker/dotfiler
+        text: GitHub repository
+    contents:
+      - text: "Home"
+        href: index.md
+      - text: "Overview (README)"
+        href: README.md
+      - text: "Documentation Index"
+        href: docs/README.md
+      - section: "Guides"
+        contents:
+          - docs/how-updates-work.md
+          - docs/authoring-install-files.md
+          - docs/update-hooks.md
+          - docs/zdot-integration.md
+      - section: "Reference"
+        contents:
+          - docs/commands.md
+          - docs/configuration.md
+          - text: "Install Helpers"
+            href: example_install/README.md
+      - section: "Internals"
+        contents:
+          - docs/update-internals.md
+
+format:
+  html:
+    theme: pulse
+    toc: true
+    embed-resources: true

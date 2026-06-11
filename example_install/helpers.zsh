@@ -170,9 +170,9 @@ check_command() {
 
 ## platform-aware dev directory
 
-# Returns the base directory for external/source checkouts
-# macOS: ~/Development/ext, Linux: ~/ext
-get_ext_dev_dir() {
+# Returns the base directory for development checkouts
+# macOS: ~/Development, Linux: ~
+get_dev_dir() {
     if os_is_osx; then
         REPLY="${HOME}/Development/"
     else
@@ -182,6 +182,8 @@ get_ext_dev_dir() {
     echo "$REPLY"
 }
 
+# Returns the base directory for external/source checkouts
+# macOS: ~/Development/ext, Linux: ~/ext
 get_ext_dev_dir() {
     if os_is_osx; then
         REPLY="${HOME}/Development/ext"
