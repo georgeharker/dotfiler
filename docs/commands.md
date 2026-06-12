@@ -29,16 +29,26 @@ Track and link dotfiles (`setup.zsh` / `setup_core.zsh`).
 | Flag | Long form | Description |
 |------|-----------|-------------|
 | `-s` | `--setup` | Auto-ingest dotfiles found under `~/` |
-| `-i path …` | `--ingest path …` | Track specific files and create symlinks |
-| `-u [file …]` | `--unpack [file …]` | Create/restore symlinks (respects exclusions) |
-| `-U [file …]` | `--force-unpack [file …]` | Force-unpack, ignoring exclusions |
-| `-t path …` | `--track path …` | Track without creating a symlink |
-| `-x path …` | `--untrack path …` | Untrack (remove from repo management) |
-| `-d` | `--diff` | Show diff between repo and home |
+| `-i file …` | `--ingest file …` | Track the listed files and create symlinks (≥ 1 file) |
+| `-u [file …]` | `--unpack [file …]` | Create/restore symlinks for the listed files, or everything if none given (respects exclusions) |
+| `-U [file …]` | `--force-unpack [file …]` | Same as `-u` but ignores exclusions |
+| `-t file …` | `--track file …` | Track without creating a symlink (≥ 1 file) |
+| `-x file …` | `--untrack file …` | Untrack (≥ 1 file) |
+| `-d [file …]` | `--diff [file …]` | Read-only: report how repo files relate to home (linked / identical / missing / differing, with unified diffs); no changes made |
 | `-D` | `--dry-run` | Show what would happen without doing it |
 | `-q` | `--quiet` | Suppress non-error output |
 | `-g` | `--debug` | Debug tracing |
 | `-y` / `-n` | `--yes` / `--no` | Default answer to all prompts |
+
+Exactly one action flag may be given per invocation; every file argument
+(shell globs included) belongs to that action.
+
+Path arguments to `-i`/`-t`/`-x` resolve like normal shell paths (absolute, or
+relative to the current directory). `-u`/`-U` arguments may name the file
+either by where it lands (absolute under `~`, home-relative from anywhere, or
+relative to a current directory inside `~`) or by where it lives in the
+repo (absolute or cwd-relative under the dotfiles directory) — all four
+spellings resolve to the same link.
 | `-C name` | `--component name` | Operate on one registered hook component (repeatable) |
 | | `--list-components` | List registered components |
 | | `--bootstrap` | Fresh-machine mode: initializes submodules (`--init --recursive`), reads hooks from the repo, implies `-u` |

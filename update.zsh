@@ -941,6 +941,10 @@ function _update_main_unpack(){
 
         local -a _setup_args=(
             "$_unpack_flag"
+            # force = consent: a forced update must converge headlessly, so
+            # it answers yes to link-replacement prompts (divergent files).
+            # dry_run still wins — prompt_yes_no checks it before defyes.
+            ${force:+"-y"}
             ${dry_run:+"-D"}
             ${quiet:+"-q"}
             ${debug_flag:+"-g"}

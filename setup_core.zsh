@@ -461,9 +461,20 @@ function should_exclude_file() {
 # Filesystem helpers
 # ---------------------------------------------------------------------------
 
+# normalize_path_to_dest_relative input_path [mode]
+#
+#   Normalize input_path to a path relative to the link dest (home).
+#   mode "cwd" (default): relative input resolves against CWD.
+#   mode "dest": relative input resolves against the dest directory.
+#   mode "unpack": the path may name the file by where it lands (under
+#     dest) OR by where it lives in the repo (under dotfiles_dir), absolute
+#     or CWD-relative. The dotfiles prefix is checked first (the repo lives
+#     under dest), and a CWD-relative reading only wins over the documented
+#     dest-relative contract when it names a file that exists in the repo —
+#     so e.g. `-u .ssh/foo` from ~/Development still means ~/.ssh/foo.
 function normalize_path_to_dest_relative(){
   local input_path="$1"
-  local force_dest_rel="${2:-0}"
+  local mode="${2:-cwd}"
   local fullpath_dest="${_setup_link_dest:A}"
   local abs_path
 
@@ -473,38 +484,75 @@ function normalize_path_to_dest_relative(){
   # NOTE: we must take care not to resolve symlinks that would point
   # back at dotfiles
 
-  # Convert to absolute path
+  # _classify abs_path
+  #   Strip the dotfiles prefix (unpack mode only) or the dest prefix and
+  #   set REPLY to the relative path. Fails silently when under neither.
+  _classify() {
+    local p="$1"
+    if [[ "$mode" == unpack && -n "${dotfiles_dir:-}" && "$p" == "${dotfiles_dir:A}/"* ]]; then
+      REPLY="${p#${dotfiles_dir:A}/}"
+      return 0
+    fi
+    if [[ "$p" == "$fullpath_dest/"* ]]; then
+      REPLY="${p#$fullpath_dest/}"
+      return 0
+    fi
+    return 1
+  }
+
   if [[ "$input_path" == /* ]]; then
     # Already absolute
     abs_path="${input_path:a}"
-  else
-    if [ $force_dest_rel -eq 1 ]; then
-      # Force relative to dest directory
-      abs_path="${fullpath_dest}/${input_path}"
-      abs_path="${abs_path:a}"
+  elif [[ "$mode" == dest ]]; then
+    # Force relative to dest directory
+    abs_path="${fullpath_dest}/${input_path}"
+    abs_path="${abs_path:a}"
+  elif [[ "$mode" == unpack ]]; then
+    # Two candidate readings: CWD-relative and dest-relative. Prefer the
+    # one that names an existing file in the repo; otherwise fall back to
+    # the dest-relative contract (or the CWD reading when CWD is inside
+    # the repo itself).
+    local cwd_abs="${PWD:A}/${input_path}"
+    cwd_abs="${cwd_abs:a}"
+    local cwd_rel="" dest_rel=""
+    _classify "$cwd_abs" && cwd_rel="$REPLY"
+    local dest_abs="${fullpath_dest}/${input_path}"
+    dest_abs="${dest_abs:a}"
+    _classify "$dest_abs" && dest_rel="$REPLY"
+
+    if [[ -n "$cwd_rel" && -e "${dotfiles_dir}/${cwd_rel}" ]]; then
+      print -r -- "$cwd_rel"
+    elif [[ -n "$dest_rel" && -e "${dotfiles_dir}/${dest_rel}" ]]; then
+      print -r -- "$dest_rel"
+    elif [[ -n "$cwd_rel" && "${PWD:A}" == "${dotfiles_dir:A}"* ]]; then
+      print -r -- "$cwd_rel"
+    elif [[ -n "$dest_rel" ]]; then
+      print -r -- "$dest_rel"
+    elif [[ -n "$cwd_rel" ]]; then
+      print -r -- "$cwd_rel"
     else
-      # Relative path - resolve relative to CWD
-      # Check if file exists relative to CWD
-      if [[ -e "$input_path" ]]; then
-        abs_path="${input_path:a}"
-      else
-        # File doesn't exist yet, but we still need to normalize the path
-        # Resolve it relative to CWD
-        abs_path="${PWD:A}/${input_path}"
-        # Normalize the path (resolve .. and . components)
-        abs_path="${abs_path:a}"
-      fi
+      warn "Path $input_path is not under dest directory ($fullpath_dest)" > /dev/stderr
+      return 1
+    fi
+    return 0
+  else
+    # Relative path - resolve relative to CWD
+    # Check if file exists relative to CWD
+    if [[ -e "$input_path" ]]; then
+      abs_path="${input_path:a}"
+    else
+      # File doesn't exist yet, but we still need to normalize the path
+      # Resolve it relative to CWD
+      abs_path="${PWD:A}/${input_path}"
+      # Normalize the path (resolve .. and . components)
+      abs_path="${abs_path:a}"
     fi
   fi
 
-  # Check if path is under dest directory
-  if [[ "$abs_path" == "$fullpath_dest/"* ]]; then
-    # Return relative path from dest (without leading /)
-    local rel_path="${abs_path#$fullpath_dest/}"
-    print -r -- "$rel_path"
+  if _classify "$abs_path"; then
+    print -r -- "$REPLY"
     return 0
   else
-    # Path is not under dest directory
     warn "Path $input_path (resolves to $abs_path) is not under dest directory ($fullpath_dest)" > /dev/stderr
     return 1
   fi
@@ -514,6 +562,11 @@ function prompt_yes_no(){
   [[ ${#dry_run[@]} -ge 1 ]] && return 1
     [[ ${#defno[@]} -ge 1 ]] && return 1
     [[ ${#defyes[@]} -ge 1 ]] && return 0
+  # local: REPLY doubles as the codebase-wide scratch return register
+  # (normalize, _classify, …). When read -q fails WITHOUT reading (no
+  # terminal), it leaves REPLY untouched — without the local this echoed
+  # whatever stale value the last REPLY-returning helper left behind.
+  local REPLY=''
   if read -qs "REPLY?$1? (N/y)"; then
         >&2 echo $REPLY
         return 0
@@ -957,7 +1010,7 @@ function setup_run_unpack() {
     # Normalize paths before passing to inner loop
     local -a normalized=() p n
     for p in "$@"; do
-        n=$(normalize_path_to_dest_relative "$p" 1) || {
+        n=$(normalize_path_to_dest_relative "$p" unpack) || {
             error "Failed to normalize unpack path: $p"
             return 1
         }
@@ -975,7 +1028,7 @@ function setup_run_force_unpack() {
     # Normalize paths before passing to inner loop
     local -a normalized=() p n
     for p in "$@"; do
-        n=$(normalize_path_to_dest_relative "$p" 1) || {
+        n=$(normalize_path_to_dest_relative "$p" unpack) || {
             error "Failed to normalize force_unpack path: $p"
             return 1
         }
@@ -985,6 +1038,98 @@ function setup_run_force_unpack() {
 }
 
 # _setup_do_unpack [--force] [file ...]
+# _setup_do_diff [file ...]
+#
+#   Read-only inspection: report how each repo file relates to its
+#   counterpart under _setup_link_dest. Makes NO filesystem changes.
+#   With no files, sweeps the whole repo (respecting exclusions). A named
+#   directory is swept recursively. Divergent content is shown as a unified
+#   diff (home as old, repo as new — i.e. `+` lines are what unpacking
+#   would bring in).
+#
+#   Always returns 0 unless the inspection itself fails; out-of-sync files
+#   are reported, not treated as errors.
+function _setup_do_diff() {
+    local -a _diff_files=("$@")
+    local -i _n_ok=0 _n_missing=0 _n_differs=0 _n_identical=0 _n_conflict=0
+    local fullpath_dotfiles_dir="${dotfiles_dir:A}"
+
+    _diff_one() {
+        local src="$1"
+        local rel="${src#${fullpath_dotfiles_dir}/}"
+        rel="${rel#${dotfiles_dir}/}"   # in case src was built non-canonical
+        local dest="${_setup_link_dest}/${rel}"
+        if [[ -L "$dest" ]]; then
+            # Same equality link_if_needed uses: the literal link target.
+            local linkfile=$(readlink "$dest")
+            if [[ "$linkfile" == "$src" ]]; then
+                (( _n_ok++ ))
+            else
+                warn "$rel: symlink points elsewhere ($linkfile)"
+                (( _n_conflict++ ))
+            fi
+        elif [[ ! -e "$dest" ]]; then
+            report "$rel: not present in ${_setup_link_dest} (unpack would link it)"
+            (( _n_missing++ ))
+        elif [[ -f "$dest" && -f "$src" ]]; then
+            if command diff -q -- "$src" "$dest" >/dev/null 2>&1; then
+                report "$rel: identical content, not yet a symlink"
+                (( _n_identical++ ))
+            else
+                warn "$rel: content differs:"
+                command diff -u -L "$rel (home)" -L "$rel (repo)" -- "$dest" "$src"
+                (( _n_differs++ ))
+            fi
+        else
+            warn "$rel: $dest exists but is not a regular file or symlink"
+            (( _n_conflict++ ))
+        fi
+    }
+
+    # _diff_sweep <root> — walk files/symlinks under root (repo side),
+    # honouring exclusions, mirroring _setup_do_unpack's deep traversal.
+    _diff_sweep() {
+        local _root="$1" _find_output _f
+        local -a _found
+        if [[ ${#find_prune_args[@]} -gt 0 ]]; then
+            _find_output=$(find $findoptd $_root -mindepth 1 $findopt \
+                \( "${find_prune_args[@]}" \) -o \
+                \( -type f -o -type l \) -print)  # shuck: ignore=C103
+        else
+            _find_output=$(find $findoptd $_root -mindepth 1 $findopt \( -type f -o -type l \))
+        fi
+        _found=(${(f)_find_output})
+        for _f in "${_found[@]}"; do
+            [[ -n "$_f" ]] || continue
+            should_exclude_file "$_f" 0 && continue
+            _diff_one "$_f"
+        done
+    }
+
+    if [[ ${#_diff_files[@]} -gt 0 ]]; then
+        info "Diffing specific files: ${_diff_files[*]}"
+        local target_file dotfiles_file
+        for target_file in "${_diff_files[@]}"; do
+            [[ -z "$target_file" ]] && continue
+            dotfiles_file="${dotfiles_dir}/${target_file}"
+            if [[ -d "$dotfiles_file" ]]; then
+                _diff_sweep "$dotfiles_file"
+            elif [[ -f "$dotfiles_file" ]]; then
+                _diff_one "$dotfiles_file"
+            else
+                warn "File not found in dotfiles directory: $target_file"
+                (( _n_conflict++ ))
+            fi
+        done
+    else
+        info "Diffing all files"
+        _diff_sweep "$dotfiles_dir"
+    fi
+
+    info "diff: ${_n_ok} linked, ${_n_identical} identical (unlinked), ${_n_missing} missing, ${_n_differs} differing, ${_n_conflict} conflicting"
+    return 0
+}
+
 #   Inner unpack loop. Requires globals from _setup_init.
 #   --force: skip exclusion checks and use stricter error handling for missing files.
 function _setup_do_unpack() {
@@ -1077,18 +1222,19 @@ function _setup_do_unpack() {
     return 0
 }
 
-# _setup_normalize_path_array <array_name> <label> [force_dest_rel]
+# _setup_normalize_path_array <array_name> <label> [mode]
 #   Normalizes all paths in the named array to be relative to _setup_link_dest.
+#   mode is passed through to normalize_path_to_dest_relative (cwd|dest|unpack).
 #   On failure, prints an error and returns 1.
 _setup_normalize_path_array() {
-    local _arr_name=$1 _label=$2 _force_dest_rel=${3:-0}
+    local _arr_name=$1 _label=$2 _mode=${3:-cwd}
     local -a _result=()
     local _p _n
     # eval used for indirect array access by name; zsh ${(@P)name} requires zsh 5.1+
     eval "local -a _src=(\"\${${_arr_name}[@]}\")"
     # shuck: disable=C006
     for _p in "${_src[@]}"; do
-        _n=$(normalize_path_to_dest_relative "$_p" "$_force_dest_rel") || {
+        _n=$(normalize_path_to_dest_relative "$_p" "$_mode") || {
             error "Failed to normalize ${_label} path: $_p"
             return 1
         }
@@ -1107,13 +1253,6 @@ function setup_run_all() {
     _setup_excludes_files=( "${@[7,-1]}" )
     _setup_init "$1" "$2" "$3" "$4" "${5:-0}" "${6:-0}"
 
-# Ingest is track + unpack
-if [[ ${#ingest[@]} -gt 0 ]]; then
-  unpack=("-u")
-  unpack_files+=("${ingest[@]}")
-  track+=("${ingest[@]}")
-fi
-
 # Normalize all paths to be relative to home directory
 # This ensures consistent behavior whether paths are provided as absolute or relative
 if [[ ${#ingest[@]} -gt 0 ]]; then
@@ -1130,12 +1269,27 @@ fi
 
 if [[ ${#unpack_files[@]} -gt 0 ]]; then
     # NOTE: unpack paths are implicitly home-relative
-    _setup_normalize_path_array unpack_files "unpack" 1 || return 1
+    _setup_normalize_path_array unpack_files "unpack" unpack || return 1
 fi
 
 if [[ ${#force_unpack_files[@]} -gt 0 ]]; then
     # NOTE: unpack paths are implicitly home-relative
-    _setup_normalize_path_array force_unpack_files "force_unpack" 1 || return 1
+    _setup_normalize_path_array force_unpack_files "force_unpack" unpack || return 1
+fi
+
+if [[ ${#diff_files[@]} -gt 0 ]]; then
+    # diff names files the same way unpack does (by home or repo location)
+    _setup_normalize_path_array diff_files "diff" unpack || return 1
+fi
+
+# Ingest is track + unpack. Appended AFTER normalization: ingest args are
+# CWD-relative (like track), but raw unpack_files args are home-relative —
+# appending a bare ingest filename before normalization would resolve it
+# against $HOME instead of $PWD and the link step couldn't find it.
+if [[ ${#ingest[@]} -gt 0 ]]; then
+  unpack=("-u")
+  unpack_files+=("${ingest[@]}")
+  track+=("${ingest[@]}")
 fi
 
 # Copy in files
@@ -1185,6 +1339,11 @@ fi
 if [[ ${#force_unpack[@]} -gt 0 ]]; then
         _setup_do_unpack --force "${force_unpack_files[@]}"
       fi
+
+# Diff (read-only): report repo vs link-dest state, change nothing
+if [[ ${#diff[@]} -gt 0 ]]; then
+        _setup_do_diff "${diff_files[@]}"
+fi
 }
 
 # setup_find start_dir exclude_file
@@ -1249,13 +1408,17 @@ function setup_core_main() {
     local script_name="${${(%):-%x}:A}"
 
     function _setup_main_usage() {
-        echo "Usage: $script_name ([-ingest path | -i path ...] | [-setup | -s]) [-unpack [file ...] | -u [file ...]] [-force-unpack [file ...] | -U [file ...]] [--track path | -t path ...] [--untrack path | -x path ...] [--diff | -d] [--dry-run | -D] [--yes | y] [--no | -n] [--repo-dir <path>] [--link-dest <path>]"
-        echo "  -s, --setup         Auto ingest dotfiles from ~/"
-        echo "  -i, --ingest        Ingest files (track then link)"
-        echo "  -t, --track         Track files"
-        echo "  -x, --untrack       Untrack files"
-        echo "  -u, --unpack        Unpack files (respects exclusions)"
-        echo "  -U, --force-unpack  Force unpack files (ignores exclusions)"
+        echo "Usage: $script_name <action> [file ...] [--dry-run | -D] [--yes | y] [--no | -n] [--repo-dir <path>] [--link-dest <path>]"
+        echo ""
+        echo "Exactly one action per invocation; all file arguments (globs welcome)"
+        echo "belong to that action:"
+        echo "  -s, --setup         Auto ingest dotfiles from ~/ (no file arguments)"
+        echo "  -i, --ingest        Ingest files: track then link (>= 1 file)"
+        echo "  -t, --track         Track files without linking (>= 1 file)"
+        echo "  -x, --untrack       Untrack files (>= 1 file)"
+        echo "  -u, --unpack        Unpack listed files, or everything if none given (respects exclusions)"
+        echo "  -U, --force-unpack  Same as -u but ignores exclusions"
+        echo "  -d, --diff          Read-only: report repo vs home state (listed files or everything); changes nothing"
         echo "  -D, --dry-run       Show what actions would be taken without making changes"
         echo "  -g, --debug         Enable debug logging (one line per file traversed)"
         echo "  --repo-dir <path>     Source repo root (default: auto-detected dotfiles dir)"
@@ -1269,19 +1432,24 @@ function setup_core_main() {
     }
 
     local -a ingest=() setup=() unpack=() force_unpack=()
-    local -a unpack_files=() force_unpack_files=()
+    local -a unpack_files=() force_unpack_files=() diff_files=()
     local -a track=() untrack=() diff=() quiet=() dry_run=()
     local -a defyes=() defno=() debug_flag=()
      local -a opt_repo_dir=() opt_link_dest=() opt_excludes=()
 
     zmodload zsh/zutil
-    zparseopts -D -E - i+:=ingest -ingest+:=ingest \
+    # All action flags are bare: their files arrive as positionals. This is
+    # what allows `dotfiler setup -t .config/foo/*` to work — the shell
+    # expands the glob into the positional list. Exactly one action may be
+    # given per invocation (enforced below), so positional routing is never
+    # ambiguous.
+    zparseopts -D -E - i=ingest -ingest=ingest \
                        s=setup -setup=setup \
                        u=unpack -unpack=unpack \
                        U=force_unpack -force-unpack=force_unpack \
-                       t+:=track -track+:=track \
-                       x+:=untrack -untrack+:=untrack \
-                       d=diff -d=diff \
+                       t=track -track=track \
+                       x=untrack -untrack=untrack \
+                       d=diff -diff=diff \
                        q=quiet -q=quiet \
                        D=dry_run -dry-run=dry_run \
                        g=debug_flag -debug=debug_flag \
@@ -1292,31 +1460,63 @@ function setup_core_main() {
                         -excludes+:=opt_excludes || \
         { _setup_main_usage; unfunction _setup_main_usage; return 1; }
 
-    # Strip flag tokens that zparseopts +: leaves interleaved with values
-    ingest=( "${(@)ingest:#-i}" )
-    ingest=( "${(@)ingest:#--ingest}" )
-    track=( "${(@)track:#-t}" )
-    track=( "${(@)track:#--track}" )
-    untrack=( "${(@)untrack:#-x}" )
-    untrack=( "${(@)untrack:#--untrack}" )
-    force_unpack=( "${(@)force_unpack:#-U}" )
-    force_unpack=( "${(@)force_unpack:#--force-unpack}" )
+    # --excludes takes a value, so its array interleaves flag tokens; strip them.
     opt_excludes=( "${(@)opt_excludes:#--excludes}" )
 
-    # Remaining positional args go to the appropriate file list
-    if [[ ${#unpack[@]} -gt 0 ]]; then
-        unpack_files+=( "$@" )
-    elif [[ ${#force_unpack[@]} -gt 0 ]]; then
-        force_unpack_files+=( "$@" )
-    fi
+    # Exactly one action per invocation: every action claims the same
+    # positional file list, so combining them is inherently ambiguous
+    # (historically, combining -u and -U silently escalated to a repo-wide
+    # force unpack via an empty force_unpack_files list).
+    local -a _actions=()
+    [[ ${#setup[@]} -gt 0 ]]        && _actions+=("-s")
+    [[ ${#ingest[@]} -gt 0 ]]       && _actions+=("-i")
+    [[ ${#track[@]} -gt 0 ]]        && _actions+=("-t")
+    [[ ${#untrack[@]} -gt 0 ]]      && _actions+=("-x")
+    [[ ${#unpack[@]} -gt 0 ]]       && _actions+=("-u")
+    [[ ${#force_unpack[@]} -gt 0 ]] && _actions+=("-U")
+    [[ ${#diff[@]} -gt 0 ]]         && _actions+=("-d")
 
-    if [[ ${#setup[@]} -eq 0 && ${#ingest[@]} -eq 0 && ${#track[@]} -eq 0 \
-          && ${#untrack[@]} -eq 0 && ${#unpack[@]} -eq 0 && ${#force_unpack[@]} -eq 0 \
-          && ${#diff[@]} -eq 0 ]]; then
+    if [[ ${#_actions[@]} -eq 0 ]]; then
         _setup_main_usage
         unfunction _setup_main_usage
         return 1
     fi
+    if [[ ${#_actions[@]} -gt 1 ]]; then
+        error "${_actions[*]} are mutually exclusive — one action per invocation"
+        unfunction _setup_main_usage
+        return 1
+    fi
+
+    # Route the positional file list to the single action, with arity checks.
+    case "${_actions[1]}" in
+        -i) if [[ $# -eq 0 ]]; then
+                error "-i/--ingest requires at least one path"
+                unfunction _setup_main_usage
+                return 1
+            fi
+            ingest=( "$@" ) ;;
+        -t) if [[ $# -eq 0 ]]; then
+                error "-t/--track requires at least one path"
+                unfunction _setup_main_usage
+                return 1
+            fi
+            track=( "$@" ) ;;
+        -x) if [[ $# -eq 0 ]]; then
+                error "-x/--untrack requires at least one path"
+                unfunction _setup_main_usage
+                return 1
+            fi
+            untrack=( "$@" ) ;;
+        -u) unpack_files=( "$@" ) ;;        # empty list = unpack everything
+        -U) force_unpack_files=( "$@" ) ;;  # empty list = force-unpack everything
+        -d) diff_files=( "$@" ) ;;          # empty list = diff everything
+        -s)
+            if [[ $# -gt 0 ]]; then
+                error "-s takes no file arguments (got: $*)"
+                unfunction _setup_main_usage
+                return 1
+            fi ;;
+    esac
 
     unfunction _setup_main_usage
 

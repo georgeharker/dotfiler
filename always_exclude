@@ -23,6 +23,13 @@ __pycache__/
 *.pyc
 *.zwc
 
+# Repo-root infrastructure dirs (dotfiler's test/ and docs/, zdot's
+# tests/ and docs/) are not dotfiles. Anchored so nested user dirs like
+# .config/foo/tests/ or .config/foo/docs/ are still linked.
+/test/
+/tests/
+/docs/
+
 # CI / GitHub metadata
 .github/
 

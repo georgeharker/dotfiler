@@ -95,16 +95,22 @@ _dotfiler_gui_args() {
 }
 
 # Complete setup command arguments
+#
+# Action flags are bare and mutually exclusive (one action per invocation);
+# file arguments are positionals belonging to that action, so every action
+# flag shares one exclusion group and files complete via the trailing
+# '*:file:_files'.
 _dotfiler_setup_args() {
+    local _excl='-s --setup -i --ingest -t --track -x --untrack -u --unpack -U --force-unpack -d --diff'
     _arguments \
         '(- *)--help[Show help message]' \
-        '(-i --ingest)'{-i,--ingest}'[Track and ingest files]:file:_files' \
-        '(-s --setup)'{-s,--setup}'[Run complete setup process]' \
-        '(-u --unpack)'{-u,--unpack}'[Unpack and link files (respects exclusions)]:file:_files' \
-        '(-U --force-unpack)'{-U,--force-unpack}'[Force unpack files (ignore exclusions)]:file:_files' \
-        '(-t --track)'{-t,--track}'[Track files without creating symlinks]:file:_files' \
-        '(-x --untrack)'{-x,--untrack}'[Remove files from tracking]:file:_files' \
-        '(-d --diff)'{-d,--diff}'[Show differences for tracked files]' \
+        "($_excl)"{-s,--setup}'[Auto-ingest dotfiles from ~/ (no file arguments)]' \
+        "($_excl)"{-i,--ingest}'[Ingest files: track then link]' \
+        "($_excl)"{-t,--track}'[Track files without creating symlinks]' \
+        "($_excl)"{-x,--untrack}'[Remove files from tracking]' \
+        "($_excl)"{-u,--unpack}'[Unpack listed files, or everything (respects exclusions)]' \
+        "($_excl)"{-U,--force-unpack}'[Force unpack, ignoring exclusions]' \
+        "($_excl)"{-d,--diff}'[Read-only report of repo vs home state]' \
         '(-q --quiet)'{-q,--quiet}'[Run in quiet mode (suppress output)]' \
         '(-D --dry-run)'{-D,--dry-run}'[Show what would be done without making changes]' \
         '(-y --yes)'{-y,--yes}'[Answer yes to all prompts]' \
@@ -112,7 +118,8 @@ _dotfiler_setup_args() {
          '*'{-C,--component}'[Setup specific component (repeatable)]:component:_dotfiler_components' \
          '--list-components[List available components]' \
          '--bootstrap[Bootstrap mode: read hooks from repo, implies -u]' \
-         '--bootstrap-hook[Install hook symlink into dotfiles repo]:hook file:_files'
+         '--bootstrap-hook[Install hook symlink into dotfiles repo]:hook file:_files' \
+         '*:file:_files'
 }
 
 # Dynamic component name completion for --component / -C
