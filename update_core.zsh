@@ -429,8 +429,32 @@ _update_core_component_tip_range() {
             # whose single tag namespace is shared by every component — two
             # repos both tagging v<X>.<Y>.<Z> makes tag-following fail with
             # "would clobber existing tag" (silently, under -q).
-            _update_core_read_sha_marker "$_comp_dir" || return 1
-            _old="$REPLY"
+            # The marker is bootstrap-owned: setup --bootstrap-hook writes
+            # it, it is TRACKED so clones propagate it, and post advances
+            # it. A missing marker on a real subtree is therefore an error
+            # — report it loudly and refuse to plan rather than silently
+            # re-pinning. A prefix with no subtree metadata at all was
+            # never subtree-added (plain subdir): the parent repo manages
+            # it, so defer quietly.
+            if _update_core_read_sha_marker "$_comp_dir"; then
+                _old="$REPLY"
+            else
+                _update_core_sha_marker_path "$_comp_dir"
+                local _tr_marker="$REPLY"
+                _update_core_get_parent_root "$_comp_dir"
+                local _tr_parent="${reply[1]}"
+                local _tr_prefix="${${_comp_dir:A}#${_tr_parent}/}"
+                if _update_core_subtree_split_sha "$_tr_parent" "$_tr_prefix"; then
+                    error "update_core: subtree SHA marker missing for ${_tr_prefix}"
+                    error "  bootstrap should have written ${_tr_marker}"
+                    error "  restore it (last synced SHA from subtree metadata):"
+                    error "    print -r -- ${REPLY} > ${_tr_marker}"
+                    error "  or re-run: dotfiler setup --bootstrap-hook <hook-path>"
+                else
+                    log_debug "update_core: component_tip_range: ${_tr_prefix} has no subtree metadata — parent manages it"
+                fi
+                return 1
+            fi
             [[ -n "$_subtree_url" && -n "$_branch" ]] || return 1
             local _fetch_err _fetched_tip
             # No -q: per-ref rejections only print without it, and an empty
@@ -786,6 +810,27 @@ _update_core_read_sha_marker() {
         [[ -n "$REPLY" ]] && return 0
     fi
     REPLY=""
+    return 1
+}
+
+# _update_core_subtree_split_sha <parent_repo> <prefix>
+# Sets REPLY to the child-repo SHA recorded by the most recent git-subtree
+# add/pull commit for <prefix> (its git-subtree-split trailer) — the
+# authoritative "last synced" SHA when the marker file is unavailable.
+# Returns 1 when no subtree metadata exists for the prefix (i.e. the
+# directory was never `git subtree add`-ed).
+_update_core_subtree_split_sha() {
+    local _parent=$1 _prefix=$2
+    REPLY=""
+    local _line
+    while IFS= read -r _line; do
+        if [[ -n "$_line" ]]; then
+            REPLY="$_line"
+            return 0
+        fi
+    done < <(git -C "$_parent" log --fixed-strings \
+        --grep="git-subtree-dir: ${_prefix}" \
+        --format='%(trailers:key=git-subtree-split,valueonly=true)' 2>/dev/null)
     return 1
 }
 
@@ -1989,9 +2034,23 @@ _update_core_is_available_subtree() {
     if _update_core_read_sha_marker "$_subtree_dir"; then
         _local_head=$REPLY
     else
-        # No marker → first run; assume update available to bootstrap
-        log_debug "update_core: no subtree SHA marker found — assuming update available"
-        return 0
+        # The marker is bootstrap-owned and tracked; distinguish the two
+        # ways it can be absent:
+        #   - subtree metadata exists → broken state: report available so
+        #     the update runs and surfaces the loud restore-the-marker
+        #     error from component_tip_range.
+        #   - no metadata → never subtree-added (plain subdir, possibly
+        #     misdetected via the non-empty default spec): the parent repo
+        #     manages it — never nag.
+        _update_core_get_parent_root "$_subtree_dir"
+        local _av_parent="${reply[1]}"
+        local _av_prefix="${${_subtree_dir:A}#${_av_parent}/}"
+        if _update_core_subtree_split_sha "$_av_parent" "$_av_prefix"; then
+            log_debug "update_core: subtree SHA marker missing (metadata present) — reporting available to surface the error"
+            return 0
+        fi
+        log_debug "update_core: ${_av_prefix}: no subtree metadata — parent manages, not available"
+        return 1
     fi
 
     if [[ "$_channel" == release ]]; then

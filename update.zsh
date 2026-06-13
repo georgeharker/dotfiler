@@ -316,7 +316,15 @@ function _update_dotfiler_plan() {
                 verbose "update_self: plan done — dotfiler up to date"; info "dotfiler: up to date"; return 0
             fi
             verbose "update_self: plan: up to date but force active — populating plan vars"
-            _old=$(git -C "$script_dir" rev-parse HEAD 2>/dev/null) || _old=""
+            if [[ "$_dotfiler_topology" == subtree ]] && \
+                    _update_core_read_sha_marker "$script_dir"; then
+                # Inside a subtree, `rev-parse HEAD` is the PARENT repo's
+                # SHA — post would record it into the marker and poison the
+                # next range. The marker is the subtree's true position.
+                _old="$REPLY"
+            else
+                _old=$(git -C "$script_dir" rev-parse HEAD 2>/dev/null) || _old=""
+            fi
             _new="$_old"
         else
             _old="${_tip_range%%..*}"

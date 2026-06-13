@@ -171,12 +171,26 @@ _setup_bootstrap_hook() {
         local _topology="${_dotfiler_hook_topology[$name]:-}"
         log_debug "bootstrap-hook: $name topology=$_topology comp_dir=$_comp_dir"
 
+        # Standalone components have their own .git, so `rev-parse HEAD` is
+        # the component's own SHA. A subtree prefix lives INSIDE the parent
+        # repo (no own .git), so `rev-parse HEAD` there resolves the PARENT
+        # SHA — wrong for the marker, which must record the last-synced
+        # CHILD SHA. The subtree-add commit's git-subtree-split trailer is
+        # that child SHA, so the subtree branch derives it separately below.
         local _comp_sha=""
         [[ -n "$_comp_dir" ]] && \
             _comp_sha=$(git -C "$_comp_dir" rev-parse HEAD 2>/dev/null) || _comp_sha=""
 
         case "$_topology" in
             subtree)
+                # Override _comp_sha with the split-trailer child SHA.
+                local _bs_prefix="${${_comp_dir:A}#${_repo_root:A}/}"
+                if _update_core_subtree_split_sha "$_repo_root" "$_bs_prefix"; then
+                    _comp_sha="$REPLY"
+                else
+                    warn "bootstrap-hook: no subtree metadata for ${_bs_prefix} — cannot record marker SHA"
+                    _comp_sha=""
+                fi
                 if [[ -n "$_comp_sha" && -n "$_comp_dir" ]]; then
                     if _update_core_write_sha_marker "$_comp_dir" "$_comp_sha"; then
                         _update_core_sha_marker_path "$_comp_dir"

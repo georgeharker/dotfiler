@@ -54,6 +54,10 @@ harness_init() {
 
     # Git isolation: fixtures never read the user's config, hooks, or
     # attributes; identity and default branch come from a sandbox config.
+    # GIT_ALLOW_PROTOCOL=file makes any accidental network fetch (e.g. a
+    # production default URL leaking into a fixture) fail loudly instead of
+    # silently pulling real history into the sandbox.
+    export GIT_ALLOW_PROTOCOL=file
     export GIT_CONFIG_SYSTEM=/dev/null
     export GIT_CONFIG_GLOBAL="$SBX/gitconfig"
     git config --file "$GIT_CONFIG_GLOBAL" user.name "harness"

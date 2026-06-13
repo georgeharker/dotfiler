@@ -25,6 +25,47 @@ strategy accordingly:
 linktree directory (where `.git` may be a symlink) is still detected as a
 submodule when appropriate.
 
+### Subdir, in detail
+
+"No-op (parent manages it)" is easy to misread as "subdir components don't
+update." They do — they just have no *component-specific* machinery, because
+their files **are** the dotfiles repo:
+
+1. `dotfiler update` pulls the dotfiles repo, advancing the component's files
+   in the working tree along with everything else.
+2. The **main unpack pass links them.** Subdir is the one topology whose graft
+   point is *not* excluded from the main unpack — `exclude_component_dirs`
+   (`setup_core.zsh`) skips subdir explicitly, while submodule/subtree/
+   standalone graft points are enforce-excluded and handled only by their own
+   hooks. So a subdir component at `.config/zdot/` is linked to
+   `~/.config/zdot/` by the same mirror-layout pass that links the rest of
+   your dotfiles.
+3. The component's own update hooks (plan/pull/post) all no-op for subdir, and
+   `_update_core_resolve_component_range` returns 1 — there is no independent
+   component SHA to resolve.
+
+One variant: a component whose files live under an enforce-excluded path (e.g.
+dotfiler itself under `.nounpack/dotfiler/`) is *not* linked anywhere — it runs
+in place, and the pull advancing the working tree is the entire update.
+
+### Choosing a topology
+
+All four are first-class; pick by how you want to track the component's
+version, not by which is "best":
+
+| Topology | Independent version? | Fresh-clone cost | Pick it when… |
+|----------|---------------------|------------------|---------------|
+| **Subdir** | No — moves only when you commit dotfiles | None (files are just there) | You've vendored/forked a component and don't track upstream separately; simplest possible setup. |
+| **Subtree** | Yes — tracked SHA marker; `git subtree pull` to advance | None (no submodule init; files are committed in) | You want upstream updates but a clone-and-go repo with no submodule ceremony. **This is the default for receiving published dotfiler/zdot.** |
+| **Submodule** | Yes — explicit gitlink pin per dotfiles commit | `git submodule update --init` | You want reviewable, pinned version bumps that travel with the dotfiles commit. |
+| **Standalone** | Yes — its own top-level repo; ext marker records its SHA | Clone the component separately | The component lives independently and dotfiles only references it (e.g. dotfiler cloned on its own). |
+
+Detection is automatic, but **subtree vs subdir hinges on the `subtree-remote`
+spec**: an embedded component is detected as `subtree` whenever a (non-empty)
+`subtree-remote` is configured — and dotfiler/zdot ship a non-empty default so
+published installs receive updates. To deploy as a true subdir (no independent
+updates), clear the spec: `zstyle ':<scope>:update' subtree-remote ''`.
+
 ## Branch Resolution
 
 Round 2 (self-directed) pulls resolve the upstream branch via a chain
