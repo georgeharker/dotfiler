@@ -35,10 +35,25 @@ print -r -- "edited" > "$repo/.zshrc"
 _update_core_check_dirty "$repo"; check_rc "modified tracked file is dirty" $? 1
 git -C "$repo" checkout -q -- .zshrc
 print -r -- "stray" > "$repo/.untracked"
-_update_core_check_dirty "$repo"; check_rc "untracked file is dirty" $? 1
-_update_core_check_dirty "$repo" --exclude .untracked
-check_rc "excluded path is tolerated" $? 0
+_update_core_check_dirty "$repo"; check_rc "untracked file is NOT dirty (stash can't capture it)" $? 0
 rm -f "$repo/.untracked"
+print -r -- "edited" > "$repo/.config/app/conf"
+_update_core_check_dirty "$repo" --exclude .config/app
+check_rc "excluded path is tolerated" $? 0
+git -C "$repo" checkout -q -- .config/app/conf
+
+# regression: modified + untracked used to fail "still dirty after stash"
+print -r -- "edited" > "$repo/.zshrc"
+mkdir -p "$repo/.config/newtool"; print -r -- "x" > "$repo/.config/newtool/conf"
+_dotfiler_stash_consent[${repo:A}]=y
+_update_core_maybe_stash "$repo" "test" 2>/dev/null; rc=$?
+check_rc "maybe_stash succeeds with untracked files present" $rc 0
+check_rc "a stash was created (REPLY)" $REPLY 1
+if [[ -f "$repo/.config/newtool/conf" ]]; then (( pass++ )); else printf 'FAIL  untracked file left in place\n'; (( fail++ )); fi
+_update_core_pop_stash "$repo" "test"; check_rc "pop restores modified file" $? 0
+git -C "$repo" checkout -q -- .zshrc
+rm -r "$repo/.config/newtool"
+_dotfiler_stash_consent=()
 
 # ---------------------------------------------------------------------------
 section "stash round-trip across an update"

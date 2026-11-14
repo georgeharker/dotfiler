@@ -934,6 +934,11 @@ _update_core_resolve_remote_sha() {
 # Uses git status --porcelain rather than git diff --quiet so that submodule
 # working tree mismatches (stale submodule HEAD vs gitlink) are detected —
 # git diff --quiet ignores submodule state by default.
+# Untracked files are NOT considered dirty (--untracked-files=no): `git stash
+# push` and `git pull --autostash` never capture them, so counting them made
+# the post-stash verification fail forever on any new file.  They also don't
+# block a ff/merge — if upstream adds the same path, git refuses loudly and
+# nothing is lost.
 # Multiple --exclude <path> args may be provided; lines whose path matches
 # any exclude are ignored (e.g. expected submodule gitlink mismatches that
 # will be staged later by their own component's post-marker).
@@ -945,7 +950,7 @@ _update_core_check_dirty() {
         shift 2
     done
     if (( ${#_excludes[@]} == 0 )); then
-        [[ -z "$(git -C "$_dir" status --porcelain 2>/dev/null)" ]]
+        [[ -z "$(git -C "$_dir" status --porcelain --untracked-files=no 2>/dev/null)" ]]
         return
     fi
     # Filter out lines whose path matches any exclude prefix.
@@ -965,7 +970,7 @@ _update_core_check_dirty() {
         done
         # If any non-excluded dirty line remains, repo is dirty.
         (( _matched )) || return 1
-    done < <(git -C "$_dir" status --porcelain 2>/dev/null)
+    done < <(git -C "$_dir" status --porcelain --untracked-files=no 2>/dev/null)
     return 0
 }
 
@@ -1079,7 +1084,7 @@ _update_core_maybe_stash() {
     # passed through so expected survivors (e.g. submodule gitlink mismatch)
     # are tolerated.
     if ! _update_core_check_dirty "$_dir" "${_exclude_args[@]}"; then
-        warn "${_label}: repo still dirty after stash (submodule pointer or untracked files?)"
+        warn "${_label}: repo still dirty after stash (submodule pointer or dirty submodule content?)"
         warn "${_label}: commit or clean changes manually before updating"
         git -C "$_dir" stash pop -q 2>/dev/null
         return 1
