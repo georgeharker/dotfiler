@@ -249,6 +249,7 @@ run_core_notty -i --repo-dir "$DOTREPO" --link-dest "$H" "$H/.y3" --yes
 check "--yes after the file list"           1 '\.\. Copied'
 run_core_notty -i --no --repo-dir "$DOTREPO" --link-dest "$H" "$H/.n1"
 check "--no long form answers no"           0 '\.\. Copied|No terminal'
+check "declined track: no stray git add"     0 'pathspec|could not open directory'
 run_core_notty -i --repo-dir "$DOTREPO" --link-dest "$H" "$H/.p1"
 check "no terminal: prompt says so"         1 'No terminal to ask'
 check "no terminal: no zsh read error"      0 "can't open terminal"

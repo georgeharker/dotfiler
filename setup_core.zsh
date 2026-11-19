@@ -1304,8 +1304,10 @@ if [[ ${#track[@]} -gt 0 ]]; then
   for file in ${track[@]}; do
     info "Copying in file $file"
             copy_in_if_needed $file || return 1
-    # Git add needs the path relative to dotfiles directory
-    safe_git -C $dotfiles_dir add "$file"
+    # Git add needs the path relative to dotfiles directory. Stages updates to
+    # already-tracked files (copy_in_if_needed only adds fresh copies); skip
+    # when nothing landed in the repo, as after declining "Track".
+    [[ -e "$dotfiles_dir/$file" ]] && safe_git -C $dotfiles_dir add "$file"
   done
 fi
 
