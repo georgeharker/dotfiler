@@ -567,6 +567,13 @@ function prompt_yes_no(){
   # terminal), it leaves REPLY untouched — without the local this echoed
   # whatever stale value the last REPLY-returning helper left behind.
   local REPLY=''
+  # No terminal to ask on (agent, CI, cron, piped): read -q would fail with
+  # zsh's cryptic "not interactive and can't open terminal" and fall through
+  # as a silent "no". Say so, and how to answer up front.
+  if ! { : </dev/tty } 2>/dev/null; then
+    warn "No terminal to ask \"$1?\" -- answering no (pass -y/--yes or -n/--no)" > /dev/stderr
+    return 1
+  fi
   if read -qs "REPLY?$1? (N/y)"; then
         >&2 echo $REPLY
         return 0
@@ -1408,7 +1415,7 @@ function setup_core_main() {
     local script_name="${${(%):-%x}:A}"
 
     function _setup_main_usage() {
-        echo "Usage: $script_name <action> [file ...] [--dry-run | -D] [--yes | y] [--no | -n] [--repo-dir <path>] [--link-dest <path>]"
+        echo "Usage: $script_name <action> [file ...] [--dry-run | -D] [--yes | -y] [--no | -n] [--quiet | -q] [--repo-dir <path>] [--link-dest <path>]"
         echo ""
         echo "Exactly one action per invocation; all file arguments (globs welcome)"
         echo "belong to that action:"
@@ -1421,6 +1428,10 @@ function setup_core_main() {
         echo "  -d, --diff          Read-only: report repo vs home state (listed files or everything); changes nothing"
         echo "  -D, --dry-run       Show what actions would be taken without making changes"
         echo "  -g, --debug         Enable debug logging (one line per file traversed)"
+        echo "  -y, --yes           Answer yes to all prompts"
+        echo "  -n, --no            Answer no to all prompts"
+        echo "  -q, --quiet         Less output"
+        echo "Flags may come before or after the file list."
         echo "  --repo-dir <path>     Source repo root (default: auto-detected dotfiles dir)"
         echo "  --link-dest <path>    Where symlinks are planted (default: \$HOME)"
         echo ""
@@ -1450,11 +1461,11 @@ function setup_core_main() {
                        t=track -track=track \
                        x=untrack -untrack=untrack \
                        d=diff -diff=diff \
-                       q=quiet -q=quiet \
+                       q=quiet -quiet=quiet \
                        D=dry_run -dry-run=dry_run \
                        g=debug_flag -debug=debug_flag \
-                       y=defyes -y=defyes \
-                       n=defno -n=defno \
+                       y=defyes -yes=defyes \
+                       n=defno -no=defno \
                        -repo-dir:=opt_repo_dir \
                         -link-dest:=opt_link_dest \
                         -excludes+:=opt_excludes || \

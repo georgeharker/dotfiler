@@ -227,5 +227,35 @@ check "update shape: bare -u full unpack"   1 'Linking all files'
 destroy_sandbox
 
 # ---------------------------------------------------------------------------
+section "answer flags and prompting without a terminal"
+# run_core_notty <args...> — run_core with no controlling terminal (setsid),
+# the way agents, CI and cron invoke it: /dev/tty can't be opened.
+run_core_notty() {
+    REPLY_OUT="$(env HOME="$H" perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' zsh -c "
+        source '$core_dir/helpers.zsh'
+        source '$core_dir/setup_core.zsh'
+        typeset -ga _dotfiler_registered_hooks
+        setup_core_main $*" </dev/null 2>&1)"
+}
+make_sandbox .a
+print new > "$H/.y1"; print new > "$H/.y2"; print new > "$H/.y3"
+print new > "$H/.n1"; print new > "$H/.p1"
+
+run_core_notty -i --yes --repo-dir "$DOTREPO" --link-dest "$H" "$H/.y1"
+check "--yes long form answers yes"         1 '\.\. Copied'
+run_core_notty -i -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.y2"
+check "-y short form answers yes"           1 '\.\. Copied'
+run_core_notty -i --repo-dir "$DOTREPO" --link-dest "$H" "$H/.y3" --yes
+check "--yes after the file list"           1 '\.\. Copied'
+run_core_notty -i --no --repo-dir "$DOTREPO" --link-dest "$H" "$H/.n1"
+check "--no long form answers no"           0 '\.\. Copied|No terminal'
+run_core_notty -i --repo-dir "$DOTREPO" --link-dest "$H" "$H/.p1"
+check "no terminal: prompt says so"         1 'No terminal to ask'
+check "no terminal: no zsh read error"      0 "can't open terminal"
+check "no terminal: defaults to no"         0 '\.\. Copied'
+
+destroy_sandbox
+
+# ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' $pass $fail
 (( fail == 0 ))
