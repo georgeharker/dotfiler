@@ -802,44 +802,79 @@ function copy_in_if_needed(){
   return 0
 }
 
-function untrack_if_needed(){
-  # Input is now expected to be a path relative to HOME (already normalized)
-  local home_relative_path="$1"
-  local fullpath_dotfiles_dir="${dotfiles_dir:A}"
+# _links_to <home_path> <repo_path>
+#   True iff <home_path> is a symlink to <repo_path>. Targets are compared
+#   resolved (:A), so relative links and path aliases such as macOS
+#   /var -> /private/var still match. Warns about a link that points elsewhere.
+function _links_to(){
+  local home_path="$1" repo_path="$2" target
+  [[ -L "$home_path" ]] || return 1
+  target=$(readlink "$home_path")
+  [[ "$target" == /* ]] || target="${home_path:h}/$target"   # relative link
+  [[ "${target:A}" == "${repo_path:A}" ]] && return 0
+  warn ".. Symlink $home_path points elsewhere ($target); leaving it"
+  return 1
+}
 
-  # Construct paths from dest-relative path
-  src="${dotfiles_dir}/${home_relative_path}"
+function untrack_if_needed(){
+  # Input is a path relative to the link dest (already normalized)
+  local home_relative_path="$1"
+  local src="${dotfiles_dir}/${home_relative_path}"
   src="${src:A}"
-  home_path="${_setup_link_dest}/${home_relative_path}"
-  home_path="${home_path:A}"
-  
+  # :a (absolute, symlinks NOT resolved), not :A -- home_path is normally the
+  # very symlink we're here to remove, and :A would turn it into the repo file.
+  local home_path="${_setup_link_dest}/${home_relative_path}"
+  home_path="${home_path:a}"
+  local -a links=() rm_args=()
+  local f
+
   info_nonl "untracking $src (home: $home_path) .."
-  
-  if [[ -f "$src" ]]; then
-    # Remove symlink from home if it exists and points to this file
-    if [[ -L "$home_path" ]]; then
-      link_target=$(readlink "$home_path")
-      if [[ "$link_target" == "$src" ]]; then
-        safe_rm "$home_path"
-        action ".. Removed symlink $home_path"
-      else
-        warn ".. Symlink $home_path points to different target: $link_target"
-      fi
-    elif [[ -f "$home_path" ]]; then
-      warn ".. $home_path exists but is not a symlink"
+
+  # Excluded paths (.git/.nounpack internals, component graft points,
+  # always_exclude / dotfiles_exclude matches) are never linked, so there is
+  # nothing to untrack; refusing keeps a repo path such as
+  # ~/.dotfiles/dotfiles_exclude from git rm-ing dotfiler's own files.
+  if should_exclude_file "$src" $([[ -d "$src" ]] && print 1 || print 0); then
+    error ".. Refused to untrack $home_relative_path: excluded from unpacking, not a linked dotfile (use git rm directly if intended)"
+    return 1
+  fi
+
+  # Collect the home links to remove BEFORE git rm: the directory walk needs
+  # the repo files, which git rm deletes.
+  if [[ -f "$src" || -L "$src" ]]; then
+    if _links_to "$home_path" "$src"; then
+      links+=("$home_path")
+    elif [[ -e "$home_path" && ! -L "$home_path" ]]; then
+      warn ".. $home_path exists but is not a symlink; leaving it"
     fi
-    
-    # Remove from git and filesystem
-    safe_git -C "$dotfiles_dir" rm "$home_relative_path"
-    action ".. Removed $src from git tracking"
   elif [[ -d "$src" ]]; then
-    # Handle directory removal
-    safe_git -C "$dotfiles_dir" rm -r "$home_relative_path"
-    action ".. Removed directory $src from git tracking"
+    rm_args=(-r)
+    if [[ -L "$home_path" ]]; then
+      # the whole directory was linked
+      _links_to "$home_path" "$src" && links+=("$home_path")
+    elif [[ -d "$home_path" ]]; then
+      # per-file links under a real home directory (D: dotfiles, N: nullglob,
+      # ^/: anything but directories, i.e. files and symlinks)
+      for f in "$src"/**/*(DN^/); do
+        _links_to "$home_path/${f#$src/}" "$f" && links+=("$home_path/${f#$src/}")
+      done
+    fi
   else
     error ".. File $src does not exist"
-        return 1
+    return 1
   fi
+
+  # Only unlink once git has really let go of the file; if git rm refuses
+  # (e.g. staged-but-uncommitted changes), home keeps its working link.
+  if ! safe_git -C "$dotfiles_dir" rm -q "${rm_args[@]}" -- "$home_relative_path"; then
+    error ".. git rm failed for $home_relative_path; home links left in place"
+    return 1
+  fi
+  action ".. Removed $src from git tracking"
+  for f in "${links[@]}"; do
+    safe_rm "$f"
+    action ".. Removed symlink $f"
+  done
 }
 
 # ---------------------------------------------------------------------------
@@ -1295,7 +1330,9 @@ if [[ ${#track[@]} -gt 0 ]]; then
 fi
 
 if [[ ${#untrack[@]} -gt 0 ]]; then
-    _setup_normalize_path_array untrack "untrack" || return 1
+    # unpack mode: like -u, -x may name the file by where it lands in home or
+    # where it lives in the repo (untrack only ever applies to repo files).
+    _setup_normalize_path_array untrack "untrack" unpack || return 1
 fi
 
 if [[ ${#unpack_files[@]} -gt 0 ]]; then
@@ -1349,10 +1386,17 @@ fi
 
 # Untrack files
 if [[ ${#untrack[@]} -gt 0 ]]; then
+  # Keep going past a file that can't be untracked (e.g. git rm refuses
+  # staged-but-uncommitted changes), then fail overall naming the failures.
+  local -a _untrack_failed=()
   for file in ${untrack[@]}; do
     info "Untracking file $file"
-            untrack_if_needed $file || return 1
+    untrack_if_needed $file || _untrack_failed+=("$file")
   done
+  if (( ${#_untrack_failed[@]} )); then
+    error "Could not untrack: ${_untrack_failed[*]}"
+    return 1
+  fi
 fi
 
 if [[ ${#setup[@]} -gt 0 ]]; then
@@ -1608,7 +1652,7 @@ function setup_core_unload() {
         _gitignore_match_single should_exclude_file \
          normalize_path_to_dest_relative prompt_yes_no \
          safe_mkdir safe_ln safe_rm safe_cp safe_cp_r safe_git \
-         dolink link_if_needed copy_in_if_needed untrack_if_needed \
+         dolink link_if_needed copy_in_if_needed untrack_if_needed _links_to \
          _setup_init \
          _setup_normalize_path_array \
          _setup_save_exclusion_state _setup_restore_exclusion_state \

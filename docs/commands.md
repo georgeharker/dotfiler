@@ -43,12 +43,14 @@ Track and link dotfiles (`setup.zsh` / `setup_core.zsh`).
 Exactly one action flag may be given per invocation; every file argument
 (shell globs included) belongs to that action.
 
-Path arguments to `-i`/`-t`/`-x` resolve like normal shell paths (absolute, or
-relative to the current directory). `-u`/`-U` arguments may name the file
-either by where it lands (absolute under `~`, home-relative from anywhere, or
-relative to a current directory inside `~`) or by where it lives in the
-repo (absolute or cwd-relative under the dotfiles directory) — all four
-spellings resolve to the same link.
+Path arguments to `-i`/`-t` resolve like normal shell paths (absolute, or
+relative to the current directory). `-u`/`-U`/`-x` arguments may name the
+file either by where it lands (absolute under `~`, home-relative from
+anywhere, or relative to a current directory inside `~`) or by where it lives
+in the repo (absolute or cwd-relative under the dotfiles directory) — all
+four spellings resolve to the same link. `-x` refuses paths the exclusion
+rules cover (repo internals, component graft points, excluded files): they
+are never linked, so there is nothing to untrack.
 | `-C name` | `--component name` | Operate on one registered hook component (repeatable) |
 | | `--list-components` | List registered components |
 | | `--bootstrap` | Fresh-machine mode: initializes submodules (`--init --recursive`), reads hooks from the repo, implies `-u` |

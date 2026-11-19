@@ -329,5 +329,113 @@ check "normal link: rc 0"                    1 '^rc=0$'
 destroy_sandbox
 
 # ---------------------------------------------------------------------------
+section "untrack (-x) removes the home link, and only ours"
+# untrack_if_needed used to resolve the home path with :A, turning the link
+# into the repo file, so it never unlinked: git rm then left home dangling.
+is_link_to() { [[ -L "$1" && "$(readlink "$1")" == "$2" ]] }
+make_sandbox .a .b .c .config/app/c1 .config/app/c2
+run_core -u -y --repo-dir "$DOTREPO" --link-dest "$H"
+run_core_notty -x -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.a"
+check "file: link removed"                   1 'Removed symlink [^ ]*/\.a($|[^[:alnum:]._/-])'
+if [[ ! -e "$H/.a" && ! -L "$H/.a" && ! -e "$DOTREPO/.a" ]]; then
+    (( ++pass ))
+else
+    printf 'FAIL  file: home and repo both gone, nothing dangling\n'; (( ++fail ))
+fi
+run_core_notty -x -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.config/app"
+check "dir: per-file links removed"          2 'Removed symlink [^ ]*/\.config/app/c[12]($|[^[:alnum:]._/-])'
+if [[ ! -L "$H/.config/app/c1" && ! -L "$H/.config/app/c2" ]]; then
+    (( ++pass ))
+else
+    printf 'FAIL  dir: no dangling links left\n'; (( ++fail ))
+fi
+# not ours: a real file, and a link pointing somewhere else
+rm -f "$H/.b"; print mine > "$H/.b"
+run_core_notty -x -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.b"
+check "real file: left with a warning"       1 'exists but is not a symlink; leaving it'
+if [[ "$(<"$H/.b")" == mine && ! -L "$H/.b" ]]; then
+    (( ++pass ))
+else
+    printf 'FAIL  real file: untouched\n'; (( ++fail ))
+fi
+rm -f "$H/.c"; print o > "$H/other"; ln -s "$H/other" "$H/.c"
+run_core_notty -x -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.c"
+check "foreign link: left with a warning"    1 'points elsewhere'
+if is_link_to "$H/.c" "$H/other"; then
+    (( ++pass ))
+else
+    printf 'FAIL  foreign link: untouched\n'; (( ++fail ))
+fi
+destroy_sandbox
+
+make_sandbox .a
+run_core -u -y --repo-dir "$DOTREPO" --link-dest "$H"
+run_core_notty -x -y -D --repo-dir "$DOTREPO" --link-dest "$H" "$H/.a"
+check "dry run: reports the unlink"          1 'DRY RUN\] Would remove: [^ ]*/\.a'
+if is_link_to "$H/.a" "$DOTREPO/.a" && [[ -e "$DOTREPO/.a" ]]; then
+    (( ++pass ))
+else
+    printf 'FAIL  dry run: link and repo file untouched\n'; (( ++fail ))
+fi
+destroy_sandbox
+
+# -x takes the same spellings as -u: where the file lands OR where it lives
+# in the repo, absolute or cwd-relative; excluded repo paths are refused.
+make_sandbox .a .b .c .config/app/c1 .nounpack/tool
+run_core -u -y --repo-dir "$DOTREPO" --link-dest "$H"
+run_core_notty -x -y --repo-dir "$DOTREPO" --link-dest "$H" "$DOTREPO/.a"
+check "repo path (absolute): untracked"      1 'Removed symlink [^ ]*/\.a($|[^[:alnum:]._/-])'
+if [[ ! -L "$H/.a" ]]; then
+    (( ++pass ))
+else
+    printf 'FAIL  repo path (absolute): home link gone\n'; (( ++fail ))
+fi
+cd "$DOTREPO"
+run_core_notty -x -y --repo-dir "$DOTREPO" --link-dest "$H" .b
+cd - >/dev/null
+check "repo path (cwd in repo): untracked"   1 'Removed symlink [^ ]*/\.b($|[^[:alnum:]._/-])'
+if [[ ! -L "$H/.b" ]]; then
+    (( ++pass ))
+else
+    printf 'FAIL  repo path (cwd in repo): home link gone\n'; (( ++fail ))
+fi
+run_core_notty -x -y --repo-dir "$DOTREPO" --link-dest "$H" "$DOTREPO/.config/app"
+check "repo dir path: per-file links gone"   1 'Removed symlink [^ ]*/\.config/app/c1($|[^[:alnum:]._/-])'
+mkdir -p "$H/Development"; cd "$H/Development"
+run_core_notty -x -y --repo-dir "$DOTREPO" --link-dest "$H" .c
+cd - >/dev/null
+check "home-relative from outside: untracked" 1 'Removed symlink [^ ]*/\.c($|[^[:alnum:]._/-])'
+run_core_notty -x -y --repo-dir "$DOTREPO" --link-dest "$H" "$DOTREPO/.nounpack/tool"
+check "excluded repo path: refused"          1 'Refused to untrack \.nounpack/tool: excluded from unpacking'
+check "excluded repo path: not git rm'd"     0 'Removed [^ ]*\.nounpack'
+if [[ -f "$DOTREPO/.nounpack/tool" ]] && git -C "$DOTREPO" ls-files --error-unmatch .nounpack/tool >/dev/null 2>&1; then
+    (( ++pass ))
+else
+    printf 'FAIL  excluded repo path: still in repo and tracked\n'; (( ++fail ))
+fi
+destroy_sandbox
+
+# git rm refusing one file (staged-but-uncommitted changes) must not cost it
+# its link, must not stop the other files, and must fail the run overall.
+make_sandbox .a
+run_core -u -y --repo-dir "$DOTREPO" --link-dest "$H"
+print new > "$DOTREPO/.n"; git -C "$DOTREPO" add .n; ln -s "$DOTREPO/.n" "$H/.n"
+run_core_notty -x -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.n" "$H/.a"
+check "staged: git rm failure reported"      1 'git rm failed for \.n; home links left in place'
+check "staged: other files still processed"  1 'Removed symlink [^ ]*/\.a($|[^[:alnum:]._/-])'
+check "staged: run fails, naming the file"   1 'Could not untrack: \.n($|[^[:alnum:]._/-])'
+if is_link_to "$H/.n" "$DOTREPO/.n" && [[ -e "$H/.n" ]]; then
+    (( ++pass ))
+else
+    printf 'FAIL  staged: home keeps its working link\n'; (( ++fail ))
+fi
+if [[ ! -L "$H/.a" ]]; then
+    (( ++pass ))
+else
+    printf 'FAIL  staged: the other file was unlinked\n'; (( ++fail ))
+fi
+destroy_sandbox
+
+# ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' $pass $fail
 (( fail == 0 ))
