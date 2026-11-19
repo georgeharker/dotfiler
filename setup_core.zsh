@@ -642,7 +642,12 @@ function dolink(){
   dest=$2
   destdir="${dest:h}"
   safe_mkdir $destdir
-  safe_ln $src $destdir/
+  # Only report success when the link was made: ln fails e.g. if something
+  # already occupies dest, and the caller must hear about it.
+  if ! safe_ln $src $destdir/; then
+    error ".. Failed to link $src to $dest"
+    return 1
+  fi
   action ".. Linked $src to $dest"
 }
 
@@ -652,6 +657,12 @@ function link_if_needed(){
   local dest="${_setup_link_dest}/"${src#$fullpath_dotfiles_dir/}
   log_debug "link_if_needed src=$src dest=$dest"
   info_nonl "checking $src to $dest .."
+  # Nothing to link to: without this a missing src falls through to dolink.
+  # (-L too: a symlink committed in the repo is a valid src even if dangling.)
+  if [[ ! -e "$src" && ! -L "$src" ]]; then
+    error ".. Refused link of $src to $dest, not in the dotfiles directory"
+    return 1
+  fi
   if [[ -L "$dest" ]]; then
     linkfile=$(readlink $dest)
     if [[ "$src" != "$linkfile" ]]; then
@@ -709,14 +720,17 @@ function copy_in_if_needed(){
   if [[ -L "$src" ]]; then
     link_target=$(readlink "$src")
     link_target_abs="${link_target:A}"
-    if [[ "$link_target_abs" == "$fullpath_dotfiles_dir"* ]]; then
+    # Path-boundary match: dir itself or below it (not a prefix-sibling such
+    # as ~/.dotfiles.bak, which is an ordinary dotfile).
+    if [[ "$link_target_abs" == "$fullpath_dotfiles_dir" || "$link_target_abs" == "$fullpath_dotfiles_dir"/* ]]; then
       info ".. SKIPPING: $src is already a symlink to dotfiles ($link_target_abs)"
       return 0
     fi
   fi
 
-  # Check if source is already in dotfiles directory
-  if [[ "$src" == "$fullpath_dotfiles_dir"* ]]; then
+  # Check if source is already in dotfiles directory (path-boundary match,
+  # as above)
+  if [[ "$src" == "$fullpath_dotfiles_dir" || "$src" == "$fullpath_dotfiles_dir"/* ]]; then
     # Source is already in dotfiles, so we're probably re-ingesting from dotfiles to dotfiles
     # This shouldn't happen in normal usage, but let's handle it gracefully
     info ".. WARNING: Source $src is already in dotfiles directory"

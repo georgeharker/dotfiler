@@ -274,5 +274,60 @@ check "no terminal: defaults to no"         0 '\.\. Copied'
 destroy_sandbox
 
 # ---------------------------------------------------------------------------
+section "setup -s: a prefix-sibling of the repo is an ordinary dotfile"
+# ~/.dotfiles.bak shares the repo's path as a string prefix but is not inside
+# it; it must be offered for tracking like any dotfile, never skipped as
+# "already in dotfiles" and then linked from a repo path that doesn't exist.
+make_sandbox .a
+mkdir -p "$H/.dotfiles.bak"; print old > "$H/.dotfiles.bak/x"
+run_core_notty -s --no --repo-dir "$DOTREPO" --link-dest "$H"
+check "sibling not mistaken for the repo"    0 'already in dotfiles directory'
+check "sibling offered (declined)"           1 'Not tracking [^ ]*/\.dotfiles\.bak'
+check "declined sibling: no link attempt"    0 'Linked [^ ]*\.dotfiles\.bak|File exists|Refused link'
+if [[ -d "$H/.dotfiles.bak" && ! -L "$H/.dotfiles.bak" && ! -e "$DOTREPO/.dotfiles.bak" ]]; then
+    (( ++pass ))
+else
+    printf 'FAIL  declined sibling: home and repo untouched\n'; (( ++fail ))
+fi
+run_core_notty -s --yes --repo-dir "$DOTREPO" --link-dest "$H"
+check "accepted sibling: copied in"          1 'Copied [^ ]*/\.dotfiles\.bak to '
+check "accepted sibling: no bogus link"      0 'File exists|Refused link|Failed to link'
+destroy_sandbox
+
+# ---------------------------------------------------------------------------
+section "link_if_needed / dolink report failure instead of claiming success"
+# run_core_fn <code> — source the core, init for the sandbox, run <code>,
+# then print rc=<status> so the exit status is checkable in REPLY_OUT.
+run_core_fn() {
+    REPLY_OUT="$(env HOME="$H" zsh -c "
+        source '$core_dir/helpers.zsh'
+        source '$core_dir/setup_core.zsh'
+        typeset -ga _dotfiler_registered_hooks
+        _setup_init '$DOTREPO' '$H' 0 0 0 0
+        $1
+        print rc=\$?" 2>&1)"
+}
+make_sandbox .a
+run_core_fn "link_if_needed '$DOTREPO/.nope'"
+check "missing src: refused"                 1 'Refused link of [^ ]*/\.nope to [^ ]*, not in the dotfiles directory'
+check "missing src: fails"                   1 '^rc=1$'
+check "missing src: never says Linked"       0 'Linked'
+[[ ! -e "$H/.nope" && ! -L "$H/.nope" ]] && (( ++pass )) || { printf 'FAIL  missing src: no link created\n'; (( ++fail )); }
+# dolink links INTO dest's directory under src's own name (ln -s src dir/),
+# so an occupied dest means a real file of that name already there.
+print keep > "$H/.a"
+run_core_fn "dolink '$DOTREPO/.a' '$H/.a'"
+check "occupied dest: dolink reports failure" 1 'Failed to link [^ ]*/\.a to [^ ]*/\.a'
+check "occupied dest: dolink fails"          1 '^rc=1$'
+check "occupied dest: never says Linked"     0 'Linked'
+[[ "$(<"$H/.a")" == keep && ! -L "$H/.a" ]] && (( ++pass )) || { printf 'FAIL  occupied dest: file untouched\n'; (( ++fail )); }
+rm -f "$H/.a"
+run_core_fn "link_if_needed '$DOTREPO/.a'"
+check "normal link still works"             1 'Linked [^ ]*/\.a to '
+check "normal link: rc 0"                    1 '^rc=0$'
+[[ -L "$H/.a" ]] && (( ++pass )) || { printf 'FAIL  normal link created\n'; (( ++fail )); }
+destroy_sandbox
+
+# ---------------------------------------------------------------------------
 printf '\n%d passed, %d failed\n' $pass $fail
 (( fail == 0 ))
