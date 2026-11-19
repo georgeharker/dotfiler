@@ -250,6 +250,22 @@ check "--yes after the file list"           1 '\.\. Copied'
 run_core_notty -i --no --repo-dir "$DOTREPO" --link-dest "$H" "$H/.n1"
 check "--no long form answers no"           0 '\.\. Copied|No terminal'
 check "declined track: no stray git add"     0 'pathspec|could not open directory'
+check "declined ingest: not linked"         0 'File not found in dotfiles|Linking'
+check "declined ingest: says so"            1 'Not tracking'
+if [[ ! -L "$H/.n1" && ! -L "$H/.a" ]]; then
+    (( ++pass ))
+else
+    printf 'FAIL  declined ingest left home untouched\n'; (( ++fail ))
+fi
+run_core_notty -i -D --repo-dir "$DOTREPO" --link-dest "$H" "$H/.n1"
+check "dry-run ingest: reports the copy"    1 'DRY RUN\] Would copy'
+check "dry-run ingest: not declined"        0 'Not tracking|No terminal'
+# -s walks every dotfile in home; declining each must neither abort the run
+# nor leak loop-scoped `local` re-declarations (`name=value`) into output.
+run_core_notty -s --no --repo-dir "$DOTREPO" --link-dest "$H"
+check "setup -s declined: keeps going"      2 'Not tracking'
+check "setup -s declined: no local leaks"   0 '^[_a-z]+=[^ ]*$'
+check "setup -s skips the repo itself"     0 '\.dotfiles/\.dotfiles|Source [^ ]*/\.dotfiles is already'
 run_core_notty -i --repo-dir "$DOTREPO" --link-dest "$H" "$H/.p1"
 check "no terminal: prompt says so"         1 'No terminal to ask'
 check "no terminal: no zsh read error"      0 "can't open terminal"

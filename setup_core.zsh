@@ -772,11 +772,17 @@ function copy_in_if_needed(){
     fi
   else
     msg="Track $src"
-    if prompt_yes_no "$msg"; then
+    # Dry run reports what tracking would do (the safe_* helpers print it)
+    # rather than going through the prompt, which always says no in dry run.
+    if [[ ${#dry_run[@]} -gt 0 ]] || prompt_yes_no "$msg"; then
       safe_mkdir $destdir
       safe_cp_r $src $destdir
-      action ".. Copied $src to $dest"
+      [[ ${#dry_run[@]} -gt 0 ]] || action ".. Copied $src to $dest"
       safe_git -C "$dotfiles_dir" add "$dest"
+    else
+      warn ".. Not tracking $src"
+      # 2 = declined: nothing landed in the repo, so callers must not link it.
+      return 2
     fi
   fi
   return 0
@@ -1257,6 +1263,10 @@ _setup_normalize_path_array() {
 #   ingest, setup, track, untrack, unpack, force_unpack,
 #   unpack_files, force_unpack_files.
 function setup_run_all() {
+    # Function-scoped scratch, declared once here: zsh's `local x` inside a
+    # loop re-declares an existing local and prints `x=<value>` each pass.
+    local -a _declined=()
+    local _rc _crc normalized
     _setup_excludes_files=( "${@[7,-1]}" )
     _setup_init "$1" "$2" "$3" "$4" "${5:-0}" "${6:-0}"
 
@@ -1303,12 +1313,24 @@ fi
 if [[ ${#track[@]} -gt 0 ]]; then
   for file in ${track[@]}; do
     info "Copying in file $file"
-            copy_in_if_needed $file || return 1
+    copy_in_if_needed $file; _rc=$?
+    if (( _rc == 2 )); then
+      _declined+=("$file")
+      continue
+    fi
+    (( _rc == 0 )) || return 1
     # Git add needs the path relative to dotfiles directory. Stages updates to
     # already-tracked files (copy_in_if_needed only adds fresh copies); skip
     # when nothing landed in the repo, as after declining "Track".
     [[ -e "$dotfiles_dir/$file" ]] && safe_git -C $dotfiles_dir add "$file"
   done
+  # Ingest: a declined file isn't in the repo, so don't try to link it. If
+  # every file was declined, drop the unpack action entirely -- an empty
+  # file list would otherwise mean "unpack everything".
+  if [[ ${#ingest[@]} -gt 0 && ${#_declined[@]} -gt 0 ]]; then
+    unpack_files=("${(@)unpack_files:|_declined}")
+    (( ${#unpack_files[@]} )) || unpack=()
+  fi
 fi
 
 # Untrack files
@@ -1326,10 +1348,15 @@ if [[ ${#setup[@]} -gt 0 ]]; then
   files=(${(f)find_output})
   for file in "${files[@]}"; do
     [[ -n "$file" ]] || continue
+    # The dotfiles repo itself usually lives in home (~/.dotfiles) and so is
+    # found by this walk; it is the store, not a dotfile. Compared resolved,
+    # so a ~/.dotfiles symlink to the repo is skipped too.
+    [[ "${file:A}" == "${dotfiles_dir:A}" ]] && continue
     # Normalize the path to be home-relative
-    local normalized
     if normalized=$(normalize_path_to_dest_relative "$file"); then
-                copy_in_if_needed "$normalized" || return 1
+      copy_in_if_needed "$normalized"; _crc=$?
+      (( _crc == 2 )) && continue          # declined: nothing to link
+      (( _crc == 0 )) || return 1
       # For link_if_needed, we need the full dotfiles path
                 link_if_needed "${dotfiles_dir}/${normalized}" || return 1
       safe_git -C $dotfiles_dir add -A
