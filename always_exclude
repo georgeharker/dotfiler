@@ -20,6 +20,7 @@ node_modules/
 .cache/
 __pycache__/
 .mypy_cache/
+.ruff_cache/
 *.pyc
 *.zwc
 
