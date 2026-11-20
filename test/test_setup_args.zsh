@@ -290,7 +290,8 @@ else
     printf 'FAIL  declined sibling: home and repo untouched\n'; (( ++fail ))
 fi
 run_core_notty -s --yes --repo-dir "$DOTREPO" --link-dest "$H"
-check "accepted sibling: copied in"          1 'Copied [^ ]*/\.dotfiles\.bak to '
+# a directory, so ingested file by file
+check "accepted sibling: copied in"          1 'Copied [^ ]*/\.dotfiles\.bak/x to '
 check "accepted sibling: no bogus link"      0 'File exists|Refused link|Failed to link'
 destroy_sandbox
 
@@ -433,6 +434,130 @@ if [[ ! -L "$H/.a" ]]; then
     (( ++pass ))
 else
     printf 'FAIL  staged: the other file was unlinked\n'; (( ++fail ))
+fi
+destroy_sandbox
+
+# ---------------------------------------------------------------------------
+section "setup -s: directories are ingested file by file, one prompt each"
+# -s used to cp -r a top-level dir INTO <repo>/<dir> (nesting it) and never
+# link it; with the dir already in the repo, a src/* glob both skipped
+# dotfiles and broke safe_cp_r's two-argument call while claiming success.
+mk_cfg() {
+    mkdir -p "$H/.cfg/app" "$H/.cfg/node_modules/m"
+    print main > "$H/.cfg/app/conf"; print hidden > "$H/.cfg/.hidden"; print top > "$H/.cfg/top"
+    print junk > "$H/.cfg/node_modules/m/x.js"; print bak > "$H/.cfg/old.bak"
+    print other > "$H/elsewhere"; ln -s "$H/elsewhere" "$H/.cfg/foreign"
+}
+cfg_linked() {  # every expected file is a link into the repo with home's content
+    local f
+    for f in .cfg/app/conf .cfg/.hidden .cfg/top; do
+        [[ -L "$H/$f" && "$(readlink "$H/$f")" == "$DOTREPO/$f" && -f "$DOTREPO/$f" ]] || return 1
+    done
+}
+make_sandbox .a
+mk_cfg
+run_core_notty -s --repo-dir "$DOTREPO" --link-dest "$H"
+check "dir: asked once for the whole directory" 1 'Track 3 new file\(s\) under [^ ]*/\.cfg'
+check "dir: declined says so"                1 'Not tracking [^ ]*/\.cfg'
+if [[ ! -e "$DOTREPO/.cfg" && ! -L "$H/.cfg/top" ]]; then
+    (( ++pass ))
+else
+    printf 'FAIL  dir declined: nothing tracked or linked\n'; (( ++fail ))
+fi
+run_core_notty -s --yes --repo-dir "$DOTREPO" --link-dest "$H"
+if cfg_linked && [[ ! -e "$DOTREPO/.cfg/.cfg" ]]; then
+    (( ++pass ))
+else
+    printf 'FAIL  dir accepted: copied without nesting and linked per file\n'; (( ++fail ))
+fi
+if [[ ! -e "$DOTREPO/.cfg/node_modules" && ! -e "$DOTREPO/.cfg/old.bak" && ! -L "$H/.cfg/old.bak" ]]; then
+    (( ++pass ))
+else
+    printf 'FAIL  dir: excluded files neither copied nor linked\n'; (( ++fail ))
+fi
+check "dir: foreign symlink reported"        1 'Skipping symlink [^ ]*/\.cfg/foreign'
+if [[ "$(readlink "$H/.cfg/foreign")" == "$H/elsewhere" && ! -e "$DOTREPO/.cfg/foreign" ]]; then
+    (( ++pass ))
+else
+    printf 'FAIL  dir: foreign symlink left alone\n'; (( ++fail ))
+fi
+check "dir: no second prompt for identical files" 0 'identical, replace with link'
+# run again: everything is already linked, so there is nothing to ask
+run_core_notty -s --repo-dir "$DOTREPO" --link-dest "$H"
+check "dir re-run: no prompt"                0 'Track [0-9]+ new file'
+check "dir re-run: nothing to track"         1 'nothing to track under [^ ]*/\.cfg'
+destroy_sandbox
+
+# directory already in the repo, home differs: merged per file, dotfiles
+# included, then linked
+make_sandbox .a .cfg/app/conf
+print old > "$DOTREPO/.cfg/app/conf"; git -C "$DOTREPO" -c user.email=t@t -c user.name=t commit -qam old
+mk_cfg
+# unanswered first: the prompt text is only printed when actually asked
+run_core_notty -s --repo-dir "$DOTREPO" --link-dest "$H"
+check "dir in repo: only the new files counted" 1 'Track 2 new file\(s\)'
+run_core_notty -s --yes --repo-dir "$DOTREPO" --link-dest "$H"
+if cfg_linked && [[ "$(<"$DOTREPO/.cfg/app/conf")" == main ]]; then
+    (( ++pass ))
+else
+    printf 'FAIL  dir in repo: differing file updated, all linked\n'; (( ++fail ))
+fi
+destroy_sandbox
+
+# -t of a directory goes through copy_in_if_needed's directory branches
+make_sandbox .a
+mk_cfg
+run_core_notty -t -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.cfg"
+if [[ -f "$DOTREPO/.cfg/app/conf" && -f "$DOTREPO/.cfg/.hidden" && ! -e "$DOTREPO/.cfg/.cfg" ]]; then
+    (( ++pass ))
+else
+    printf 'FAIL  -t dir: copied in without nesting\n'; (( ++fail ))
+fi
+print newer > "$H/.cfg/app/conf"; print fresh > "$H/.cfg/.fresh"
+run_core_notty -t -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.cfg"
+check "-t dir differs: no copy error"        0 'Not a directory|Failed to update'
+if [[ "$(<"$DOTREPO/.cfg/app/conf")" == newer && -f "$DOTREPO/.cfg/.fresh" ]]; then
+    (( ++pass ))
+else
+    printf 'FAIL  -t dir differs: merged, dotfiles included\n'; (( ++fail ))
+fi
+destroy_sandbox
+
+# Exactly which questions -s asks: prompt_yes_no is replaced by a logger
+# that answers yes, except "Update tracked file" (declined, so the DIFFERENT
+# link question is reached).
+make_sandbox .a .b
+print old > "$DOTREPO/.b"; git -C "$DOTREPO" -c user.email=t@t -c user.name=t commit -qam old
+print content-.a > "$H/.a"                        # identical to the repo copy
+print new > "$H/.b"                               # differs from the repo copy
+print one > "$H/.one"; print two > "$H/.two"       # new
+mkdir -p "$H/.cfg"; print c > "$H/.cfg/c"; print d > "$H/.cfg/d"
+run_core_fn "prompt_yes_no() { print -r -- \"ASKED: \$1\"; [[ \$1 != Update\ tracked\ file* ]] }
+setup_core_main -s --repo-dir '$DOTREPO' --link-dest '$H'"
+check "top-level new file: one question each" 2 'ASKED: Track [^ ]*/\.(one|two)$'
+check "top-level: no identical-replace question" 0 'ASKED: .*identical, replace with link'
+check "already tracked + identical: not asked" 0 'ASKED: .*/\.a($|[^[:alnum:]._/-])'
+check "differing file: DIFFERENT still asked" 1 'ASKED: .*/\.b exists and is DIFFERENT, replace with link'
+check "directory: one question for all"      1 'ASKED: Track 2 new file\(s\) under [^ ]*/\.cfg'
+check "questions total"                      5 'ASKED: '
+if [[ -L "$H/.one" && -L "$H/.two" && -L "$H/.a" && -L "$H/.cfg/c" ]]; then
+    (( ++pass ))
+else
+    printf 'FAIL  -s prompts: everything agreed to is linked\n'; (( ++fail ))
+fi
+destroy_sandbox
+
+# dry run: nothing copied, so links are reported, not refused, and every
+# new file is reached
+make_sandbox .a
+print one > "$H/.one"; print two > "$H/.two"
+run_core_notty -s -D --repo-dir "$DOTREPO" --link-dest "$H"
+check "-s dry run: reports each link"        2 'DRY RUN\] Would link [^ ]*/\.(one|two) to'
+check "-s dry run: never refuses"            0 'Refused link'
+if [[ ! -e "$DOTREPO/.one" && ! -L "$H/.one" ]]; then
+    (( ++pass ))
+else
+    printf 'FAIL  -s dry run: nothing changed\n'; (( ++fail ))
 fi
 destroy_sandbox
 

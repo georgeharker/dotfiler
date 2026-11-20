@@ -659,7 +659,13 @@ function link_if_needed(){
   info_nonl "checking $src to $dest .."
   # Nothing to link to: without this a missing src falls through to dolink.
   # (-L too: a symlink committed in the repo is a valid src even if dangling.)
+  # In a dry run the copy that would have created src didn't happen, so a
+  # missing src is expected: report the link instead of refusing.
   if [[ ! -e "$src" && ! -L "$src" ]]; then
+    if [[ ${#dry_run[@]} -gt 0 ]]; then
+      action "[DRY RUN] Would link $src to $dest"
+      return 0
+    fi
     error ".. Refused link of $src to $dest, not in the dotfiles directory"
     return 1
   fi
@@ -674,17 +680,21 @@ function link_if_needed(){
     info ".. $dest exists checking contents for diffs"
     # check if the contents are the same
     diffs="${(f@)$(diff "$src" "$dest")}"
+    local _identical=0
+    diff -q "$src" "$dest" >/dev/null 2>&1 && _identical=1
     if [[ ${#diffs[@]} -gt 0 ]]; then
       warn "Diffs (${#diffs[@]}):"
       for each ("$diffs[@]")
       do
         warn "${each}"
       done
-      msg=".. file $dest exists and is DIFFERENT, replace with link?"
+      msg=".. file $dest exists and is DIFFERENT, replace with link"
     else
-      msg=".. file $dest exists and is identical, replace with link?"
+      msg=".. file $dest exists and is identical, replace with link"
     fi
-    if prompt_yes_no "$msg"; then
+    # A directory ingest already approved tracking its files (see
+    # _setup_ingest_dir); an identical file needs no second question.
+    if (( _identical )) && [[ -n "${_setup_track_approved:-}" ]] || prompt_yes_no "$msg"; then
       safe_rm $dest
       dolink $src $dest
     else
@@ -739,11 +749,10 @@ function copy_in_if_needed(){
 
   # Use the home-relative path to construct destination in dotfiles
   dest="${dotfiles_dir}/${home_relative_path}"
-  if [ ! -d "$src" ]; then
-      destdir="${dest:h}"
-  else
-      destdir="${dest}"
-  fi
+  # Parent of dest for files AND directories: cp -r src parent/ creates
+  # parent/<name>; copying into dest itself would nest a directory
+  # (<repo>/.cfg/.cfg/...).
+  destdir="${dest:h}"
   
   info_nonl "checking $src to $dest ($destdir) .."
   if [[ -e "$dest" ]]; then
@@ -757,7 +766,7 @@ function copy_in_if_needed(){
         info ".. ok"
       else
         warn ".. File $dest exists and differs from $src"
-        msg="Update tracked file $dest with contents from $src?"
+        msg="Update tracked file $dest with contents from $src"
         if prompt_yes_no "$msg"; then
           safe_cp "$src" "$dest"
           action ".. Updated $dest with contents from $src"
@@ -767,15 +776,20 @@ function copy_in_if_needed(){
       fi
     elif [[ -d "$src" ]]; then
       info ".. checking directory contents for diffs"
-      # Check if directory contents are the same
-      diffs=$(diff "$src" "$dest")
+      # Check if directory contents are the same (recursively)
+      diffs=$(diff -r "$src" "$dest")
       if [[ "$diffs" == "" ]]; then
         info ".. ok"
       else
         warn ".. Directory $dest exists and differs from $src"
-        msg="Update tracked directory $dest with contents from $src?"
+        msg="Update tracked directory $dest with contents from $src"
         if prompt_yes_no "$msg"; then
-          safe_cp_r "$src"/* "$dest"/
+          # src/. merges the contents, dotfiles included (a src/* glob both
+          # skipped dotfiles and handed safe_cp_r more arguments than it takes)
+          if ! safe_cp_r "$src/." "$dest/"; then
+            error ".. Failed to update $dest from $src"
+            return 1
+          fi
           action ".. Updated $dest with contents from $src"
         else
           warn ".. Skipped updating $dest"
@@ -788,7 +802,9 @@ function copy_in_if_needed(){
     msg="Track $src"
     # Dry run reports what tracking would do (the safe_* helpers print it)
     # rather than going through the prompt, which always says no in dry run.
-    if [[ ${#dry_run[@]} -gt 0 ]] || prompt_yes_no "$msg"; then
+    # _setup_track_approved: a directory ingest already asked once for all
+    # of its files.
+    if [[ ${#dry_run[@]} -gt 0 || -n "${_setup_track_approved:-}" ]] || prompt_yes_no "$msg"; then
       safe_mkdir $destdir
       safe_cp_r $src $destdir
       [[ ${#dry_run[@]} -gt 0 ]] || action ".. Copied $src to $dest"
@@ -800,6 +816,53 @@ function copy_in_if_needed(){
     fi
   fi
   return 0
+}
+
+# _setup_ingest_dir <home-relative dir>
+#   setup -s for a real directory. dotfiler links per FILE (as unpack does),
+#   so walk the directory's files -- skipping what the exclusion rules would
+#   never unpack (caches, node_modules, ...), files already linked into the
+#   repo, and other symlinks (never turned into copies) -- ask ONCE for the
+#   whole directory, then copy in and link each file. Per-file prompts remain
+#   only where a repo copy already exists and differs.
+#   Returns 0 on success, 2 if declined (nothing tracked), 1 on error.
+function _setup_ingest_dir(){
+  local rel="$1"
+  local home_dir="${_setup_link_dest}/${rel}"
+  local repo_abs="${dotfiles_dir:A}"
+  local -a files=()
+  local f r n_new=0 _rc
+
+  # D: dotfiles, N: nullglob, ^/: anything but directories
+  for f in "$home_dir"/**/*(DN^/); do
+    r="${f#${_setup_link_dest}/}"
+    should_exclude_file "${repo_abs}/${r}" 0 && continue
+    if [[ -L "$f" ]]; then
+      [[ "$(readlink "$f")" == "${repo_abs}/${r}" || "${f:A}" == "${repo_abs}/${r}" ]] \
+        || report "Skipping symlink $f (not a dotfiles link)"
+      continue
+    fi
+    files+=("$r")
+    [[ -e "${repo_abs}/${r}" ]] || (( ++n_new ))
+  done
+
+  if (( ! ${#files[@]} )); then
+    info ".. nothing to track under $home_dir"
+    return 0
+  fi
+  if (( n_new )) && ! { [[ ${#dry_run[@]} -gt 0 ]] || prompt_yes_no "Track ${n_new} new file(s) under $home_dir"; }; then
+    warn ".. Not tracking $home_dir"
+    return 2
+  fi
+
+  # Dynamically scoped: copy_in_if_needed / link_if_needed see the approval.
+  local _setup_track_approved=1
+  for r in "${files[@]}"; do
+    copy_in_if_needed "$r"; _rc=$?
+    (( _rc == 2 )) && continue
+    (( _rc == 0 )) || return 1
+    link_if_needed "${dotfiles_dir}/${r}" || return 1
+  done
 }
 
 # _links_to <home_path> <repo_path>
@@ -1412,11 +1475,25 @@ if [[ ${#setup[@]} -gt 0 ]]; then
     [[ "${file:A}" == "${dotfiles_dir:A}" ]] && continue
     # Normalize the path to be home-relative
     if normalized=$(normalize_path_to_dest_relative "$file"); then
-      copy_in_if_needed "$normalized"; _crc=$?
-      (( _crc == 2 )) && continue          # declined: nothing to link
-      (( _crc == 0 )) || return 1
-      # For link_if_needed, we need the full dotfiles path
-                link_if_needed "${dotfiles_dir}/${normalized}" || return 1
+      if [[ -d "$file" && ! -L "$file" ]]; then
+        # A real directory is ingested file by file, with one prompt for the
+        # lot (a symlinked dir goes the per-entry way, as before).
+        _setup_ingest_dir "$normalized"; _crc=$?
+        (( _crc == 2 )) && continue        # declined: nothing tracked
+        (( _crc == 0 )) || return 1
+      else
+        copy_in_if_needed "$normalized"; _crc=$?
+        (( _crc == 2 )) && continue        # declined: nothing to link
+        (( _crc == 0 )) || return 1
+        # For link_if_needed, we need the full dotfiles path. Tracking it was
+        # already agreed (or the repo copy matches), so swapping an identical
+        # home file for its link needs no second question; a DIFFERENT one
+        # still asks. Scoped to this call only.
+        () {
+          local _setup_track_approved=1
+          link_if_needed "$1"
+        } "${dotfiles_dir}/${normalized}" || return 1
+      fi
       safe_git -C $dotfiles_dir add -A
     else
       warn "Skipping file that is not under home: $file"
@@ -1652,7 +1729,7 @@ function setup_core_unload() {
         _gitignore_match_single should_exclude_file \
          normalize_path_to_dest_relative prompt_yes_no \
          safe_mkdir safe_ln safe_rm safe_cp safe_cp_r safe_git \
-         dolink link_if_needed copy_in_if_needed untrack_if_needed _links_to \
+         dolink link_if_needed copy_in_if_needed untrack_if_needed _links_to _setup_ingest_dir \
          _setup_init \
          _setup_normalize_path_array \
          _setup_save_exclusion_state _setup_restore_exclusion_state \
