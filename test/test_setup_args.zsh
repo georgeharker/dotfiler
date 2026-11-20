@@ -330,20 +330,21 @@ check "normal link: rc 0"                    1 '^rc=0$'
 destroy_sandbox
 
 # ---------------------------------------------------------------------------
-section "untrack (-x) removes the home link, and only ours"
+section "untrack-delete (-X) removes the home link, and only ours"
+# -X: untrack AND delete (what -x did before it learned to keep a copy).
 # untrack_if_needed used to resolve the home path with :A, turning the link
 # into the repo file, so it never unlinked: git rm then left home dangling.
 is_link_to() { [[ -L "$1" && "$(readlink "$1")" == "$2" ]] }
 make_sandbox .a .b .c .config/app/c1 .config/app/c2
 run_core -u -y --repo-dir "$DOTREPO" --link-dest "$H"
-run_core_notty -x -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.a"
+run_core_notty -X -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.a"
 check "file: link removed"                   1 'Removed symlink [^ ]*/\.a($|[^[:alnum:]._/-])'
 if [[ ! -e "$H/.a" && ! -L "$H/.a" && ! -e "$DOTREPO/.a" ]]; then
     (( ++pass ))
 else
     printf 'FAIL  file: home and repo both gone, nothing dangling\n'; (( ++fail ))
 fi
-run_core_notty -x -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.config/app"
+run_core_notty -X -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.config/app"
 check "dir: per-file links removed"          2 'Removed symlink [^ ]*/\.config/app/c[12]($|[^[:alnum:]._/-])'
 if [[ ! -L "$H/.config/app/c1" && ! -L "$H/.config/app/c2" ]]; then
     (( ++pass ))
@@ -352,7 +353,7 @@ else
 fi
 # not ours: a real file, and a link pointing somewhere else
 rm -f "$H/.b"; print mine > "$H/.b"
-run_core_notty -x -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.b"
+run_core_notty -X -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.b"
 check "real file: left with a warning"       1 'exists but is not a symlink; leaving it'
 if [[ "$(<"$H/.b")" == mine && ! -L "$H/.b" ]]; then
     (( ++pass ))
@@ -360,7 +361,7 @@ else
     printf 'FAIL  real file: untouched\n'; (( ++fail ))
 fi
 rm -f "$H/.c"; print o > "$H/other"; ln -s "$H/other" "$H/.c"
-run_core_notty -x -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.c"
+run_core_notty -X -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.c"
 check "foreign link: left with a warning"    1 'points elsewhere'
 if is_link_to "$H/.c" "$H/other"; then
     (( ++pass ))
@@ -371,7 +372,7 @@ destroy_sandbox
 
 make_sandbox .a
 run_core -u -y --repo-dir "$DOTREPO" --link-dest "$H"
-run_core_notty -x -y -D --repo-dir "$DOTREPO" --link-dest "$H" "$H/.a"
+run_core_notty -X -y -D --repo-dir "$DOTREPO" --link-dest "$H" "$H/.a"
 check "dry run: reports the unlink"          1 'DRY RUN\] Would remove: [^ ]*/\.a'
 if is_link_to "$H/.a" "$DOTREPO/.a" && [[ -e "$DOTREPO/.a" ]]; then
     (( ++pass ))
@@ -380,11 +381,11 @@ else
 fi
 destroy_sandbox
 
-# -x takes the same spellings as -u: where the file lands OR where it lives
+# -x/-X take the same spellings as -u: where the file lands OR where it lives
 # in the repo, absolute or cwd-relative; excluded repo paths are refused.
 make_sandbox .a .b .c .config/app/c1 .nounpack/tool
 run_core -u -y --repo-dir "$DOTREPO" --link-dest "$H"
-run_core_notty -x -y --repo-dir "$DOTREPO" --link-dest "$H" "$DOTREPO/.a"
+run_core_notty -X -y --repo-dir "$DOTREPO" --link-dest "$H" "$DOTREPO/.a"
 check "repo path (absolute): untracked"      1 'Removed symlink [^ ]*/\.a($|[^[:alnum:]._/-])'
 if [[ ! -L "$H/.a" ]]; then
     (( ++pass ))
@@ -392,7 +393,7 @@ else
     printf 'FAIL  repo path (absolute): home link gone\n'; (( ++fail ))
 fi
 cd "$DOTREPO"
-run_core_notty -x -y --repo-dir "$DOTREPO" --link-dest "$H" .b
+run_core_notty -X -y --repo-dir "$DOTREPO" --link-dest "$H" .b
 cd - >/dev/null
 check "repo path (cwd in repo): untracked"   1 'Removed symlink [^ ]*/\.b($|[^[:alnum:]._/-])'
 if [[ ! -L "$H/.b" ]]; then
@@ -400,13 +401,13 @@ if [[ ! -L "$H/.b" ]]; then
 else
     printf 'FAIL  repo path (cwd in repo): home link gone\n'; (( ++fail ))
 fi
-run_core_notty -x -y --repo-dir "$DOTREPO" --link-dest "$H" "$DOTREPO/.config/app"
+run_core_notty -X -y --repo-dir "$DOTREPO" --link-dest "$H" "$DOTREPO/.config/app"
 check "repo dir path: per-file links gone"   1 'Removed symlink [^ ]*/\.config/app/c1($|[^[:alnum:]._/-])'
 mkdir -p "$H/Development"; cd "$H/Development"
-run_core_notty -x -y --repo-dir "$DOTREPO" --link-dest "$H" .c
+run_core_notty -X -y --repo-dir "$DOTREPO" --link-dest "$H" .c
 cd - >/dev/null
 check "home-relative from outside: untracked" 1 'Removed symlink [^ ]*/\.c($|[^[:alnum:]._/-])'
-run_core_notty -x -y --repo-dir "$DOTREPO" --link-dest "$H" "$DOTREPO/.nounpack/tool"
+run_core_notty -X -y --repo-dir "$DOTREPO" --link-dest "$H" "$DOTREPO/.nounpack/tool"
 check "excluded repo path: refused"          1 'Refused to untrack \.nounpack/tool: excluded from unpacking'
 check "excluded repo path: not git rm'd"     0 'Removed [^ ]*\.nounpack'
 if [[ -f "$DOTREPO/.nounpack/tool" ]] && git -C "$DOTREPO" ls-files --error-unmatch .nounpack/tool >/dev/null 2>&1; then
@@ -421,7 +422,7 @@ destroy_sandbox
 make_sandbox .a
 run_core -u -y --repo-dir "$DOTREPO" --link-dest "$H"
 print new > "$DOTREPO/.n"; git -C "$DOTREPO" add .n; ln -s "$DOTREPO/.n" "$H/.n"
-run_core_notty -x -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.n" "$H/.a"
+run_core_notty -X -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.n" "$H/.a"
 check "staged: git rm failure reported"      1 'git rm failed for \.n; home links left in place'
 check "staged: other files still processed"  1 'Removed symlink [^ ]*/\.a($|[^[:alnum:]._/-])'
 check "staged: run fails, naming the file"   1 'Could not untrack: \.n($|[^[:alnum:]._/-])'
@@ -438,6 +439,204 @@ fi
 destroy_sandbox
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+section "untrack (-x) keeps the file in home as a real copy"
+is_real_copy() { [[ -f "$1" && ! -L "$1" && "$(<"$1")" == "$2" ]] }
+untracked() { ! git -C "$DOTREPO" ls-files --error-unmatch "$1" >/dev/null 2>&1 }
+make_sandbox .a .b .r .config/app/c1 .config/app/c2 .whole/w1
+run_core -u -y --repo-dir "$DOTREPO" --link-dest "$H"
+rm -rf "$H/.whole"; ln -s "$DOTREPO/.whole" "$H/.whole"   # a dir linked as a whole
+run_core_notty -x -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.a"
+check "keep file: says so"                   1 'Kept [^ ]*/\.a as a real copy'
+if is_real_copy "$H/.a" content-.a && [[ ! -e "$DOTREPO/.a" ]] && untracked .a; then
+    (( ++pass ))
+else
+    printf 'FAIL  keep file: real copy in home, gone from repo and git\n'; (( ++fail ))
+fi
+run_core_notty -x -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.config/app"
+if is_real_copy "$H/.config/app/c1" content-.config/app/c1 \
+   && is_real_copy "$H/.config/app/c2" content-.config/app/c2 \
+   && [[ ! -e "$DOTREPO/.config/app" ]] && untracked .config/app/c1; then
+    (( ++pass ))
+else
+    printf 'FAIL  keep dir (per-file links): real copies, gone from repo\n'; (( ++fail ))
+fi
+run_core_notty -x -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.whole"
+if [[ -d "$H/.whole" && ! -L "$H/.whole" ]] && is_real_copy "$H/.whole/w1" content-.whole/w1 \
+   && [[ ! -e "$DOTREPO/.whole" ]]; then
+    (( ++pass ))
+else
+    printf 'FAIL  keep dir (linked whole): real directory copy\n'; (( ++fail ))
+fi
+rm -f "$H/.b"                                       # nothing in home at all
+run_core_notty -x -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.b"
+if is_real_copy "$H/.b" content-.b && [[ ! -e "$DOTREPO/.b" ]]; then
+    (( ++pass ))
+else
+    printf 'FAIL  keep: missing home path restored from the repo\n'; (( ++fail ))
+fi
+rm -f "$H/.r"; print mine > "$H/.r"                 # a real file of the user's own
+run_core_notty -x -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.r"
+check "keep: real home file left, warned"     1 'exists but is not a symlink; leaving it'
+if is_real_copy "$H/.r" mine; then
+    (( ++pass ))
+else
+    printf 'FAIL  keep: real home file untouched\n'; (( ++fail ))
+fi
+destroy_sandbox
+
+make_sandbox .a
+run_core -u -y --repo-dir "$DOTREPO" --link-dest "$H"
+run_core_notty -x -y -D --repo-dir "$DOTREPO" --link-dest "$H" "$H/.a"
+check "keep dry run: reports the copy"        1 'DRY RUN\] Would copy: [^ ]*/\.a'
+if is_link_to "$H/.a" "$DOTREPO/.a" && [[ -e "$DOTREPO/.a" ]] && ! untracked .a; then
+    (( ++pass ))
+else
+    printf 'FAIL  keep dry run: nothing changed\n'; (( ++fail ))
+fi
+destroy_sandbox
+
+# staged-but-uncommitted: git rm --cached accepts it, so -x keeps it safely
+make_sandbox .a
+print new > "$DOTREPO/.n"; git -C "$DOTREPO" add .n; ln -s "$DOTREPO/.n" "$H/.n"
+run_core_notty -x -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.n"
+check "keep staged: no failure"               0 'git rm failed|Could not untrack'
+if is_real_copy "$H/.n" new && [[ ! -e "$DOTREPO/.n" ]] && untracked .n; then
+    (( ++pass ))
+else
+    printf 'FAIL  keep staged: real copy in home, untracked\n'; (( ++fail ))
+fi
+run_core -x -X -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.a"
+check "-x and -X are mutually exclusive"      1 'mutually exclusive'
+destroy_sandbox
+
+# A symlink committed in the repo is handled as itself: keep must never act
+# on (let alone delete) what it points at.
+make_sandbox .a
+print precious > "$H/outside.txt"; ln -s "$H/outside.txt" "$DOTREPO/.lnk"
+git -C "$DOTREPO" add .lnk; git -C "$DOTREPO" -c user.email=t@t -c user.name=t commit -qm lnk
+ln -s "$DOTREPO/.lnk" "$H/.lnk"
+run_core_notty -x -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.lnk"
+if [[ "$(<"$H/outside.txt")" == precious ]] && is_link_to "$H/.lnk" "$H/outside.txt" \
+   && [[ ! -e "$DOTREPO/.lnk" && ! -L "$DOTREPO/.lnk" ]]; then
+    (( ++pass ))
+else
+    printf 'FAIL  keep committed symlink: target untouched, link copied to home\n'; (( ++fail ))
+fi
+destroy_sandbox
+
+# Uncommitted edits in the repo are never lost: -x deletes a repo working
+# copy only when it was copied home or matches HEAD; -X relies on git rm,
+# which refuses a file with local modifications.
+make_sandbox .e .l .u
+print "UNCOMMITTED E" > "$DOTREPO/.e"; print "home's own" > "$H/.e"   # real home file
+print "UNCOMMITTED L" > "$DOTREPO/.l"; ln -s "$DOTREPO/.l" "$H/.l"      # linked home
+print "home's own" > "$H/.u"                                           # unedited, real home
+run_core_notty -x -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.e" "$H/.l" "$H/.u"
+check "keep: unsafe repo copy kept, warned"  1 '\.e has changes git history doesn.t have'
+if is_real_copy "$DOTREPO/.e" "UNCOMMITTED E" && is_real_copy "$H/.e" "home's own" && untracked .e; then
+    (( ++pass ))
+else
+    printf 'FAIL  keep: uncommitted edit stays in repo (untracked), home untouched\n'; (( ++fail ))
+fi
+if is_real_copy "$H/.l" "UNCOMMITTED L" && [[ ! -e "$DOTREPO/.l" ]]; then
+    (( ++pass ))
+else
+    printf 'FAIL  keep: linked file with an edit lands in home, repo copy removed\n'; (( ++fail ))
+fi
+check "keep: committed copy removed silently" 0 '\.u has changes'
+if [[ ! -e "$DOTREPO/.u" ]] && is_real_copy "$H/.u" "home's own"; then
+    (( ++pass ))
+else
+    printf 'FAIL  keep: repo copy matching HEAD removed, home untouched\n'; (( ++fail ))
+fi
+destroy_sandbox
+make_sandbox .e
+print "UNCOMMITTED E" > "$DOTREPO/.e"; ln -s "$DOTREPO/.e" "$H/.e"
+run_core_notty -X -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.e"
+check "delete: git rm refuses local edits"   1 'git rm failed for \.e'
+if is_real_copy "$DOTREPO/.e" "UNCOMMITTED E" && is_link_to "$H/.e" "$DOTREPO/.e"; then
+    (( ++pass ))
+else
+    printf 'FAIL  delete: uncommitted edit and home link untouched\n'; (( ++fail ))
+fi
+destroy_sandbox
+
+# Directories linked as a whole. A file seen through such a link IS the repo
+# file, so untracking it alone is refused (else it would vanish from home);
+# untracking the parent turns a linked subdirectory into a real one (keep)
+# or removes its link (delete). Filenames with spaces included.
+mk_linked_dirs() {
+    make_sandbox .config/app/conf .config/top .foo/bar ".sp/a file"
+    mkdir -p "$H/.config" "$H/.sp"
+    ln -s "$DOTREPO/.config/app" "$H/.config/app"; ln -s "$DOTREPO/.config/top" "$H/.config/top"
+    ln -s "$DOTREPO/.foo" "$H/.foo"; ln -s "$DOTREPO/.sp/a file" "$H/.sp/a file"
+}
+mk_linked_dirs
+run_core_notty -x -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.foo/bar"
+check "inside a linked dir: refused"         1 'Refused to untrack \.foo/bar: it is inside a directory linked'
+if [[ "$(<"$H/.foo/bar")" == content-.foo/bar ]] && ! untracked .foo/bar; then
+    (( ++pass ))
+else
+    printf 'FAIL  inside a linked dir: file still there and tracked\n'; (( ++fail ))
+fi
+run_core_notty -x -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.config"
+if [[ -d "$H/.config/app" && ! -L "$H/.config/app" ]] && is_real_copy "$H/.config/app/conf" content-.config/app/conf \
+   && is_real_copy "$H/.config/top" content-.config/top && [[ ! -e "$DOTREPO/.config" ]]; then
+    (( ++pass ))
+else
+    printf 'FAIL  keep: linked subdir becomes a real dir, repo dirs left empty removed\n'; (( ++fail ))
+fi
+run_core_notty -x -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.sp"
+if is_real_copy "$H/.sp/a file" "content-.sp/a file"; then
+    (( ++pass ))
+else
+    printf 'FAIL  keep: filename with a space\n'; (( ++fail ))
+fi
+destroy_sandbox
+mk_linked_dirs
+run_core_notty -X -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.config"
+check "delete: linked subdir link removed"   1 'Removed symlink [^ ]*/\.config/app($|[^[:alnum:]._/-])'
+if [[ ! -e "$H/.config/app" && ! -L "$H/.config/app" && ! -L "$H/.config/top" ]]; then
+    (( ++pass ))
+else
+    printf 'FAIL  delete: nothing dangling under a linked subdir\n'; (( ++fail ))
+fi
+destroy_sandbox
+
+# a RELATIVE committed symlink keeps pointing at the same file from home
+make_sandbox .a .conf/real
+ln -s real "$DOTREPO/.conf/alias"
+git -C "$DOTREPO" add .conf/alias; git -C "$DOTREPO" -c user.email=t@t -c user.name=t commit -qm rel
+mkdir -p "$H/.conf"; ln -s "$DOTREPO/.conf/alias" "$H/.conf/alias"
+run_core_notty -x -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.conf/alias"
+if is_link_to "$H/.conf/alias" "$DOTREPO/.conf/real" && [[ "$(<"$H/.conf/alias")" == content-.conf/real \
+   && -f "$DOTREPO/.conf/real" ]]; then
+    (( ++pass ))
+else
+    printf 'FAIL  keep relative symlink: same target from home, target untouched\n'; (( ++fail ))
+fi
+destroy_sandbox
+
+# Only tracked files are untracked: an ignored file in the same directory
+# stays in the repo and is not copied into home.
+make_sandbox .app/conf
+print local-secret > "$DOTREPO/.app/.gitignore"
+git -C "$DOTREPO" add .app/.gitignore; git -C "$DOTREPO" -c user.email=t@t -c user.name=t commit -qm ign
+print secret > "$DOTREPO/.app/local-secret"
+mkdir -p "$H/.app"
+ln -s "$DOTREPO/.app/conf" "$H/.app/conf"; ln -s "$DOTREPO/.app/.gitignore" "$H/.app/.gitignore"
+run_core_notty -x -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.app"
+if [[ "$(<"$DOTREPO/.app/local-secret")" == secret && ! -e "$H/.app/local-secret" ]] \
+   && is_real_copy "$H/.app/conf" content-.app/conf && [[ ! -e "$DOTREPO/.app/conf" ]]; then
+    (( ++pass ))
+else
+    printf 'FAIL  keep dir: ignored file stays in repo, not copied home\n'; (( ++fail ))
+fi
+run_core_notty -X -y --repo-dir "$DOTREPO" --link-dest "$H" "$H/.app" 2>/dev/null
+check "untracked path: refused"              1 '\.app is not tracked in the dotfiles repo'
+destroy_sandbox
+
 section "setup -s: directories are ingested file by file, one prompt each"
 # -s used to cp -r a top-level dir INTO <repo>/<dir> (nesting it) and never
 # link it; with the dir already in the repo, a src/* glob both skipped

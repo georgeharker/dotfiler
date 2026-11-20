@@ -101,13 +101,14 @@ _dotfiler_gui_args() {
 # flag shares one exclusion group and files complete via the trailing
 # '*:file:_files'.
 _dotfiler_setup_args() {
-    local _excl='-s --setup -i --ingest -t --track -x --untrack -u --unpack -U --force-unpack -d --diff'
+    local _excl='-s --setup -i --ingest -t --track -x --untrack -X --untrack-delete -u --unpack -U --force-unpack -d --diff'
     _arguments \
         '(- *)--help[Show help message]' \
         "($_excl)"{-s,--setup}'[Auto-ingest dotfiles from ~/ (no file arguments)]' \
         "($_excl)"{-i,--ingest}'[Ingest files: track then link]' \
         "($_excl)"{-t,--track}'[Track files without creating symlinks]' \
-        "($_excl)"{-x,--untrack}'[Remove files from tracking]' \
+        "($_excl)"{-x,--untrack}'[Untrack files, keeping a real copy in home]' \
+        "($_excl)"{-X,--untrack-delete}'[Untrack files and delete them from home]' \
         "($_excl)"{-u,--unpack}'[Unpack listed files, or everything (respects exclusions)]' \
         "($_excl)"{-U,--force-unpack}'[Force unpack, ignoring exclusions]' \
         "($_excl)"{-d,--diff}'[Read-only report of repo vs home state]' \

@@ -879,65 +879,197 @@ function _links_to(){
   return 1
 }
 
+# untrack_if_needed <home-relative path> [keep|delete]
+#   keep (setup -x, the default): stop managing the file. It leaves the repo
+#     and git, and home keeps a real copy: each home symlink to it is replaced
+#     by a copy, and a path with nothing in home gets the copy restored.
+#   delete (setup -X): untrack AND delete. It leaves the repo and git, and
+#     the home links are removed; the content survives only in git history.
+#   Either way: home is only changed once git has let go of the file, real
+#   files and links that point elsewhere are left alone, and excluded paths
+#   are refused.
 function untrack_if_needed(){
-  # Input is a path relative to the link dest (already normalized)
-  local home_relative_path="$1"
-  local src="${dotfiles_dir}/${home_relative_path}"
-  src="${src:A}"
+  local home_relative_path="$1" mode="${2:-keep}"
+  local repo_root="${dotfiles_dir:A}"
+  # The repo entry itself, NOT resolved: it may be a committed symlink, and
+  # resolving it would act on (and delete) whatever it points at.
+  local repo_path="${repo_root}/${home_relative_path}"
   # :a (absolute, symlinks NOT resolved), not :A -- home_path is normally the
   # very symlink we're here to remove, and :A would turn it into the repo file.
   local home_path="${_setup_link_dest}/${home_relative_path}"
   home_path="${home_path:a}"
-  local -a links=() rm_args=()
-  local f
+  # homes[i] is replaced (keep) or removed (delete); srcs[i] is its repo copy
+  local -a homes=() srcs=() tracked=() sublinks=()
+  local t f d i _lt is_dir=0 whole_link=0 in_sub
 
-  info_nonl "untracking $src (home: $home_path) .."
+  info_nonl "untracking $repo_path (home: $home_path) .."
 
+  [[ -d "$repo_path" && ! -L "$repo_path" ]] && is_dir=1
   # Excluded paths (.git/.nounpack internals, component graft points,
   # always_exclude / dotfiles_exclude matches) are never linked, so there is
   # nothing to untrack; refusing keeps a repo path such as
   # ~/.dotfiles/dotfiles_exclude from git rm-ing dotfiler's own files.
-  if should_exclude_file "$src" $([[ -d "$src" ]] && print 1 || print 0); then
+  if should_exclude_file "$repo_path" $is_dir; then
     error ".. Refused to untrack $home_relative_path: excluded from unpacking, not a linked dotfile (use git rm directly if intended)"
     return 1
   fi
-
-  # Collect the home links to remove BEFORE git rm: the directory walk needs
-  # the repo files, which git rm deletes.
-  if [[ -f "$src" || -L "$src" ]]; then
-    if _links_to "$home_path" "$src"; then
-      links+=("$home_path")
-    elif [[ -e "$home_path" && ! -L "$home_path" ]]; then
-      warn ".. $home_path exists but is not a symlink; leaving it"
-    fi
-  elif [[ -d "$src" ]]; then
-    rm_args=(-r)
-    if [[ -L "$home_path" ]]; then
-      # the whole directory was linked
-      _links_to "$home_path" "$src" && links+=("$home_path")
-    elif [[ -d "$home_path" ]]; then
-      # per-file links under a real home directory (D: dotfiles, N: nullglob,
-      # ^/: anything but directories, i.e. files and symlinks)
-      for f in "$src"/**/*(DN^/); do
-        _links_to "$home_path/${f#$src/}" "$f" && links+=("$home_path/${f#$src/}")
-      done
-    fi
-  else
-    error ".. File $src does not exist"
+  if [[ ! -e "$repo_path" && ! -L "$repo_path" ]]; then
+    error ".. File $repo_path does not exist"
+    return 1
+  fi
+  # Seen THROUGH a directory symlinked into the repo, the "home file" IS the
+  # repo file: leaving it as a real file and then removing the repo copy
+  # would make it vanish from home. Only the linked directory can be untracked.
+  if [[ "${home_path:h:A}/" == "${repo_root}/"* ]]; then
+    error ".. Refused to untrack $home_relative_path: it is inside a directory linked into the repo as a whole; untrack that directory instead"
+    return 1
+  fi
+  # Only what git tracks: untracked or ignored files sharing a directory are
+  # neither copied into home nor deleted (git rm -r leaves them too).
+  tracked=( ${(0)"$(git -C "$dotfiles_dir" ls-files -z -- "$home_relative_path")"} )
+  if (( ! ${#tracked[@]} )); then
+    error ".. $home_relative_path is not tracked in the dotfiles repo"
     return 1
   fi
 
-  # Only unlink once git has really let go of the file; if git rm refuses
-  # (e.g. staged-but-uncommitted changes), home keeps its working link.
-  if ! safe_git -C "$dotfiles_dir" rm -q "${rm_args[@]}" -- "$home_relative_path"; then
+  # Collect what to change in home BEFORE touching git.
+  if (( is_dir )) && [[ -L "$home_path" ]]; then
+    # the whole directory was linked
+    _links_to "$home_path" "$repo_path" && whole_link=1
+  elif (( is_dir )) && [[ -d "$home_path" ]]; then
+    # subdirectories linked as a whole (@: symlink, -/: resolving to a dir;
+    # ** does not descend through symlinks): their files are seen through
+    # the link, so the link itself is what gets replaced or removed
+    for d in "$home_path"/**/*(DN@-/); do
+      _links_to "$d" "${repo_root}/${d#${_setup_link_dest}/}" && sublinks+=("$d")
+    done
+  fi
+  for t in "${tracked[@]}"; do
+    f="${_setup_link_dest}/${t}"
+    in_sub=0
+    for d in "${sublinks[@]}"; do
+      [[ "$f" == "$d"/* ]] && in_sub=1
+    done
+    if (( whole_link || in_sub )); then
+      [[ "$mode" == keep ]] && { homes+=("$f"); srcs+=("${repo_root}/${t}"); }
+    elif _links_to "$f" "${repo_root}/${t}"; then
+      homes+=("$f"); srcs+=("${repo_root}/${t}")
+    elif [[ -L "$f" ]]; then
+      :   # foreign link: _links_to already warned
+    elif [[ -e "$f" ]]; then
+      warn ".. $f exists but is not a symlink; leaving it"
+    elif [[ "$mode" == keep ]]; then
+      homes+=("$f"); srcs+=("${repo_root}/${t}")   # nothing in home: restore it
+    fi
+  done
+
+  if [[ "$mode" == delete ]]; then
+    # Only unlink once git has really let go of the file; if git rm refuses
+    # (e.g. staged-but-uncommitted changes), home keeps its working link.
+    if ! safe_git -C "$dotfiles_dir" rm -q -r -- "$home_relative_path"; then
+      error ".. git rm failed for $home_relative_path; home links left in place"
+      return 1
+    fi
+    action ".. Removed $repo_path from git tracking"
+    if (( whole_link )); then
+      safe_rm "$home_path"
+      action ".. Removed symlink $home_path"
+    fi
+    for d in "${sublinks[@]}"; do
+      safe_rm "$d"
+      action ".. Removed symlink $d"
+    done
+    for f in "${homes[@]}"; do
+      safe_rm "$f"
+      action ".. Removed symlink $f"
+    done
+    return 0
+  fi
+
+  # keep: untrack but leave the repo's working copies, so they can be copied
+  # into home; they are only deleted once every copy has succeeded.
+  if ! safe_git -C "$dotfiles_dir" rm -q -r --cached -- "$home_relative_path"; then
     error ".. git rm failed for $home_relative_path; home links left in place"
     return 1
   fi
-  action ".. Removed $src from git tracking"
-  for f in "${links[@]}"; do
-    safe_rm "$f"
-    action ".. Removed symlink $f"
+  action ".. Removed $repo_path from git tracking"
+  if (( whole_link )); then
+    safe_rm "$home_path"
+    safe_mkdir "$home_path"
+  fi
+  for d in "${sublinks[@]}"; do
+    safe_rm "$d"
+    safe_mkdir "$d"
   done
+  for (( i = 1; i <= ${#homes[@]}; i++ )); do
+    f="${homes[i]}"
+    [[ -L "$f" ]] && safe_rm "$f"
+    safe_mkdir "${f:h}"
+    if [[ -L "${srcs[i]}" ]]; then
+      # A committed symlink is kept AS a symlink (BSD cp follows a symlink
+      # operand). A relative target is made absolute against its place in
+      # the repo, since the same relative path would mean something else
+      # from home; :a normalises without resolving further links.
+      _lt=$(readlink "${srcs[i]}")
+      [[ "$_lt" == /* ]] || _lt="${srcs[i]:h}/$_lt"
+      _lt="${_lt:a}"
+      if [[ ${#dry_run[@]} -gt 0 ]]; then
+        action "[DRY RUN] Would create symlink: $f -> $_lt"
+      else
+        ln -s -- "$_lt" "$f"
+      fi
+    else
+      safe_cp "${srcs[i]}" "$f"
+    fi || {
+      error ".. Failed to copy ${srcs[i]} to $f; the repo copy is kept, untracked"
+      return 1
+    }
+    action ".. Kept $f as a real copy"
+  done
+  # Remove the repo working copies -- but only where the content is safe
+  # elsewhere: just copied into home, or identical to the last commit (so
+  # git history has it). Anything else (uncommitted edits, staged but never
+  # committed) is left in the repo, now untracked, rather than lost.
+  for t in "${tracked[@]}"; do
+    f="${repo_root}/${t}"
+    if (( ${srcs[(Ie)$f]} )) || _setup_matches_head "$t"; then
+      safe_rm "$f"
+    else
+      warn ".. $f has changes git history doesn't have and wasn't copied to home; left in the repo, untracked"
+    fi
+  done
+  (( is_dir )) && _setup_rmdir_empty "$repo_path"
+  return 0
+}
+
+# _setup_matches_head <repo-relative path>
+#   True iff the working copy is byte-identical to HEAD's version, i.e. git
+#   history can give it back. A committed symlink is compared by its target
+#   string, as git stores it. False when HEAD has no such path.
+function _setup_matches_head(){
+  local p="${dotfiles_dir:A}/$1" head_blob work_blob
+  head_blob=$(git -C "$dotfiles_dir" rev-parse -q --verify "HEAD:$1" 2>/dev/null) || return 1
+  if [[ -L "$p" ]]; then
+    work_blob=$(printf '%s' "$(readlink "$p")" | git -C "$dotfiles_dir" hash-object --stdin) || return 1
+  else
+    work_blob=$(git -C "$dotfiles_dir" hash-object -- "$1") || return 1
+  fi
+  [[ "$head_blob" == "$work_blob" ]]
+}
+
+# _setup_rmdir_empty <dir>
+#   Remove <dir> and its subdirectories, deepest first, where they are empty;
+#   anything still holding files (e.g. untracked or ignored) is left.
+function _setup_rmdir_empty(){
+  [[ -d "$1" ]] || return 0
+  if [[ ${#dry_run[@]} -gt 0 ]]; then
+    action "[DRY RUN] Would remove empty directories under: $1"
+    return 0
+  fi
+  # -delete works bottom-up as it goes (a batched -exec rmdir {} + tests
+  # -empty before children are gone); on a directory it is rmdir: empty only
+  find "$1" -depth -type d -empty -delete 2>/dev/null
+  return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -1372,7 +1504,7 @@ _setup_normalize_path_array() {
 # setup_run_all dir_override link_dest dry_run_bool quiet_bool [defyes_bool [defno_bool]]
 #
 #   Full action dispatch. Reads action arrays set by setup_core_main arg parsing:
-#   ingest, setup, track, untrack, unpack, force_unpack,
+#   ingest, setup, track, untrack, untrack_delete, unpack, force_unpack,
 #   unpack_files, force_unpack_files.
 function setup_run_all() {
     # Function-scoped scratch, declared once here: zsh's `local x` inside a
@@ -1393,9 +1525,12 @@ if [[ ${#track[@]} -gt 0 ]]; then
 fi
 
 if [[ ${#untrack[@]} -gt 0 ]]; then
-    # unpack mode: like -u, -x may name the file by where it lands in home or
-    # where it lives in the repo (untrack only ever applies to repo files).
+    # unpack mode: like -u, -x/-X may name the file by where it lands in home
+    # or where it lives in the repo (untrack only ever applies to repo files).
     _setup_normalize_path_array untrack "untrack" unpack || return 1
+fi
+if [[ ${#untrack_delete[@]} -gt 0 ]]; then
+    _setup_normalize_path_array untrack_delete "untrack-delete" unpack || return 1
 fi
 
 if [[ ${#unpack_files[@]} -gt 0 ]]; then
@@ -1447,14 +1582,19 @@ if [[ ${#track[@]} -gt 0 ]]; then
   fi
 fi
 
-# Untrack files
-if [[ ${#untrack[@]} -gt 0 ]]; then
+# Untrack files: -x keeps a real copy in home, -X deletes it too
+if [[ ${#untrack[@]} -gt 0 || ${#untrack_delete[@]} -gt 0 ]]; then
   # Keep going past a file that can't be untracked (e.g. git rm refuses
   # staged-but-uncommitted changes), then fail overall naming the failures.
-  local -a _untrack_failed=()
-  for file in ${untrack[@]}; do
+  local -a _untrack_failed=() _untrack_files=( "${untrack[@]}" )
+  local _untrack_mode=keep
+  if (( ${#untrack_delete[@]} )); then
+    _untrack_mode=delete
+    _untrack_files=( "${untrack_delete[@]}" )
+  fi
+  for file in "${_untrack_files[@]}"; do
     info "Untracking file $file"
-    untrack_if_needed $file || _untrack_failed+=("$file")
+    untrack_if_needed "$file" "$_untrack_mode" || _untrack_failed+=("$file")
   done
   if (( ${#_untrack_failed[@]} )); then
     error "Could not untrack: ${_untrack_failed[*]}"
@@ -1586,7 +1726,8 @@ function setup_core_main() {
         echo "  -s, --setup         Auto ingest dotfiles from ~/ (no file arguments)"
         echo "  -i, --ingest        Ingest files: track then link (>= 1 file)"
         echo "  -t, --track         Track files without linking (>= 1 file)"
-        echo "  -x, --untrack       Untrack files (>= 1 file)"
+        echo "  -x, --untrack       Untrack files, keeping a real copy in home (>= 1 file)"
+        echo "  -X, --untrack-delete  Untrack files and delete them from home too (>= 1 file)"
         echo "  -u, --unpack        Unpack listed files, or everything if none given (respects exclusions)"
         echo "  -U, --force-unpack  Same as -u but ignores exclusions"
         echo "  -d, --diff          Read-only: report repo vs home state (listed files or everything); changes nothing"
@@ -1608,7 +1749,7 @@ function setup_core_main() {
 
     local -a ingest=() setup=() unpack=() force_unpack=()
     local -a unpack_files=() force_unpack_files=() diff_files=()
-    local -a track=() untrack=() diff=() quiet=() dry_run=()
+    local -a track=() untrack=() untrack_delete=() diff=() quiet=() dry_run=()
     local -a defyes=() defno=() debug_flag=()
      local -a opt_repo_dir=() opt_link_dest=() opt_excludes=()
 
@@ -1624,6 +1765,7 @@ function setup_core_main() {
                        U=force_unpack -force-unpack=force_unpack \
                        t=track -track=track \
                        x=untrack -untrack=untrack \
+                       X=untrack_delete -untrack-delete=untrack_delete \
                        d=diff -diff=diff \
                        q=quiet -quiet=quiet \
                        D=dry_run -dry-run=dry_run \
@@ -1647,6 +1789,7 @@ function setup_core_main() {
     [[ ${#ingest[@]} -gt 0 ]]       && _actions+=("-i")
     [[ ${#track[@]} -gt 0 ]]        && _actions+=("-t")
     [[ ${#untrack[@]} -gt 0 ]]      && _actions+=("-x")
+    [[ ${#untrack_delete[@]} -gt 0 ]] && _actions+=("-X")
     [[ ${#unpack[@]} -gt 0 ]]       && _actions+=("-u")
     [[ ${#force_unpack[@]} -gt 0 ]] && _actions+=("-U")
     [[ ${#diff[@]} -gt 0 ]]         && _actions+=("-d")
@@ -1682,6 +1825,12 @@ function setup_core_main() {
                 return 1
             fi
             untrack=( "$@" ) ;;
+        -X) if [[ $# -eq 0 ]]; then
+                error "-X/--untrack-delete requires at least one path"
+                unfunction _setup_main_usage
+                return 1
+            fi
+            untrack_delete=( "$@" ) ;;
         -u) unpack_files=( "$@" ) ;;        # empty list = unpack everything
         -U) force_unpack_files=( "$@" ) ;;  # empty list = force-unpack everything
         -d) diff_files=( "$@" ) ;;          # empty list = diff everything
@@ -1729,7 +1878,7 @@ function setup_core_unload() {
         _gitignore_match_single should_exclude_file \
          normalize_path_to_dest_relative prompt_yes_no \
          safe_mkdir safe_ln safe_rm safe_cp safe_cp_r safe_git \
-         dolink link_if_needed copy_in_if_needed untrack_if_needed _links_to _setup_ingest_dir \
+         dolink link_if_needed copy_in_if_needed untrack_if_needed _links_to _setup_ingest_dir _setup_rmdir_empty _setup_matches_head \
          _setup_init \
          _setup_normalize_path_array \
          _setup_save_exclusion_state _setup_restore_exclusion_state \

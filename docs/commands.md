@@ -33,7 +33,8 @@ Track and link dotfiles (`setup.zsh` / `setup_core.zsh`).
 | `-u [file …]` | `--unpack [file …]` | Create/restore symlinks for the listed files, or everything if none given (respects exclusions) |
 | `-U [file …]` | `--force-unpack [file …]` | Same as `-u` but ignores exclusions |
 | `-t file …` | `--track file …` | Track without creating a symlink (≥ 1 file) |
-| `-x file …` | `--untrack file …` | Untrack (≥ 1 file) |
+| `-x file …` | `--untrack file …` | Untrack, keeping the file: it leaves the repo and git, and each home link is replaced by a real copy (≥ 1 file) |
+| `-X file …` | `--untrack-delete file …` | Untrack and delete: it leaves the repo and git, and the home links are removed; the content survives only in git history (≥ 1 file) |
 | `-d [file …]` | `--diff [file …]` | Read-only: report how repo files relate to home (linked / identical / missing / differing, with unified diffs); no changes made |
 | `-D` | `--dry-run` | Show what would happen without doing it |
 | `-q` | `--quiet` | Suppress non-error output |
@@ -44,11 +45,11 @@ Exactly one action flag may be given per invocation; every file argument
 (shell globs included) belongs to that action.
 
 Path arguments to `-i`/`-t` resolve like normal shell paths (absolute, or
-relative to the current directory). `-u`/`-U`/`-x` arguments may name the
+relative to the current directory). `-u`/`-U`/`-x`/`-X` arguments may name the
 file either by where it lands (absolute under `~`, home-relative from
 anywhere, or relative to a current directory inside `~`) or by where it lives
 in the repo (absolute or cwd-relative under the dotfiles directory) — all
-four spellings resolve to the same link. `-x` refuses paths the exclusion
+four spellings resolve to the same link. `-x`/`-X` refuse paths the exclusion
 rules cover (repo internals, component graft points, excluded files): they
 are never linked, so there is nothing to untrack.
 | `-C name` | `--component name` | Operate on one registered hook component (repeatable) |
